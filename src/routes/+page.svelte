@@ -1235,7 +1235,6 @@
             <button data-nav class:active={tab === "movie"} onclick={() => switchTab("movie")}>Películas</button>
             <button data-nav class:active={tab === "tv"} onclick={() => switchTab("tv")}>Series</button>
             <button data-nav class:active={tab === "anime"} onclick={() => switchTab("anime")}>Anime</button>
-            <a data-nav class="vera-link" href="/vera" title="Wizard de recomendaciones">Vera</a>
           </div>
           <div class="search-wrap">
             <svg class="search-icon" viewBox="0 0 16 16" width="14" height="14">
@@ -1310,6 +1309,15 @@
       {:else}
         <div class="grid-wrap">
           <div class="grid" data-section="gallery">
+            <a class="card vera-card" data-nav href="/vera" title="Pregúntale a Vera">
+              <div class="vera-poster">
+                <div class="vera-icon">✦</div>
+              </div>
+              <div class="card-meta">
+                <span class="card-title">Vera</span>
+                <span class="card-sub">¿Qué ver hoy?</span>
+              </div>
+            </a>
             {#each items as it, i (it.id)}
               {@const title = it.title || it.name || ""}
               {@const date = it.release_date || it.first_air_date || ""}
@@ -1783,16 +1791,6 @@
   }
   .tabs button.active { background: #f5c518; color: #0d0d12; }
   .tabs button:not(.active):hover { color: #eee; background: #1f1f28; }
-  .vera-link {
-    background: transparent; color: #ff5722;
-    padding: 6px 14px; border-radius: 4px; text-decoration: none;
-    font-weight: 600; font-size: 13px;
-    border: 1px solid transparent;
-    display: inline-flex; align-items: center;
-    transition: background 0.12s, color 0.12s, border-color 0.12s;
-  }
-  .vera-link:hover { background: #1f1f28; color: #ff7043; border-color: #ff5722; }
-
   .search-wrap {
     flex: 1; position: relative;
     display: flex; align-items: center;
@@ -1900,6 +1898,25 @@
   }
   .card:hover { transform: translateY(-3px); box-shadow: 0 12px 28px rgba(0,0,0,0.6); }
   .card.selected { box-shadow: 0 0 0 2px #f5c518; }
+
+  .vera-card { text-decoration: none; }
+  .vera-poster {
+    aspect-ratio: 2 / 3;
+    background: linear-gradient(160deg, #ff5722 0%, #c0392b 60%, #6a1b1b 100%);
+    position: relative; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .vera-poster::before {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(circle at 30% 20%, rgba(255,255,255,0.18), transparent 50%);
+    pointer-events: none;
+  }
+  .vera-icon {
+    font-size: 64px; line-height: 1; color: #fff;
+    text-shadow: 0 2px 12px rgba(0,0,0,0.4);
+    z-index: 1;
+  }
+  .vera-card:hover { box-shadow: 0 12px 32px rgba(255,87,34,0.4); }
   .card:focus, .card:focus-visible {
     outline: 4px solid #f5c518;
     outline-offset: 3px;

@@ -270,10 +270,25 @@ cmd_install() {
     success "$T_NPM_INSTALLED"
 }
 
+_purge_dev_cache() {
+    # Borra cachés de Vite y output de SvelteKit antes de dev.
+    # Evita el bug "Unknown word import" de PostCSS al agregar/mover archivos .svelte
+    # con el dev server corriendo (HMR queda con metadatos viejos).
+    local purged=0
+    for d in "$PROJECT_DIR/node_modules/.vite" "$PROJECT_DIR/.svelte-kit/output"; do
+        if [[ -d "$d" ]]; then
+            rm -rf "$d"
+            purged=1
+        fi
+    done
+    [[ $purged -eq 1 ]] && info "dev cache purged (.vite + .svelte-kit/output)"
+}
+
 cmd_dev() {
     header "$T_DEV_TAURI"
     check_deps || return
     cd "$PROJECT_DIR"
+    _purge_dev_cache
     info "$T_DEV_STARTING"
     npx tauri dev || true
 }
@@ -281,6 +296,7 @@ cmd_dev() {
 cmd_dev_web() {
     header "$T_DEV_WEB"
     cd "$PROJECT_DIR"
+    _purge_dev_cache
     info "$T_DEV_WEB_STARTING"
     npm run dev || true
 }
@@ -383,7 +399,9 @@ cmd_run() {
 cmd_clean() {
     header "$T_CLEANING"
     info "$T_CLEAN_DOING"
-    rm -rf "$DIST_DIR" "$PROJECT_DIR/out"
+    rm -rf "$DIST_DIR" "$PROJECT_DIR/out" \
+           "$PROJECT_DIR/node_modules/.vite" \
+           "$PROJECT_DIR/.svelte-kit/output"
     [[ -d "$TAURI_DIR" ]] && (cd "$TAURI_DIR" && cargo clean)
     success "$T_CLEAN_DONE"
 }

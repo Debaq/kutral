@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import { fly, fade } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
   import Database from "@tauri-apps/plugin-sql";
   import type {
     VeraOption,
@@ -13,14 +15,17 @@
   } from "$lib/vera/types";
   import { LANG_OPTIONS } from "$lib/vera/types";
 
+  // Pasos quitados del flujo (estado se preserva con default):
+  //   - mode_io: voz/comando aún no implementado.
+  //   - depth: pregunta "cinéfilo o casual" sentía a encuesta de vida.
+  //   - platforms: Kütral reproduce todo internamente; no tiene sentido.
+  //   - exclusions: 23 géneros + 24 temas es demasiado para un wizard.
+  //              Se aprenden por rechazo de carátula/sinopsis en sesión,
+  //              o se editan en Ajustes (pendiente).
   type Step =
     | "welcome"
-    | "mode_io"
-    | "depth"
     | "languages"
     | "dub_pref"
-    | "platforms"
-    | "exclusions"
     | "setup_done"
     | "intent"
     | "intent_chosen";
@@ -28,7 +33,6 @@
   let step = $state<Step>("welcome");
   let db: Awaited<ReturnType<typeof Database.load>> | null = null;
 
-  // Setup state
   let modeIo = $state<ModeIO>("touch");
   let depth = $state<DepthProfile>("interested");
   let languages = $state<string[]>(["es"]);
@@ -38,7 +42,6 @@
   let excludedThemes = $state<string[]>([]);
   let personality = $state<Personality>("warm");
 
-  // Loaded option lists
   let intentOptions = $state<VeraOption[]>([]);
   let genreOptions = $state<VeraOption[]>([]);
   let themeOptions = $state<VeraOption[]>([]);
@@ -47,6 +50,35 @@
   let chosenIntent = $state<IntentId | null>(null);
   let existingSetup = $state<VeraSetup | null>(null);
   let loading = $state(true);
+
+  let leftPosters = $state<string[]>([]);
+  let rightPosters = $state<string[]>([]);
+
+  const IMG = "https://image.tmdb.org/t/p";
+
+  interface TmdbResp {
+    results: { id: number; poster_path: string | null; backdrop_path: string | null }[];
+  }
+
+  async function loadPosters() {
+    const apiKey = localStorage.getItem("tmdb_key") || "";
+    if (!apiKey) return;
+    try {
+      const [m, t] = await Promise.all([
+        invoke<TmdbResp>("tmdb_discover", { mediaType: "movie", page: 1, apiKey }),
+        invoke<TmdbResp>("tmdb_discover", { mediaType: "tv", page: 1, apiKey }),
+      ]);
+      const all = [...m.results, ...t.results]
+        .filter((x) => x.poster_path)
+        .map((x) => `${IMG}/w342${x.poster_path}`);
+      const shuffled = all.sort(() => Math.random() - 0.5);
+      const half = Math.ceil(shuffled.length / 2);
+      leftPosters = shuffled.slice(0, half);
+      rightPosters = shuffled.slice(half);
+    } catch (e) {
+      console.warn("[vera] posters fail", e);
+    }
+  }
 
   onMount(async () => {
     db = await Database.load("sqlite:kutral.db");
@@ -85,6 +117,7 @@
     ]);
 
     loading = false;
+    loadPosters();
   });
 
   function toggle(list: string[], id: string): string[] {
@@ -127,338 +160,388 @@
 
   const stepOrder: Step[] = [
     "welcome",
-    "mode_io",
-    "depth",
     "languages",
     "dub_pref",
-    "platforms",
-    "exclusions",
     "setup_done",
   ];
   const setupSteps = stepOrder.slice(1, -1);
   let setupStepIndex = $derived(setupSteps.indexOf(step));
+  let progressPct = $derived(
+    setupStepIndex >= 0 ? Math.round(((setupStepIndex + 1) / setupSteps.length) * 100) : 0
+  );
 </script>
 
 <svelte:head>
-  <title>Vera — Kütral</title>
+  <title>Vera and Chill — Kütral</title>
 </svelte:head>
 
-<div class="vera">
-  <header>
-    <a class="back" href="/">← Volver</a>
-    <h1>Vera</h1>
-    <p class="tagline">Te ayudo a elegir qué ver cuando no sabes qué quieres ver.</p>
-  </header>
+<div class="vera-bg">
+  <aside class="strip strip-left" aria-hidden="true">
+    <div class="track track-up">
+      {#each [...leftPosters, ...leftPosters] as src}
+        <img src={src} alt="" loading="lazy" />
+      {/each}
+    </div>
+  </aside>
 
-  {#if loading}
-    <p class="loading">Cargando…</p>
-  {:else}
+  <main class="vera-stage">
+    <nav class="topbar">
+      <span class="brandmark">Vera <em>and Chill</em></span>
+      <a class="catalog" href="/vera/catalog">Catálogo</a>
+    </nav>
+
     {#if setupStepIndex >= 0}
-      <div class="progress">
-        Setup {setupStepIndex + 1} / {setupSteps.length}
+      <div class="progress-bar" transition:fade={{ duration: 200 }}>
+        <div class="fill" style="width: {progressPct}%"></div>
       </div>
     {/if}
 
-    {#if step === "welcome"}
-      <section>
-        <h2>Hola. Soy Vera.</h2>
-        <p>Siete preguntas rápidas y empezamos.</p>
-        <button class="primary" onclick={() => (step = "mode_io")}>Comenzar</button>
-      </section>
-    {:else if step === "mode_io"}
-      <section>
-        <h2>¿Cómo prefieres usarme?</h2>
-        <div class="opts">
-          <label><input type="radio" bind:group={modeIo} value="touch" /> Tocando y leyendo</label>
-          <label><input type="radio" bind:group={modeIo} value="voice" /> Hablando y escuchando (comandos)</label>
-          <label><input type="radio" bind:group={modeIo} value="both" /> Las dos, según el momento</label>
+    {#if loading}
+      <div class="loading">Cargando…</div>
+    {:else}
+      {#key step}
+        <div class="content" in:fly={{ y: 16, duration: 320, easing: cubicOut }} out:fade={{ duration: 120 }}>
+          {#if step === "welcome"}
+            <h1 class="hero">
+              <span class="brand">Vera</span> <em class="and-chill">and Chill</em>
+            </h1>
+            <p class="lede">Tú pones el sillón. Yo pongo qué ver.</p>
+            <p class="meta">Dos cosas rápidas y empezamos.</p>
+            <div class="nav-row">
+              <a class="btn ghost big" href="/">← Volver</a>
+              <button class="primary big" onclick={() => (step = "languages")}>Vamos →</button>
+            </div>
+
+          {:else if step === "languages"}
+            <h2>¿Qué idiomas entiendes de oído?</h2>
+            <p class="hint">Sin subtítulos. Marca todos los que apliquen.</p>
+            <div class="chips">
+              {#each LANG_OPTIONS as lang}
+                <button
+                  class="chip"
+                  class:on={languages.includes(lang.id)}
+                  onclick={() => (languages = toggle(languages, lang.id))}
+                >{lang.label}</button>
+              {/each}
+            </div>
+            <div class="nav-row">
+              <button class="ghost" onclick={() => (step = "welcome")}>Atrás</button>
+              <button class="primary" onclick={() => (step = "dub_pref")}>Siguiente →</button>
+            </div>
+
+          {:else if step === "dub_pref"}
+            <h2>Cuando está en un idioma que no entiendes…</h2>
+            <div class="cards">
+              <button class="opt-card" class:on={dubPref === "subs_always"} onclick={() => (dubPref = "subs_always")}>
+                <strong>Subtítulos siempre</strong>
+              </button>
+              <button class="opt-card" class:on={dubPref === "dub_always"} onclick={() => (dubPref = "dub_always")}>
+                <strong>Doblaje siempre</strong>
+              </button>
+              <button class="opt-card" class:on={dubPref === "depends"} onclick={() => (dubPref = "depends")}>
+                <strong>Depende</strong>
+              </button>
+              <button class="opt-card" class:on={dubPref === "indifferent"} onclick={() => (dubPref = "indifferent")}>
+                <strong>Me da igual</strong>
+              </button>
+            </div>
+            <div class="nav-row">
+              <button class="ghost" onclick={() => (step = "languages")}>Atrás</button>
+              <button class="primary" onclick={saveSetup}>Listo →</button>
+            </div>
+
+          {:else if step === "setup_done"}
+            <h1 class="hero">Listo.</h1>
+            <p class="lede">Vera ya te conoce. ¿Empezamos?</p>
+            <div class="nav-row">
+              <button class="primary big" onclick={() => (step = "intent")}>Pedir recomendación →</button>
+            </div>
+
+          {:else if step === "intent"}
+            <h2>¿Qué buscás hoy?</h2>
+            {#if existingSetup}
+              <p class="hint">
+                Setup del {new Date(existingSetup.completed_at).toLocaleDateString()}.
+                <button class="link" onclick={resetSetup}>Reconfigurar</button>
+              </p>
+            {/if}
+            <div class="intent-grid">
+              {#each intentOptions as it}
+                <button class="intent-card" onclick={() => pickIntent(it.id as IntentId)}>
+                  <strong>{it.label}</strong>
+                  {#if it.description}<span>{it.description}</span>{/if}
+                </button>
+              {/each}
+            </div>
+
+          {:else if step === "intent_chosen"}
+            <h2>Elegiste</h2>
+            <p class="lede"><em>{intentOptions.find((o) => o.id === chosenIntent)?.label}</em></p>
+            <p class="hint">Capa 2 (Forma) y motor de coincidencia: próxima iteración.</p>
+            <div class="nav-row">
+              <button class="ghost" onclick={() => (step = "intent")}>← Otra intención</button>
+            </div>
+          {/if}
         </div>
-        <div class="nav">
-          <button onclick={() => (step = "welcome")}>Atrás</button>
-          <button class="primary" onclick={() => (step = "depth")}>Siguiente</button>
-        </div>
-      </section>
-    {:else if step === "depth"}
-      <section>
-        <h2>¿Qué lugar ocupan las películas y series en tu vida?</h2>
-        <div class="opts">
-          <label><input type="radio" bind:group={depth} value="casual" /> Es mi entretenimiento, nada más</label>
-          <label><input type="radio" bind:group={depth} value="interested" /> Me interesa, pero sin pretensiones</label>
-          <label><input type="radio" bind:group={depth} value="demanding" /> Soy exigente, me importa la calidad</label>
-          <label><input type="radio" bind:group={depth} value="cinephile" /> Soy cinéfilo, dame opciones raras</label>
-        </div>
-        <div class="nav">
-          <button onclick={() => (step = "mode_io")}>Atrás</button>
-          <button class="primary" onclick={() => (step = "languages")}>Siguiente</button>
-        </div>
-      </section>
-    {:else if step === "languages"}
-      <section>
-        <h2>¿Qué idiomas entiendes de oído?</h2>
-        <p class="hint">Sin subtítulos. Marca todos los que apliquen.</p>
-        <div class="opts grid">
-          {#each LANG_OPTIONS as lang}
-            <label class:checked={languages.includes(lang.id)}>
-              <input
-                type="checkbox"
-                checked={languages.includes(lang.id)}
-                onchange={() => (languages = toggle(languages, lang.id))}
-              />
-              {lang.label}
-            </label>
-          {/each}
-        </div>
-        <div class="nav">
-          <button onclick={() => (step = "depth")}>Atrás</button>
-          <button class="primary" onclick={() => (step = "dub_pref")}>Siguiente</button>
-        </div>
-      </section>
-    {:else if step === "dub_pref"}
-      <section>
-        <h2>Cuando algo está en un idioma que no entiendes…</h2>
-        <div class="opts">
-          <label><input type="radio" bind:group={dubPref} value="subs_always" /> Subtítulos siempre</label>
-          <label><input type="radio" bind:group={dubPref} value="dub_always" /> Doblaje siempre</label>
-          <label><input type="radio" bind:group={dubPref} value="depends" /> Depende</label>
-          <label><input type="radio" bind:group={dubPref} value="indifferent" /> Me da igual</label>
-        </div>
-        <div class="nav">
-          <button onclick={() => (step = "languages")}>Atrás</button>
-          <button class="primary" onclick={() => (step = "platforms")}>Siguiente</button>
-        </div>
-      </section>
-    {:else if step === "platforms"}
-      <section>
-        <h2>¿A qué plataformas tienes acceso?</h2>
-        <div class="opts grid">
-          {#each platformOptions as plat}
-            <label class:checked={platforms.includes(plat.id)}>
-              <input
-                type="checkbox"
-                checked={platforms.includes(plat.id)}
-                onchange={() => (platforms = toggle(platforms, plat.id))}
-              />
-              {plat.label}
-            </label>
-          {/each}
-        </div>
-        <div class="nav">
-          <button onclick={() => (step = "dub_pref")}>Atrás</button>
-          <button class="primary" onclick={() => (step = "exclusions")}>Siguiente</button>
-        </div>
-      </section>
-    {:else if step === "exclusions"}
-      <section>
-        <h2>¿Hay algo que nunca quieras ver, bajo ninguna circunstancia?</h2>
-        <p class="hint">Saltable. Lo marcado actúa como filtro duro permanente.</p>
-        <h3>Géneros</h3>
-        <div class="opts grid compact">
-          {#each genreOptions as g}
-            <label class:checked={excludedGenres.includes(g.id)}>
-              <input
-                type="checkbox"
-                checked={excludedGenres.includes(g.id)}
-                onchange={() => (excludedGenres = toggle(excludedGenres, g.id))}
-              />
-              {g.label}
-            </label>
-          {/each}
-        </div>
-        <h3>Temas sensibles</h3>
-        <div class="opts grid compact">
-          {#each themeOptions as t}
-            <label class:checked={excludedThemes.includes(t.id)}>
-              <input
-                type="checkbox"
-                checked={excludedThemes.includes(t.id)}
-                onchange={() => (excludedThemes = toggle(excludedThemes, t.id))}
-              />
-              {t.label}
-            </label>
-          {/each}
-        </div>
-        <div class="nav">
-          <button onclick={() => (step = "platforms")}>Atrás</button>
-          <button class="primary" onclick={saveSetup}>Guardar y terminar</button>
-        </div>
-      </section>
-    {:else if step === "setup_done"}
-      <section class="centered">
-        <h2>Listo. Setup guardado.</h2>
-        <p>Vera ya conoce tus preferencias. Empecemos.</p>
-        <button class="primary" onclick={() => (step = "intent")}>Pedir recomendación</button>
-      </section>
-    {:else if step === "intent"}
-      <section>
-        <h2>¿Qué buscas hoy?</h2>
-        {#if existingSetup}
-          <p class="hint">
-            Setup guardado el {new Date(existingSetup.completed_at).toLocaleDateString()}.
-            <button class="link" onclick={resetSetup}>Reconfigurar</button>
-          </p>
-        {/if}
-        <div class="intent-grid">
-          {#each intentOptions as it}
-            <button class="intent-card" onclick={() => pickIntent(it.id as IntentId)}>
-              <strong>{it.label}</strong>
-              {#if it.description}<span>{it.description}</span>{/if}
-            </button>
-          {/each}
-        </div>
-      </section>
-    {:else if step === "intent_chosen"}
-      <section class="centered">
-        <h2>Elegiste: <em>{intentOptions.find((o) => o.id === chosenIntent)?.label}</em></h2>
-        <p class="hint">
-          Capa 2 (Forma) y motor de coincidencia: próximo iteración.
-        </p>
-        <button onclick={() => (step = "intent")}>Volver a intenciones</button>
-      </section>
+      {/key}
     {/if}
-  {/if}
+  </main>
+
+  <aside class="strip strip-right" aria-hidden="true">
+    <div class="track track-down">
+      {#each [...rightPosters, ...rightPosters] as src}
+        <img src={src} alt="" loading="lazy" />
+      {/each}
+    </div>
+  </aside>
 </div>
 
 <style>
-  .vera {
-    max-width: 760px;
-    margin: 0 auto;
-    padding: 2rem 1.5rem 4rem;
-    font-family: ui-sans-serif, system-ui, sans-serif;
-    color: #1a1a1a;
+  :global(html), :global(body) {
+    margin: 0; padding: 0; height: 100%;
+    background: #0a0a12;
   }
-  header {
-    margin-bottom: 2rem;
+  .vera-bg {
+    min-height: 100vh;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(420px, 720px) minmax(0, 1fr);
+    background:
+      radial-gradient(circle at 50% 0%, rgba(255,87,34,0.10), transparent 60%),
+      linear-gradient(180deg, #0a0a12 0%, #15080a 100%);
+    color: #e8e8ea;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    overflow: hidden;
+    position: relative;
   }
-  .back {
-    color: #666;
-    text-decoration: none;
-    font-size: 0.9rem;
+  .strip {
+    overflow: hidden;
+    position: relative;
+    height: 100vh;
+    mask-image: linear-gradient(180deg, transparent 0%, black 12%, black 88%, transparent 100%);
   }
-  .back:hover { color: #111; }
-  h1 {
-    margin: 0.5rem 0 0.25rem;
-    font-size: 2.4rem;
-    font-weight: 600;
-    letter-spacing: -0.02em;
+  .strip::after {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(90deg, rgba(10,10,18,0.7), transparent 30%, transparent 70%, rgba(10,10,18,0.7));
+    pointer-events: none;
   }
-  .tagline {
-    margin: 0;
-    color: #666;
-    font-size: 1rem;
-  }
-  .progress {
-    color: #888;
-    font-size: 0.85rem;
-    margin-bottom: 1.5rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-  h2 {
-    font-size: 1.6rem;
-    font-weight: 500;
-    margin: 0 0 1rem;
-    line-height: 1.3;
-  }
-  h3 {
-    font-size: 1rem;
-    margin: 1.5rem 0 0.75rem;
-    font-weight: 600;
-    color: #444;
-  }
-  .hint {
-    color: #777;
-    font-size: 0.9rem;
-    margin: -0.5rem 0 1rem;
-  }
-  .loading { color: #888; }
-  .centered { text-align: center; padding: 3rem 0; }
-  .opts {
+  .strip-left::after  { background: linear-gradient(90deg, transparent 0%, transparent 60%, rgba(10,10,18,0.85) 100%); }
+  .strip-right::after { background: linear-gradient(90deg, rgba(10,10,18,0.85) 0%, transparent 40%, transparent 100%); }
+  .track {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
-    margin: 1rem 0 2rem;
+    gap: 14px;
+    padding: 14px;
+    will-change: transform;
   }
-  .opts.grid {
+  .track img {
+    width: 100%;
+    border-radius: 6px;
+    display: block;
+    opacity: 0.55;
+    filter: saturate(0.85) brightness(0.8);
+    transition: opacity 0.4s;
+  }
+  .track-up   { animation: drift-up   90s linear infinite; }
+  .track-down { animation: drift-down 110s linear infinite; }
+  @keyframes drift-up   { from { transform: translateY(0); } to { transform: translateY(-50%); } }
+  @keyframes drift-down { from { transform: translateY(-50%); } to { transform: translateY(0); } }
+  @media (max-width: 1100px) {
+    .vera-bg { grid-template-columns: 1fr; }
+    .strip { display: none; }
+  }
+
+  .vera-stage {
+    display: flex;
+    flex-direction: column;
+    padding: 24px 32px 64px;
+    height: 100vh;
+    overflow-y: auto;
+    position: relative;
+    z-index: 1;
+  }
+  .topbar {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 32px;
+  }
+  .topbar a {
+    color: #888; text-decoration: none; font-size: 13px;
+    padding: 6px 10px; border-radius: 6px;
+    transition: color 0.15s, background 0.15s;
+  }
+  .topbar a:hover { color: #fff; background: rgba(255,255,255,0.05); }
+
+  .progress-bar {
+    height: 3px; background: rgba(255,255,255,0.08); border-radius: 2px;
+    overflow: hidden; margin-bottom: 48px;
+  }
+  .progress-bar .fill {
+    height: 100%; background: linear-gradient(90deg, #ff5722, #ff8a65);
+    transition: width 0.35s cubic-bezier(.2,.7,.2,1);
+  }
+
+  .loading { color: #666; text-align: center; padding: 4rem 0; }
+
+  .content {
+    flex: 1;
+    display: flex; flex-direction: column;
+    justify-content: center;
+    min-height: 60vh;
+  }
+  .hero {
+    font-size: clamp(2.5rem, 6vw, 4rem);
+    font-weight: 300;
+    line-height: 1.05;
+    margin: 0 0 1rem;
+    letter-spacing: -0.02em;
+  }
+  .brand {
+    background: linear-gradient(90deg, #ff5722, #ffab40);
+    -webkit-background-clip: text; background-clip: text;
+    color: transparent;
+    font-weight: 600;
+  }
+  .lede {
+    font-size: 1.4rem;
+    color: #c8c8cc;
+    margin: 0 0 0.5rem;
+    font-weight: 300;
+  }
+  .meta { color: #888; font-size: 1rem; margin: 0 0 2.5rem; }
+  h2 {
+    font-size: clamp(1.6rem, 3vw, 2.2rem);
+    font-weight: 400;
+    margin: 0 0 1.5rem;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+  }
+  .sub-h {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #888;
+    margin: 1.75rem 0 0.75rem;
+    font-weight: 600;
+  }
+  .hint {
+    color: #888; font-size: 0.95rem; margin: -0.5rem 0 1.5rem;
+  }
+
+  .cards {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-    gap: 0.5rem;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    margin-bottom: 2rem;
   }
-  .opts.compact label {
-    font-size: 0.9rem;
-    padding: 0.5rem 0.75rem;
-  }
-  .opts label {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    padding: 0.75rem 1rem;
-    border: 1px solid #e0e0e0;
-    border-radius: 10px;
+  .opt-card {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
+    padding: 1.25rem 1.25rem;
+    color: #eee;
+    text-align: left;
     cursor: pointer;
-    transition: border-color 0.1s, background 0.1s;
+    font-family: inherit;
+    display: flex; flex-direction: column; gap: 4px;
+    transition: transform 0.15s, border-color 0.15s, background 0.15s;
   }
-  .opts label:hover { border-color: #b0b0b0; background: #fafafa; }
-  .opts label.checked { border-color: #ff5722; background: #fff3ef; }
-  .opts input { accent-color: #ff5722; }
-  .nav {
-    display: flex;
-    justify-content: space-between;
-    gap: 1rem;
-    margin-top: 2rem;
+  .opt-card:hover {
+    background: rgba(255,255,255,0.07);
+    border-color: rgba(255,255,255,0.15);
+    transform: translateY(-2px);
   }
+  .opt-card.on {
+    background: rgba(255,87,34,0.12);
+    border-color: #ff5722;
+    box-shadow: 0 0 0 1px #ff5722, 0 8px 24px rgba(255,87,34,0.2);
+  }
+  .opt-card strong { font-size: 1.05rem; font-weight: 600; }
+  .opt-card span { font-size: 0.85rem; color: #999; }
+
+  .chips {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    margin-bottom: 2rem;
+  }
+  .chips.tight { gap: 6px; }
+  .chip {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: #ccc;
+    padding: 0.55rem 1rem;
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 0.92rem;
+    font-family: inherit;
+    transition: all 0.15s;
+  }
+  .chip:hover {
+    background: rgba(255,255,255,0.08);
+    color: #fff;
+  }
+  .chip.on {
+    background: #ff5722;
+    border-color: #ff5722;
+    color: #fff;
+    font-weight: 500;
+  }
+
+  .intent-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+  }
+  .intent-card {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
+    padding: 1.4rem;
+    color: #eee;
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+    display: flex; flex-direction: column; gap: 6px;
+    transition: transform 0.15s, border-color 0.15s, background 0.15s;
+  }
+  .intent-card:hover {
+    background: rgba(255,87,34,0.08);
+    border-color: rgba(255,87,34,0.4);
+    transform: translateY(-3px);
+  }
+  .intent-card strong { font-size: 1.1rem; font-weight: 600; }
+  .intent-card span { font-size: 0.88rem; color: #999; }
+
+  .nav-row {
+    display: flex; justify-content: space-between; gap: 1rem;
+    margin-top: 2.5rem;
+  }
+  .nav-row > :only-child { margin-left: auto; }
+
   button {
-    padding: 0.7rem 1.4rem;
-    font-size: 1rem;
-    border: 1px solid #d0d0d0;
-    background: white;
+    padding: 0.75rem 1.5rem;
+    font-size: 0.95rem;
     border-radius: 10px;
     cursor: pointer;
     font-family: inherit;
+    font-weight: 500;
+    transition: all 0.15s;
+    border: 1px solid transparent;
   }
-  button:hover { border-color: #888; }
   button.primary {
     background: #ff5722;
-    color: white;
+    color: #fff;
     border-color: #ff5722;
   }
-  button.primary:hover { background: #e64a19; border-color: #e64a19; }
+  button.primary:hover { background: #ff7043; border-color: #ff7043; }
+  button.primary.big {
+    padding: 1rem 2rem; font-size: 1.05rem; border-radius: 12px;
+  }
+  button.ghost {
+    background: transparent; color: #aaa;
+    border-color: rgba(255,255,255,0.15);
+  }
+  button.ghost:hover { color: #fff; border-color: rgba(255,255,255,0.3); }
   button.link {
-    border: none;
-    background: none;
-    color: #ff5722;
-    padding: 0;
-    font-size: inherit;
-    text-decoration: underline;
-  }
-  .intent-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 0.75rem;
-    margin-top: 1rem;
-  }
-  .intent-card {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    text-align: left;
-    padding: 1.25rem 1.25rem;
-    border: 1px solid #e0e0e0;
-    border-radius: 12px;
-    background: white;
-    cursor: pointer;
-    transition: transform 0.08s, border-color 0.08s;
-  }
-  .intent-card:hover {
-    border-color: #ff5722;
-    transform: translateY(-1px);
-  }
-  .intent-card strong {
-    font-size: 1.05rem;
-    margin-bottom: 0.35rem;
-    font-weight: 600;
-  }
-  .intent-card span {
-    color: #777;
-    font-size: 0.88rem;
+    border: none; background: none; color: #ff8a65;
+    padding: 0; font-size: inherit; text-decoration: underline;
+    margin-left: 0.4rem;
   }
 </style>
