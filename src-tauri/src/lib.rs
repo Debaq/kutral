@@ -992,6 +992,93 @@ async fn tmdb_person(id: u64, api_key: String) -> Result<PersonInfo, String> {
     })
 }
 
+// ============================================================
+// Vera v3 — motor de recomendaciones (placeholders por ahora)
+// ============================================================
+
+#[derive(Debug, Serialize)]
+pub struct VeraOption {
+    id: String,
+    label: String,
+    description: Option<String>,
+}
+
+fn opt(id: &str, label: &str, desc: Option<&str>) -> VeraOption {
+    VeraOption {
+        id: id.to_string(),
+        label: label.to_string(),
+        description: desc.map(String::from),
+    }
+}
+
+#[tauri::command]
+fn vera_intent_options() -> Vec<VeraOption> {
+    vec![
+        opt("mood_match", "Acorde a cómo me siento", Some("Lo que te encaje hoy.")),
+        opt("mood_shift", "Sacarme del estado", Some("Algo que te lleve a otro lugar.")),
+        opt("background", "Para dejar de fondo", Some("Mientras hacés otra cosa.")),
+        opt("marks_you", "Algo que me marque", Some("Una obra que te toque.")),
+        opt("light", "Algo liviano", Some("Sin pedirte nada.")),
+        opt("surprise", "Sorprendeme", Some("Vera elige una sorpresa.")),
+        opt("decide", "Decide por mí", Some("Una sola opción, sin elegir.")),
+    ]
+}
+
+#[tauri::command]
+fn vera_genre_list() -> Vec<VeraOption> {
+    [
+        ("drama", "Drama"), ("comedy", "Comedia"), ("romance", "Romance"),
+        ("action", "Acción"), ("adventure", "Aventura"), ("scifi", "Ciencia ficción"),
+        ("fantasy", "Fantasía"), ("horror", "Terror"), ("thriller", "Thriller"),
+        ("mystery", "Misterio"), ("crime", "Crimen"), ("war", "Bélico"),
+        ("historical", "Histórico"), ("biographical", "Biográfico"),
+        ("musical", "Musical"), ("western", "Western"), ("documentary", "Documental"),
+        ("animation", "Animación"), ("family", "Familiar"), ("sports", "Deportes"),
+        ("reality", "Reality"), ("magic_realism", "Realismo mágico"),
+        ("anthology", "Antología"),
+    ].iter().map(|(id, label)| opt(id, label, None)).collect()
+}
+
+#[tauri::command]
+fn vera_theme_list() -> Vec<VeraOption> {
+    [
+        ("graphic_violence", "Violencia gráfica"),
+        ("torture", "Tortura"),
+        ("explicit_sex", "Contenido sexual explícito"),
+        ("nudity", "Desnudez"),
+        ("sexual_abuse", "Abuso sexual"),
+        ("child_abuse", "Abuso infantil"),
+        ("domestic_violence", "Violencia doméstica"),
+        ("animal_violence", "Violencia hacia animales"),
+        ("pet_death", "Muerte de mascotas"),
+        ("suicide", "Suicidio"),
+        ("self_harm", "Autolesión"),
+        ("eating_disorder", "Trastornos alimentarios"),
+        ("terminal_illness", "Enfermedad terminal"),
+        ("child_death", "Muerte de niños"),
+        ("pregnancy_loss", "Embarazo o pérdida"),
+        ("abortion", "Aborto"),
+        ("drugs", "Drogas"),
+        ("addiction", "Adicciones"),
+        ("strong_language", "Lenguaje vulgar fuerte"),
+        ("bullying", "Bullying"),
+        ("racism", "Discriminación racial"),
+        ("homophobia", "Discriminación homofóbica"),
+        ("religion_central", "Religión como tema central"),
+        ("partisan_politics", "Política partidaria"),
+    ].iter().map(|(id, label)| opt(id, label, None)).collect()
+}
+
+#[tauri::command]
+fn vera_platform_list() -> Vec<VeraOption> {
+    [
+        ("netflix", "Netflix"), ("prime", "Prime Video"), ("disney", "Disney+"),
+        ("hbo", "Max"), ("apple", "Apple TV+"), ("mubi", "Mubi"),
+        ("paramount", "Paramount+"), ("star", "Star+"), ("crunchyroll", "Crunchyroll"),
+        ("youtube", "YouTube"), ("free_tv", "TV abierta"),
+    ].iter().map(|(id, label)| opt(id, label, None)).collect()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     use tauri_plugin_sql::{Migration, MigrationKind};
@@ -1022,6 +1109,90 @@ pub fn run() {
             );",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 3,
+            description: "vera_v3_schema",
+            sql: "
+                CREATE TABLE IF NOT EXISTS vera_setup (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    mode_io TEXT NOT NULL,
+                    depth_profile TEXT NOT NULL,
+                    languages_known TEXT NOT NULL DEFAULT '[]',
+                    dub_pref TEXT NOT NULL,
+                    platforms TEXT NOT NULL DEFAULT '[]',
+                    excluded_genres TEXT NOT NULL DEFAULT '[]',
+                    excluded_themes TEXT NOT NULL DEFAULT '[]',
+                    personality TEXT NOT NULL DEFAULT 'warm',
+                    completed_at INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS vera_titles (
+                    imdb_id TEXT PRIMARY KEY,
+                    tmdb_id INTEGER,
+                    title TEXT NOT NULL,
+                    year INTEGER,
+                    runtime_min INTEGER,
+                    format TEXT NOT NULL,
+                    genres TEXT NOT NULL DEFAULT '[]',
+                    tone_tags TEXT NOT NULL DEFAULT '[]',
+                    use_tags TEXT NOT NULL DEFAULT '[]',
+                    sensitive_themes TEXT NOT NULL DEFAULT '[]',
+                    age_min INTEGER NOT NULL DEFAULT 0,
+                    country TEXT,
+                    languages TEXT NOT NULL DEFAULT '[]',
+                    platforms TEXT NOT NULL DEFAULT '[]',
+                    popularity REAL DEFAULT 0,
+                    updated_at INTEGER NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_vera_titles_format ON vera_titles(format);
+                CREATE INDEX IF NOT EXISTS idx_vera_titles_age ON vera_titles(age_min);
+
+                CREATE TABLE IF NOT EXISTS vera_responses (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    intent TEXT NOT NULL,
+                    format_pref TEXT,
+                    time_available TEXT,
+                    company TEXT,
+                    ages TEXT,
+                    ages_attentive INTEGER,
+                    tones TEXT NOT NULL DEFAULT '[]',
+                    session_excluded_genres TEXT NOT NULL DEFAULT '[]',
+                    session_excluded_themes TEXT NOT NULL DEFAULT '[]',
+                    created_at INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS vera_weights (
+                    tag TEXT PRIMARY KEY,
+                    weight REAL NOT NULL DEFAULT 1.0,
+                    updated_at INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS vera_templates (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    imdb_id TEXT NOT NULL,
+                    context TEXT NOT NULL,
+                    personality TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    FOREIGN KEY (imdb_id) REFERENCES vera_titles(imdb_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_vera_templates_lookup
+                    ON vera_templates(imdb_id, context, personality);
+
+                CREATE TABLE IF NOT EXISTS vera_feedback (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    imdb_id TEXT NOT NULL,
+                    response_id INTEGER,
+                    rating INTEGER NOT NULL,
+                    finished INTEGER,
+                    why_not TEXT,
+                    created_at INTEGER NOT NULL,
+                    FOREIGN KEY (imdb_id) REFERENCES vera_titles(imdb_id)
+                );
+            ",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -1046,7 +1217,11 @@ pub fn run() {
             sim_key,
             sim_mouse_move_click,
             sim_mouse_wake,
-            sim_diagnostic
+            sim_diagnostic,
+            vera_intent_options,
+            vera_genre_list,
+            vera_theme_list,
+            vera_platform_list
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

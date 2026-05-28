@@ -1235,6 +1235,7 @@
             <button data-nav class:active={tab === "movie"} onclick={() => switchTab("movie")}>Películas</button>
             <button data-nav class:active={tab === "tv"} onclick={() => switchTab("tv")}>Series</button>
             <button data-nav class:active={tab === "anime"} onclick={() => switchTab("anime")}>Anime</button>
+            <a data-nav class="vera-link" href="/vera" title="Wizard de recomendaciones">Vera</a>
           </div>
           <div class="search-wrap">
             <svg class="search-icon" viewBox="0 0 16 16" width="14" height="14">
@@ -1782,6 +1783,15 @@
   }
   .tabs button.active { background: #f5c518; color: #0d0d12; }
   .tabs button:not(.active):hover { color: #eee; background: #1f1f28; }
+  .vera-link {
+    background: transparent; color: #ff5722;
+    padding: 6px 14px; border-radius: 4px; text-decoration: none;
+    font-weight: 600; font-size: 13px;
+    border: 1px solid transparent;
+    display: inline-flex; align-items: center;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+  }
+  .vera-link:hover { background: #1f1f28; color: #ff7043; border-color: #ff5722; }
 
   .search-wrap {
     flex: 1; position: relative;
