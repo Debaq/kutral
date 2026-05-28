@@ -140,8 +140,6 @@ struct CrewRaw {
     profile_path: Option<String>,
     #[serde(default)]
     job: Option<String>,
-    #[serde(default)]
-    department: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -826,7 +824,7 @@ async fn sim_diagnostic() -> Result<String, String> {
     report.push_str(&format!("wayland_display: {}\n", std::env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "(none)".into())));
     report.push_str(&format!("display: {}\n", std::env::var("DISPLAY").unwrap_or_else(|_| "(none)".into())));
     match Enigo::new(&Settings::default()) {
-        Ok(mut e) => {
+        Ok(e) => {
             report.push_str("enigo init: OK\n");
             match e.location() {
                 Ok((x, y)) => report.push_str(&format!("mouse pos: ({}, {})\n", x, y)),
