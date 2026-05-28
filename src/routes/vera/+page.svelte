@@ -1,547 +1,1671 @@
 <script lang="ts">
-  import { onMount } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
-  import { fly, fade } from "svelte/transition";
+  // Vera and Chill — prototipo 100% teclado.
+  // Cero ratón: la app se navega entera con teclas físicas.
+  // Cada pantalla mueve el foco a su acción primaria al montarse.
+  // Catálogo viene de TMDb vía comandos Tauri (ver $lib/vera/tmdb.ts).
+
+  import { fade, fly, scale } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
-  import Database from "@tauri-apps/plugin-sql";
+  import { tick } from "svelte";
+  import { goto } from "$app/navigation";
+
+  import {
+    CARTAS_MAZO,
+    UMBRAL_NO_MATCH,
+    DEMO_PAUSA_MS,
+    DEMO_PAUSA_MINIMA_MS,
+  } from "$lib/vera/config";
   import type {
-    VeraOption,
-    VeraSetup,
-    ModeIO,
-    DepthProfile,
-    DubPref,
-    Personality,
-    IntentId,
-  } from "$lib/vera/types";
-  import { LANG_OPTIONS } from "$lib/vera/types";
+    Pelicula,
+    Contexto,
+    Intencion,
+    EstadoVera,
+    Gesto,
+    Recomendaciones,
+  } from "$lib/vera/tipos";
+  import { recomendar, elegirMazo } from "$lib/vera/motor";
+  import {
+    comentarioMazo,
+    fraseTadan,
+    fraseNoConvence,
+    fraseCierre,
+    fraseNoMatch,
+  } from "$lib/vera/frases";
+  import {
+    cargarCatalogoPorIntent,
+    posterUrl,
+    backdropUrl,
+    TmdbNoKeyError,
+    type FiltrosDiscover,
+  } from "$lib/vera/tmdb";
+  import { INTENCIONES, filtrosParaIntent } from "$lib/vera/intenciones";
+  import { setRating } from "$lib/vera/ratings";
+  import { ayuda, type AtajoLinea } from "$lib/atajos/store.svelte";
+  import Habla from "$lib/habla/Habla.svelte";
 
-  // Pasos quitados del flujo (estado se preserva con default):
-  //   - mode_io: voz/comando aún no implementado.
-  //   - depth: pregunta "cinéfilo o casual" sentía a encuesta de vida.
-  //   - platforms: Kütral reproduce todo internamente; no tiene sentido.
-  //   - exclusions: 23 géneros + 24 temas es demasiado para un wizard.
-  //              Se aprenden por rechazo de carátula/sinopsis en sesión,
-  //              o se editan en Ajustes (pendiente).
-  type Step =
-    | "welcome"
-    | "languages"
-    | "dub_pref"
-    | "setup_done"
-    | "intent"
-    | "intent_chosen";
+  // --- Carga del catálogo ---
+  // B3: el catálogo NO se precarga en onMount. Se carga al confirmar
+  // un intent en la pantalla "intencion", con los filtros del intent.
+  // La entrada queda instantánea.
+  let catalogo = $state<Pelicula[]>([]);
+  let cargandoPool = $state(false);
+  let errorPool = $state<string | null>(null);
+  let errorPoolEsKey = $state(false);
 
-  let step = $state<Step>("welcome");
-  let db: Awaited<ReturnType<typeof Database.load>> | null = null;
-
-  let modeIo = $state<ModeIO>("touch");
-  let depth = $state<DepthProfile>("interested");
-  let languages = $state<string[]>(["es"]);
-  let dubPref = $state<DubPref>("subs_always");
-  let platforms = $state<string[]>([]);
-  let excludedGenres = $state<string[]>([]);
-  let excludedThemes = $state<string[]>([]);
-  let personality = $state<Personality>("warm");
-
-  let intentOptions = $state<VeraOption[]>([]);
-  let genreOptions = $state<VeraOption[]>([]);
-  let themeOptions = $state<VeraOption[]>([]);
-  let platformOptions = $state<VeraOption[]>([]);
-
-  let chosenIntent = $state<IntentId | null>(null);
-  let existingSetup = $state<VeraSetup | null>(null);
-  let loading = $state(true);
-
-  let leftPosters = $state<string[]>([]);
-  let rightPosters = $state<string[]>([]);
-
-  const IMG = "https://image.tmdb.org/t/p";
-
-  interface TmdbResp {
-    results: { id: number; poster_path: string | null; backdrop_path: string | null }[];
-  }
-
-  async function loadPosters() {
-    const apiKey = localStorage.getItem("tmdb_key") || "";
-    if (!apiKey) return;
-    try {
-      const [m, t] = await Promise.all([
-        invoke<TmdbResp>("tmdb_discover", { mediaType: "movie", page: 1, apiKey }),
-        invoke<TmdbResp>("tmdb_discover", { mediaType: "tv", page: 1, apiKey }),
-      ]);
-      const all = [...m.results, ...t.results]
-        .filter((x) => x.poster_path)
-        .map((x) => `${IMG}/w342${x.poster_path}`);
-      const shuffled = all.sort(() => Math.random() - 0.5);
-      const half = Math.ceil(shuffled.length / 2);
-      leftPosters = shuffled.slice(0, half);
-      rightPosters = shuffled.slice(half);
-    } catch (e) {
-      console.warn("[vera] posters fail", e);
+  // Precarga las imágenes del pool en el HTTP cache del navegador para que
+  // el mazo aparezca sin esperar. Async, no bloqueante.
+  function precargarImagenes(pelis: Pelicula[]): void {
+    for (const p of pelis) {
+      const url = posterUrl(p, "w500");
+      if (url) {
+        const img = new Image();
+        img.src = url;
+      }
+      const back = backdropUrl(p, "w780");
+      if (back) {
+        const img = new Image();
+        img.src = back;
+      }
     }
   }
 
-  onMount(async () => {
-    db = await Database.load("sqlite:kutral.db");
-    const rows = await db.select<VeraSetup[]>(
-      "SELECT mode_io, depth_profile, languages_known, dub_pref, platforms, excluded_genres, excluded_themes, personality, completed_at FROM vera_setup WHERE id = 1"
-    );
-    if (rows.length) {
-      const r = rows[0] as unknown as Record<string, string | number>;
-      existingSetup = {
-        mode_io: r.mode_io as ModeIO,
-        depth_profile: r.depth_profile as DepthProfile,
-        languages_known: JSON.parse(r.languages_known as string),
-        dub_pref: r.dub_pref as DubPref,
-        platforms: JSON.parse(r.platforms as string),
-        excluded_genres: JSON.parse(r.excluded_genres as string),
-        excluded_themes: JSON.parse(r.excluded_themes as string),
-        personality: r.personality as Personality,
-        completed_at: r.completed_at as number,
-      };
-      modeIo = existingSetup.mode_io;
-      depth = existingSetup.depth_profile;
-      languages = existingSetup.languages_known;
-      dubPref = existingSetup.dub_pref;
-      platforms = existingSetup.platforms;
-      excludedGenres = existingSetup.excluded_genres;
-      excludedThemes = existingSetup.excluded_themes;
-      personality = existingSetup.personality;
-      step = "intent";
-    }
+  // Pantallas del flujo.
+  type Pantalla =
+    | "entrada"
+    | "contexto"
+    | "intencion"
+    | "mazo"
+    | "tadan"
+    | "noMatch"
+    | "reproduciendo"
+    | "pausa"
+    | "fin";
 
-    [intentOptions, genreOptions, themeOptions, platformOptions] = await Promise.all([
-      invoke<VeraOption[]>("vera_intent_options"),
-      invoke<VeraOption[]>("vera_genre_list"),
-      invoke<VeraOption[]>("vera_theme_list"),
-      invoke<VeraOption[]>("vera_platform_list"),
-    ]);
+  let pantalla = $state<Pantalla>("entrada");
 
-    loading = false;
-    loadPosters();
+  // Estado global Vera.
+  let estado = $state<EstadoVera>({
+    contexto: null,
+    intencion: null,
+    reacciones: [],
+    vistas: [],
+    interesadas: [],
+    horaActual: new Date().getHours(),
   });
 
-  function toggle(list: string[], id: string): string[] {
-    return list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
-  }
+  // Mazo y carta en pantalla.
+  let mazo = $state<Pelicula[]>([]);
+  let indiceMazo = $state(0);
+  let comentarioVivo = $state<string>("");
 
-  async function saveSetup() {
-    if (!db) return;
-    await db.execute(
-      `INSERT INTO vera_setup (id, mode_io, depth_profile, languages_known, dub_pref, platforms, excluded_genres, excluded_themes, personality, completed_at)
-       VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9)
-       ON CONFLICT(id) DO UPDATE SET
-         mode_io = $1, depth_profile = $2, languages_known = $3, dub_pref = $4,
-         platforms = $5, excluded_genres = $6, excluded_themes = $7,
-         personality = $8, completed_at = $9`,
-      [
-        modeIo,
-        depth,
-        JSON.stringify(languages),
-        dubPref,
-        JSON.stringify(platforms),
-        JSON.stringify(excludedGenres),
-        JSON.stringify(excludedThemes),
-        personality,
-        Date.now(),
-      ]
-    );
-    step = "setup_done";
-  }
+  // Recomendaciones del motor.
+  let recs = $state<Recomendaciones>({
+    segura: null,
+    distinta: null,
+    sorpresa: null,
+  });
+  let cartaActual = $state<"segura" | "distinta" | "sorpresa">("segura");
 
-  function pickIntent(id: IntentId) {
-    chosenIntent = id;
-    step = "intent_chosen";
-  }
-
-  function resetSetup() {
-    step = "welcome";
-    existingSetup = null;
-  }
-
-  const stepOrder: Step[] = [
-    "welcome",
-    "languages",
-    "dub_pref",
-    "setup_done",
-  ];
-  const setupSteps = stepOrder.slice(1, -1);
-  let setupStepIndex = $derived(setupSteps.indexOf(step));
-  let progressPct = $derived(
-    setupStepIndex >= 0 ? Math.round(((setupStepIndex + 1) / setupSteps.length) * 100) : 0
+  // Habla state.
+  let hablaVisible = $state(false);
+  let hablaMomento = $state<"bienvenida" | "pausa" | "fin" | "joya">(
+    "bienvenida",
   );
+  let hablaJoya = $state(false);
+  let pausaTimer: ReturnType<typeof setTimeout> | null = null;
+  let pausaInicio = 0;
+
+  // Selección activa de contexto (navegable con flechas).
+  // Regla de marca: "ninos" SIEMPRE implica un adulto presente.
+  // No existe "niños solos" en Kütral.
+  const contextos: {
+    id: Contexto;
+    label: string;
+    icono: string;
+    nota?: string;
+  }[] = [
+    { id: "solo", label: "Solo", icono: "🧍" },
+    { id: "pareja", label: "En pareja", icono: "👥" },
+    { id: "amigos", label: "Con amigos o familia", icono: "👨‍👩‍👦‍👦" },
+    {
+      id: "ninos",
+      label: "Con niños",
+      icono: "👶",
+      nota: "con un adulto cerca",
+    },
+  ];
+  let idxContexto = $state(0);
+
+  // Selección activa de intent (navegable con ←/→).
+  let idxIntencion = $state(0);
+  // Filtros fijados una sola vez al confirmar el intent. NO recalcular ni
+  // derivar — el sort_by de "sorpresa" es random y debe mantenerse estable.
+  let filtrosIntent = $state<FiltrosDiscover | null>(null);
+
+  // Drift de fondo: tomamos las 12 primeras pelis ya cargadas.
+  let driftPosters = $derived(catalogo.slice(0, 12));
+
+  // Refs para mover el foco.
+  let refEntrada = $state<HTMLButtonElement | null>(null);
+  let refContexto = $state<HTMLButtonElement | null>(null);
+  let refIntencion = $state<HTMLButtonElement | null>(null);
+  let refMazo = $state<HTMLElement | null>(null);
+  let refTadan = $state<HTMLButtonElement | null>(null);
+  let refNoMatch = $state<HTMLButtonElement | null>(null);
+  let refPlayer = $state<HTMLButtonElement | null>(null);
+  let refFin = $state<HTMLButtonElement | null>(null);
+
+  // Foco al cambiar de pantalla.
+  $effect(() => {
+    void pantalla;
+    void idxContexto;
+    void idxIntencion;
+    tick().then(() => {
+      if (pantalla === "entrada") refEntrada?.focus();
+      else if (pantalla === "contexto") refContexto?.focus();
+      else if (pantalla === "intencion") refIntencion?.focus();
+      else if (pantalla === "mazo") refMazo?.focus();
+      else if (pantalla === "tadan") refTadan?.focus();
+      else if (pantalla === "noMatch") refNoMatch?.focus();
+      else if (pantalla === "reproduciendo" || pantalla === "pausa")
+        refPlayer?.focus();
+      else if (pantalla === "fin") refFin?.focus();
+    });
+  });
+
+  // --- Navegación ---
+
+  function elegirContextoActual() {
+    const c = contextos[idxContexto];
+    estado.contexto = c.id;
+    pantalla = "intencion";
+  }
+
+  // Handler de selección del intent. CRÍTICO:
+  //   1. Fija filtrosIntent UNA sola vez con filtrosParaIntent(id) y lo guarda
+  //      en $state local. No usar $derived: el sort_by de "sorpresa" es random
+  //      y debe quedar estable para que la cache sea consistente.
+  //   2. Carga el pool con esos filtros (B1 + B2 fusión historial).
+  //   3. Si OK, arma mazo y navega. Si falla, muestra error dentro de "intencion"
+  //      sin perder el flujo. Reusa TmdbNoKeyError del módulo tmdb (no duplica).
+  async function elegirIntencionActual() {
+    const id = INTENCIONES[idxIntencion].id;
+    estado.intencion = id;
+
+    // Resolver filtros una sola vez y persistir.
+    const filtros = filtrosParaIntent(id);
+    filtrosIntent = filtros;
+
+    cargandoPool = true;
+    errorPool = null;
+    errorPoolEsKey = false;
+    try {
+      const pool = await cargarCatalogoPorIntent(filtros);
+      catalogo = pool;
+      mazo = elegirMazo(pool, estado, CARTAS_MAZO);
+      indiceMazo = 0;
+      comentarioVivo = "";
+      // Precarga en background — no esperar.
+      precargarImagenes(pool);
+      pantalla = "mazo";
+    } catch (e: unknown) {
+      if (e instanceof TmdbNoKeyError) {
+        errorPoolEsKey = true;
+        errorPool = e.message;
+      } else {
+        errorPool = e instanceof Error ? e.message : String(e);
+      }
+    } finally {
+      cargandoPool = false;
+    }
+  }
+
+  function saltarASorpresa() {
+    const i = INTENCIONES.findIndex((o) => o.id === "sorpresa");
+    if (i >= 0) idxIntencion = i;
+    void elegirIntencionActual();
+  }
+
+  // Cuando el usuario marca "ya la vi", entramos en modo rating:
+  // se pausa el avance hasta que califique con flechas + Enter (o saltee con I).
+  let ratingPendiente = $state<Pelicula | null>(null);
+  // Selección actual del rating (1-5). Las flechas la mueven.
+  let ratingSel = $state<number>(3);
+
+  function reaccionar(gesto: Gesto) {
+    const p = mazo[indiceMazo];
+    if (!p) return;
+    if (gesto === "vista") {
+      ratingPendiente = p;
+      ratingSel = 3;
+      return;
+    }
+    completarReaccion(p, gesto, undefined);
+  }
+
+  function completarReaccion(
+    p: Pelicula,
+    gesto: Gesto,
+    userRating: number | undefined,
+  ) {
+    estado.reacciones = [
+      ...estado.reacciones,
+      { pelicula: p, gesto, userRating: userRating ?? null },
+    ];
+    if (gesto === "vista") {
+      estado.vistas = [...estado.vistas, p.id];
+      setRating(p.id, {
+        tmdb: p.rating,
+        user: userRating ?? null,
+        visto: true,
+      });
+    }
+    if (gesto === "interes")
+      estado.interesadas = [...estado.interesadas, p.id];
+
+    comentarioVivo = comentarioMazo(p, gesto);
+
+    setTimeout(() => {
+      if (indiceMazo + 1 >= mazo.length) {
+        cerrarMazo();
+      } else {
+        indiceMazo++;
+        comentarioVivo = "";
+      }
+    }, 700);
+  }
+
+  function aplicarRatingMazo(stars: number | null) {
+    const p = ratingPendiente;
+    if (!p) return;
+    ratingPendiente = null;
+    completarReaccion(p, "vista", stars ?? undefined);
+  }
+
+  // Rating final (en pantalla fin): el usuario califica la peli que vio.
+  // null = aún no decidió. 0 (sentinel) = saltó. 1-5 = puntuó.
+  let ratingFinal = $state<number | null>(null);
+  let ratingFinalDecidido = $state(false);
+  let ratingSelFinal = $state<number>(3);
+
+  function aplicarRatingFinal(stars: number | null) {
+    ratingFinal = stars;
+    ratingFinalDecidido = true;
+    const p = peliMostrada();
+    if (p) {
+      setRating(p.id, {
+        tmdb: p.rating,
+        user: stars,
+        visto: true,
+      });
+    }
+  }
+
+  function cerrarMazo() {
+    recs = recomendar(catalogo, estado);
+    const mejor = recs.segura;
+    if (!mejor || mejor.score < UMBRAL_NO_MATCH) {
+      pantalla = "noMatch";
+      return;
+    }
+    cartaActual = "segura";
+    pantalla = "tadan";
+  }
+
+  let textoNoConvence = $state("");
+  function noMeConvence() {
+    textoNoConvence = fraseNoConvence();
+    if (cartaActual === "segura" && recs.distinta) {
+      cartaActual = "distinta";
+      return;
+    }
+    if (cartaActual !== "sorpresa" && recs.sorpresa) {
+      cartaActual = "sorpresa";
+      return;
+    }
+    pantalla = "noMatch";
+  }
+
+  function peliMostrada(): Pelicula | null {
+    if (cartaActual === "segura") return recs.segura?.pelicula ?? null;
+    if (cartaActual === "distinta") return recs.distinta?.pelicula ?? null;
+    return recs.sorpresa?.pelicula ?? null;
+  }
+
+  function reproducir() {
+    pantalla = "reproduciendo";
+    hablaMomento = "bienvenida";
+    hablaJoya = false;
+    hablaVisible = true;
+    setTimeout(() => (hablaVisible = false), 5500);
+  }
+
+  function pausar() {
+    pantalla = "pausa";
+    pausaInicio = Date.now();
+    pausaTimer = setTimeout(() => {
+      const transcurrido = Date.now() - pausaInicio;
+      if (transcurrido < DEMO_PAUSA_MINIMA_MS) return;
+      hablaMomento = "pausa";
+      hablaJoya = false;
+      hablaVisible = true;
+    }, DEMO_PAUSA_MS);
+  }
+
+  function reanudar() {
+    if (pausaTimer) {
+      clearTimeout(pausaTimer);
+      pausaTimer = null;
+    }
+    hablaVisible = false;
+    pantalla = "reproduciendo";
+  }
+
+  function terminar() {
+    if (pausaTimer) clearTimeout(pausaTimer);
+    pantalla = "fin";
+    const esJoya = estado.contexto === "solo" && Math.random() < 0.45;
+    hablaMomento = "fin";
+    hablaJoya = esJoya;
+    hablaVisible = true;
+  }
+
+  function reiniciar() {
+    estado = {
+      contexto: null,
+      intencion: null,
+      reacciones: [],
+      vistas: [],
+      interesadas: [],
+      horaActual: new Date().getHours(),
+    };
+    catalogo = [];
+    mazo = [];
+    indiceMazo = 0;
+    comentarioVivo = "";
+    recs = { segura: null, distinta: null, sorpresa: null };
+    cartaActual = "segura";
+    textoNoConvence = "";
+    hablaVisible = false;
+    idxContexto = 0;
+    idxIntencion = 0;
+    filtrosIntent = null;
+    cargandoPool = false;
+    errorPool = null;
+    errorPoolEsKey = false;
+    ratingPendiente = null;
+    ratingSel = 3;
+    ratingFinal = null;
+    ratingFinalDecidido = false;
+    ratingSelFinal = 3;
+    pantalla = "entrada";
+  }
+
+  function salirDeVera() {
+    if (pausaTimer) clearTimeout(pausaTimer);
+    hablaVisible = false;
+    goto("/");
+  }
+
+  // La ayuda vive en src/lib/atajos/Ayuda.svelte (overlay global).
+  // Acá solo registramos los atajos de cada pantalla en el store compartido.
+  function atajosActuales(): AtajoLinea[] {
+    if (pantalla === "entrada") {
+      return [
+        { tecla: "Enter", desc: "Empezar" },
+        { tecla: "Esc", desc: "Salir de Vera" },
+        { tecla: "I", desc: "Ayuda" },
+      ];
+    }
+    if (pantalla === "contexto") {
+      return [
+        { tecla: "← → ↑ ↓", desc: "Mover entre opciones" },
+        { tecla: "Enter", desc: "Confirmar contexto" },
+        { tecla: "Esc", desc: "Salir de Vera" },
+        { tecla: "I", desc: "Ayuda" },
+      ];
+    }
+    if (pantalla === "intencion") {
+      return [
+        { tecla: "← →", desc: "Elegir intención" },
+        { tecla: "Enter", desc: "Confirmar y buscar" },
+        { tecla: "↓", desc: "Saltar a sorpresa" },
+        { tecla: "Esc", desc: "Salir de Vera" },
+        { tecla: "I", desc: "Ayuda" },
+      ];
+    }
+    if (pantalla === "mazo" && ratingPendiente) {
+      return [
+        { tecla: "← →", desc: "Mover estrella" },
+        { tecla: "Enter", desc: "Confirmar puntuación" },
+        { tecla: "↓", desc: "Saltar sin puntuar" },
+        { tecla: "Esc", desc: "Salir de Vera" },
+        { tecla: "I", desc: "Ayuda" },
+      ];
+    }
+    if (pantalla === "mazo") {
+      return [
+        { tecla: "←", desc: "Pasar (sin opinar)" },
+        { tecla: "↑", desc: "Ya la vi (te pide puntuar)" },
+        { tecla: "→", desc: "Me llama" },
+        { tecla: "Esc", desc: "Salir de Vera" },
+        { tecla: "I", desc: "Ayuda" },
+      ];
+    }
+    if (pantalla === "tadan") {
+      return [
+        { tecla: "Enter", desc: "Play" },
+        { tecla: "↓", desc: "No me convence (otra carta)" },
+        { tecla: "Esc", desc: "Salir de Vera" },
+        { tecla: "I", desc: "Ayuda" },
+      ];
+    }
+    if (pantalla === "noMatch") {
+      return [
+        { tecla: "Enter", desc: "Volver a empezar" },
+        { tecla: "Esc", desc: "Salir de Vera" },
+        { tecla: "I", desc: "Ayuda" },
+      ];
+    }
+    if (pantalla === "reproduciendo") {
+      return [
+        { tecla: "Enter", desc: "Pausar" },
+        { tecla: "↓", desc: "Terminar" },
+        { tecla: "Esc", desc: "Salir de Vera" },
+        { tecla: "I", desc: "Ayuda" },
+      ];
+    }
+    if (pantalla === "pausa") {
+      return [
+        { tecla: "Enter", desc: "Reanudar" },
+        { tecla: "↓", desc: "Terminar" },
+        { tecla: "Esc", desc: "Salir de Vera" },
+        { tecla: "I", desc: "Ayuda" },
+      ];
+    }
+    if (pantalla === "fin" && !ratingFinalDecidido) {
+      return [
+        { tecla: "← →", desc: "Mover estrella" },
+        { tecla: "Enter", desc: "Confirmar puntuación" },
+        { tecla: "↓", desc: "Saltar sin puntuar" },
+        { tecla: "Esc", desc: "Salir de Vera" },
+        { tecla: "I", desc: "Ayuda" },
+      ];
+    }
+    if (pantalla === "fin") {
+      return [
+        { tecla: "Enter", desc: "Otra vuelta" },
+        { tecla: "Esc", desc: "Salir de Vera" },
+        { tecla: "I", desc: "Ayuda" },
+      ];
+    }
+    return [];
+  }
+
+  // Sincroniza los atajos visibles en el overlay de ayuda global
+  // con la pantalla y el modo actual (rating, etc.).
+  $effect(() => {
+    void pantalla;
+    void ratingPendiente;
+    void ratingFinalDecidido;
+    void cargandoPool;
+    void errorPool;
+    ayuda.set(pantalla, atajosActuales());
+  });
+
+  // Atajos limitados a 7 teclas: ← → ↑ ↓ Enter Esc I
+  // I la maneja el overlay global (Ayuda.svelte). Acá lo ignoramos.
+  function onKey(e: KeyboardEvent) {
+    // Si la ayuda está abierta, no interpretamos otras teclas.
+    if (ayuda.visible) return;
+
+    const k = e.key;
+
+    if (hablaVisible && k === "Escape") {
+      hablaVisible = false;
+      e.preventDefault();
+      return;
+    }
+    if (k === "Escape") {
+      e.preventDefault();
+      salirDeVera();
+      return;
+    }
+
+    if (pantalla === "entrada") {
+      if (k === "Enter") {
+        e.preventDefault();
+        pantalla = "contexto";
+      }
+      return;
+    }
+
+    if (pantalla === "contexto") {
+      if (k === "ArrowRight" || k === "ArrowDown") {
+        e.preventDefault();
+        idxContexto = (idxContexto + 1) % contextos.length;
+      } else if (k === "ArrowLeft" || k === "ArrowUp") {
+        e.preventDefault();
+        idxContexto =
+          (idxContexto - 1 + contextos.length) % contextos.length;
+      } else if (k === "Enter") {
+        e.preventDefault();
+        elegirContextoActual();
+      }
+      return;
+    }
+
+    if (pantalla === "intencion") {
+      // Mientras carga el pool, las teclas no hacen nada (excepto Esc global).
+      if (cargandoPool) return;
+      // Si hubo error, Enter reintenta el intent seleccionado.
+      if (errorPool) {
+        if (k === "Enter") {
+          e.preventDefault();
+          void elegirIntencionActual();
+        }
+        return;
+      }
+      if (k === "ArrowRight") {
+        e.preventDefault();
+        idxIntencion = (idxIntencion + 1) % INTENCIONES.length;
+      } else if (k === "ArrowLeft") {
+        e.preventDefault();
+        idxIntencion =
+          (idxIntencion - 1 + INTENCIONES.length) % INTENCIONES.length;
+      } else if (k === "Enter") {
+        e.preventDefault();
+        void elegirIntencionActual();
+      } else if (k === "ArrowDown") {
+        // ↓ siempre = saltar al default (sorpresa). Consistente con mazo/fin.
+        e.preventDefault();
+        saltarASorpresa();
+      }
+      return;
+    }
+
+    if (pantalla === "mazo") {
+      // Modo rating: flechas mueven, Enter confirma, ↓ salta.
+      if (ratingPendiente) {
+        if (k === "ArrowLeft") {
+          e.preventDefault();
+          ratingSel = Math.max(1, ratingSel - 1);
+        } else if (k === "ArrowRight") {
+          e.preventDefault();
+          ratingSel = Math.min(5, ratingSel + 1);
+        } else if (k === "Enter") {
+          e.preventDefault();
+          aplicarRatingMazo(ratingSel);
+        } else if (k === "ArrowDown") {
+          e.preventDefault();
+          aplicarRatingMazo(null);
+        }
+        return;
+      }
+      if (comentarioVivo) return;
+      if (k === "ArrowLeft") {
+        e.preventDefault();
+        reaccionar("pasar");
+      } else if (k === "ArrowUp") {
+        e.preventDefault();
+        reaccionar("vista");
+      } else if (k === "ArrowRight") {
+        e.preventDefault();
+        reaccionar("interes");
+      }
+      return;
+    }
+
+    if (pantalla === "tadan") {
+      if (k === "Enter") {
+        e.preventDefault();
+        reproducir();
+      } else if (k === "ArrowDown") {
+        e.preventDefault();
+        noMeConvence();
+      }
+      return;
+    }
+
+    if (pantalla === "noMatch") {
+      if (k === "Enter") {
+        e.preventDefault();
+        reiniciar();
+      }
+      return;
+    }
+
+    if (pantalla === "reproduciendo") {
+      if (k === "Enter") {
+        e.preventDefault();
+        pausar();
+      } else if (k === "ArrowDown") {
+        e.preventDefault();
+        terminar();
+      }
+      return;
+    }
+
+    if (pantalla === "pausa") {
+      if (k === "Enter") {
+        e.preventDefault();
+        reanudar();
+      } else if (k === "ArrowDown") {
+        e.preventDefault();
+        terminar();
+      }
+      return;
+    }
+
+    if (pantalla === "fin") {
+      if (!ratingFinalDecidido) {
+        if (k === "ArrowLeft") {
+          e.preventDefault();
+          ratingSelFinal = Math.max(1, ratingSelFinal - 1);
+        } else if (k === "ArrowRight") {
+          e.preventDefault();
+          ratingSelFinal = Math.min(5, ratingSelFinal + 1);
+        } else if (k === "Enter") {
+          e.preventDefault();
+          aplicarRatingFinal(ratingSelFinal);
+        } else if (k === "ArrowDown") {
+          e.preventDefault();
+          aplicarRatingFinal(null);
+        }
+        return;
+      }
+      if (k === "Enter") {
+        e.preventDefault();
+        reiniciar();
+      }
+      return;
+    }
+  }
+
+  // Memos del tadán.
+  let peliTadan = $derived(peliMostrada());
+  let textoTadan = $derived(
+    peliTadan ? fraseTadan(estado, peliTadan) : "",
+  );
+  let cierre = $derived(fraseCierre());
 </script>
 
-<svelte:head>
-  <title>Vera and Chill — Kütral</title>
-</svelte:head>
+<svelte:window onkeydown={onKey} />
 
-<div class="vera-bg">
-  <aside class="strip strip-left" aria-hidden="true">
-    <div class="track track-up">
-      {#each [...leftPosters, ...leftPosters] as src}
-        <img src={src} alt="" loading="lazy" />
+<!-- Fondo cinematográfico común -->
+<div class="fondo" aria-hidden="true">
+  {#each driftPosters as p, i (p.id)}
+    <div
+      class="drift"
+      style="background-color:{p.poster}; background-image:url('{posterUrl(p, 'w342')}'); left:{(i * 9) % 100}%; animation-delay:-{i * 2.3}s;"
+    ></div>
+  {/each}
+  <div class="vignette"></div>
+</div>
+
+{#if pantalla === "entrada"}
+  <section class="pantalla entrada" in:fade={{ duration: 380 }}>
+    <h1 class="marca">
+      Vera <em>and Chill</em>
+    </h1>
+    <p class="slogan">Tú pones el sillón. Yo propongo qué ver.</p>
+    <p class="sub">Sesenta segundos. Una sola película. Sin vueltas.</p>
+    <button
+      bind:this={refEntrada}
+      class="btn-grande naranja"
+      onclick={() => (pantalla = "contexto")}
+    >
+      Empezar
+    </button>
+    <p class="atajo">Enter para empezar</p>
+  </section>
+{:else if pantalla === "contexto"}
+  <section class="pantalla contexto" in:fly={{ y: 12, duration: 320 }}>
+    <h2>¿Quiénes están hoy en el sillón?</h2>
+    <div class="opciones" role="radiogroup" aria-label="contexto">
+      {#each contextos as c, i}
+        <button
+          class="opcion"
+          class:activa={i === idxContexto}
+          aria-checked={i === idxContexto}
+          role="radio"
+          tabindex={i === idxContexto ? 0 : -1}
+          bind:this={refContexto}
+          onclick={() => {
+            idxContexto = i;
+            elegirContextoActual();
+          }}
+        >
+          <span class="icono">{c.icono}</span>
+          <span class="label">{c.label}</span>
+          {#if c.nota}
+            <span class="nota">{c.nota}</span>
+          {/if}
+        </button>
       {/each}
     </div>
-  </aside>
+    <p class="atajo">
+      <kbd>←</kbd> <kbd>→</kbd> elegir · <kbd>Enter</kbd> confirmar
+    </p>
+  </section>
+{:else if pantalla === "intencion"}
+  <section class="pantalla intencion" in:fly={{ y: 12, duration: 320 }}>
+    <h2>¿Qué buscas hoy?</h2>
+    <div class="opciones" role="radiogroup" aria-label="intencion">
+      {#each INTENCIONES as o, i}
+        <button
+          class="opcion"
+          class:activa={i === idxIntencion}
+          aria-checked={i === idxIntencion}
+          role="radio"
+          tabindex={i === idxIntencion ? 0 : -1}
+          bind:this={refIntencion}
+          disabled={cargandoPool}
+          onclick={() => {
+            idxIntencion = i;
+            void elegirIntencionActual();
+          }}
+        >
+          <span class="icono">{o.icono}</span>
+          <span class="label">{o.label}</span>
+          <span class="nota">{o.desc}</span>
+        </button>
+      {/each}
+    </div>
 
-  <main class="vera-stage">
-    <nav class="topbar">
-      <span class="brandmark">Vera <em>and Chill</em></span>
-      <a class="catalog" href="/vera/catalog">Catálogo</a>
-    </nav>
-
-    {#if setupStepIndex >= 0}
-      <div class="progress-bar" transition:fade={{ duration: 200 }}>
-        <div class="fill" style="width: {progressPct}%"></div>
+    {#if cargandoPool}
+      <div class="overlay-cargando" in:fade={{ duration: 200 }}>
+        <p>Buscando lo que pediste…</p>
       </div>
-    {/if}
-
-    {#if loading}
-      <div class="loading">Cargando…</div>
+    {:else if errorPool}
+      <div class="estado error">
+        <p>⚠ {errorPool}</p>
+        {#if errorPoolEsKey}
+          <p class="error-sub">
+            Configura la API key TMDb desde la pantalla principal de Kütral
+            o desde <code>/vera/catalog</code>. Después <kbd>Enter</kbd> para
+            reintentar.
+          </p>
+        {:else}
+          <p class="error-sub">
+            <kbd>Enter</kbd> para reintentar.
+          </p>
+        {/if}
+      </div>
     {:else}
-      {#key step}
-        <div class="content" in:fly={{ y: 16, duration: 320, easing: cubicOut }} out:fade={{ duration: 120 }}>
-          {#if step === "welcome"}
-            <h1 class="hero">
-              <span class="brand">Vera</span> <em class="and-chill">and Chill</em>
-            </h1>
-            <p class="lede">Tú pones el sillón. Yo pongo qué ver.</p>
-            <p class="meta">Dos cosas rápidas y empezamos.</p>
-            <div class="nav-row">
-              <a class="btn ghost big" href="/">← Volver</a>
-              <button class="primary big" onclick={() => (step = "languages")}>Vamos →</button>
-            </div>
+      <p class="atajo">
+        <kbd>←</kbd> <kbd>→</kbd> elegir · <kbd>Enter</kbd> confirmar ·
+        <kbd>↓</kbd> sorpresa
+      </p>
+    {/if}
+  </section>
+{:else if pantalla === "mazo"}
+  <section class="pantalla mazo" bind:this={refMazo} tabindex="-1">
+    <p class="contador">Carta {indiceMazo + 1} / {mazo.length}</p>
 
-          {:else if step === "languages"}
-            <h2>¿Qué idiomas entiendes de oído?</h2>
-            <p class="hint">Sin subtítulos. Marca todos los que apliquen.</p>
-            <div class="chips">
-              {#each LANG_OPTIONS as lang}
-                <button
-                  class="chip"
-                  class:on={languages.includes(lang.id)}
-                  onclick={() => (languages = toggle(languages, lang.id))}
-                >{lang.label}</button>
-              {/each}
-            </div>
-            <div class="nav-row">
-              <button class="ghost" onclick={() => (step = "welcome")}>Atrás</button>
-              <button class="primary" onclick={() => (step = "dub_pref")}>Siguiente →</button>
-            </div>
+    {#if mazo[indiceMazo]}
+      {@const p = mazo[indiceMazo]}
+      {#key p.id}
+        <div class="ficha-mazo" in:fly={{ y: 16, duration: 280 }}>
+          <div
+            class="carta-poster"
+            style="background-color:{p.poster}; background-image:url('{posterUrl(p, 'w342')}')"
+          >
+            <div class="poster-overlay"></div>
+          </div>
 
-          {:else if step === "dub_pref"}
-            <h2>Cuando está en un idioma que no entiendes…</h2>
-            <div class="cards">
-              <button class="opt-card" class:on={dubPref === "subs_always"} onclick={() => (dubPref = "subs_always")}>
-                <strong>Subtítulos siempre</strong>
-              </button>
-              <button class="opt-card" class:on={dubPref === "dub_always"} onclick={() => (dubPref = "dub_always")}>
-                <strong>Doblaje siempre</strong>
-              </button>
-              <button class="opt-card" class:on={dubPref === "depends"} onclick={() => (dubPref = "depends")}>
-                <strong>Depende</strong>
-              </button>
-              <button class="opt-card" class:on={dubPref === "indifferent"} onclick={() => (dubPref = "indifferent")}>
-                <strong>Me da igual</strong>
-              </button>
-            </div>
-            <div class="nav-row">
-              <button class="ghost" onclick={() => (step = "languages")}>Atrás</button>
-              <button class="primary" onclick={saveSetup}>Listo →</button>
-            </div>
-
-          {:else if step === "setup_done"}
-            <h1 class="hero">Listo.</h1>
-            <p class="lede">Vera ya te conoce. ¿Empezamos?</p>
-            <div class="nav-row">
-              <button class="primary big" onclick={() => (step = "intent")}>Pedir recomendación →</button>
-            </div>
-
-          {:else if step === "intent"}
-            <h2>¿Qué buscás hoy?</h2>
-            {#if existingSetup}
-              <p class="hint">
-                Setup del {new Date(existingSetup.completed_at).toLocaleDateString()}.
-                <button class="link" onclick={resetSetup}>Reconfigurar</button>
+          <div class="carta-info">
+            <h2 class="info-titulo">{p.titulo}</h2>
+            <p class="info-meta">
+              {p.anio} · {p.director}
+              {#if p.runtime} · {p.runtime} min{/if}
+              {#if p.rating}
+                <span class="tmdb-rating">★ {p.rating.toFixed(1)} TMDb</span>
+              {/if}
+            </p>
+            <p class="info-generos">{p.generos.join(" · ")}</p>
+            <p class="info-descripcion">{p.descripcion || p.gancho}</p>
+            {#if p.actores.length}
+              <p class="info-actores">
+                <span class="etiqueta">Con</span>
+                {p.actores.slice(0, 4).join(", ")}
               </p>
             {/if}
-            <div class="intent-grid">
-              {#each intentOptions as it}
-                <button class="intent-card" onclick={() => pickIntent(it.id as IntentId)}>
-                  <strong>{it.label}</strong>
-                  {#if it.description}<span>{it.description}</span>{/if}
-                </button>
-              {/each}
-            </div>
-
-          {:else if step === "intent_chosen"}
-            <h2>Elegiste</h2>
-            <p class="lede"><em>{intentOptions.find((o) => o.id === chosenIntent)?.label}</em></p>
-            <p class="hint">Capa 2 (Forma) y motor de coincidencia: próxima iteración.</p>
-            <div class="nav-row">
-              <button class="ghost" onclick={() => (step = "intent")}>← Otra intención</button>
-            </div>
-          {/if}
+            {#if p.trivia}
+              <p class="info-trivia">
+                <span>💡</span>
+                {p.trivia}
+              </p>
+            {/if}
+          </div>
         </div>
       {/key}
     {/if}
-  </main>
 
-  <aside class="strip strip-right" aria-hidden="true">
-    <div class="track track-down">
-      {#each [...rightPosters, ...rightPosters] as src}
-        <img src={src} alt="" loading="lazy" />
-      {/each}
+    {#if ratingPendiente}
+      <div class="prompt-rating" in:fade={{ duration: 220 }}>
+        <p class="prompt-titulo">¿Cómo la calificas?</p>
+        <div class="estrellas-elegir">
+          {#each [1, 2, 3, 4, 5] as n}
+            <span class="estrella" class:activa={n <= ratingSel}>★</span>
+          {/each}
+          <span class="rating-num">{ratingSel}/5</span>
+        </div>
+        <p class="prompt-ayuda">
+          <kbd>←</kbd> <kbd>→</kbd> mover · <kbd>Enter</kbd> confirmar ·
+          <kbd>↓</kbd> saltar
+        </p>
+      </div>
+    {:else if comentarioVivo}
+      <p class="comentario" in:fade={{ duration: 200 }}>
+        Vera: {comentarioVivo}
+      </p>
+    {:else}
+      <p class="ayuda">Reacciona con las flechas</p>
+    {/if}
+
+    <div class="atajos-mazo">
+      <div class="atajo-box">
+        <kbd>←</kbd>
+        <span>pasar</span>
+      </div>
+      <div class="atajo-box">
+        <kbd>↑</kbd>
+        <span>ya la vi</span>
+      </div>
+      <div class="atajo-box">
+        <kbd>→</kbd>
+        <span>me llama</span>
+      </div>
     </div>
-  </aside>
-</div>
+  </section>
+{:else if pantalla === "tadan" && peliTadan}
+  <section class="pantalla tadan" in:fade={{ duration: 400 }}>
+    {#if peliTadan.backdropPath}
+      {#key peliTadan.id}
+        <div
+          class="backdrop-tadan"
+          style="background-image:url('{backdropUrl(peliTadan, 'w1280')}')"
+          aria-hidden="true"
+        ></div>
+      {/key}
+    {/if}
+
+    {#if textoNoConvence}
+      <p class="vera-line dura" in:fade={{ duration: 200 }}>
+        Vera: {textoNoConvence}
+      </p>
+    {/if}
+    <p class="vera-line">{textoTadan}</p>
+
+    {#key peliTadan.id}
+      <div class="ficha-tadan" in:scale={{ start: 0.94, duration: 360, easing: cubicOut }}>
+        <div
+          class="poster-tadan"
+          style="background-color:{peliTadan.poster}; background-image:url('{posterUrl(peliTadan, 'w500')}')"
+        ></div>
+        <div class="info-tadan">
+          <h2 class="tadan-titulo">{peliTadan.titulo}</h2>
+          <p class="info-meta">
+            {peliTadan.anio} · {peliTadan.director}
+            {#if peliTadan.runtime} · {peliTadan.runtime} min{/if}
+            {#if peliTadan.rating}
+              <span class="tmdb-rating">★ {peliTadan.rating.toFixed(1)} TMDb</span>
+            {/if}
+          </p>
+          <p class="info-generos">{peliTadan.generos.join(" · ")}</p>
+          <p class="info-descripcion">{peliTadan.descripcion}</p>
+          {#if peliTadan.actores.length}
+            <p class="info-actores">
+              <span class="etiqueta">Con</span>
+              {peliTadan.actores.slice(0, 4).join(", ")}
+            </p>
+          {/if}
+          {#if peliTadan.trivia}
+            <p class="info-trivia">
+              <span>💡</span>
+              {peliTadan.trivia}
+            </p>
+          {/if}
+        </div>
+      </div>
+    {/key}
+
+    <p class="gancho">{peliTadan.gancho}</p>
+
+    <button
+      bind:this={refTadan}
+      class="btn-grande naranja"
+      onclick={reproducir}
+    >
+      ▶ Play
+    </button>
+
+    <p class="cierre">{cierre}</p>
+
+    <p class="atajo">
+      <kbd>Enter</kbd> play · <kbd>↓</kbd> no me convence
+    </p>
+  </section>
+{:else if pantalla === "noMatch"}
+  <section class="pantalla no-match" in:fade={{ duration: 400 }}>
+    <p class="vera-line grande">{fraseNoMatch()}</p>
+    <button
+      bind:this={refNoMatch}
+      class="btn-grande naranja"
+      onclick={reiniciar}
+    >
+      Volver a empezar
+    </button>
+    <p class="atajo"><kbd>Enter</kbd> para volver a empezar</p>
+  </section>
+{:else if pantalla === "reproduciendo" && peliTadan}
+  <section class="pantalla reproduciendo">
+    <div
+      class="player"
+      style="background-color:{peliTadan.poster}; background-image:url('{backdropUrl(peliTadan, 'w1280') || posterUrl(peliTadan, 'w780')}')"
+    >
+      <div class="player-overlay"></div>
+      <div class="player-titulo">▶ {peliTadan.titulo}</div>
+    </div>
+    <div class="player-controles">
+      <button bind:this={refPlayer} class="btn-control" onclick={pausar}>
+        ⏸ Pausar
+      </button>
+      <button class="btn-control" onclick={terminar}>⏹ Terminar</button>
+    </div>
+    <p class="atajo">
+      <kbd>Enter</kbd> pausar · <kbd>↓</kbd> terminar
+    </p>
+  </section>
+{:else if pantalla === "pausa" && peliTadan}
+  <section class="pantalla pausa">
+    <div
+      class="player en-pausa"
+      style="background-color:{peliTadan.poster}; background-image:url('{backdropUrl(peliTadan, 'w1280') || posterUrl(peliTadan, 'w780')}')"
+    >
+      <div class="player-overlay"></div>
+      <div class="player-titulo">⏸ {peliTadan.titulo}</div>
+      <div class="badge-pausa">En pausa</div>
+    </div>
+    <div class="player-controles">
+      <button bind:this={refPlayer} class="btn-control" onclick={reanudar}>
+        ▶ Reanudar
+      </button>
+      <button class="btn-control" onclick={terminar}>⏹ Terminar</button>
+    </div>
+    <p class="atajo">
+      <kbd>Enter</kbd> reanudar · <kbd>↓</kbd> terminar
+    </p>
+  </section>
+{:else if pantalla === "fin"}
+  <section class="pantalla fin" in:fade={{ duration: 380 }}>
+    {#if !ratingFinalDecidido}
+      <p class="vera-line grande">¿Cómo te dejó?</p>
+      {#if peliTadan}
+        <p class="fin-peli">{peliTadan.titulo}</p>
+      {/if}
+      <div class="estrellas-elegir big">
+        {#each [1, 2, 3, 4, 5] as n}
+          <span class="estrella" class:activa={n <= ratingSelFinal}>★</span>
+        {/each}
+        <span class="rating-num">{ratingSelFinal}/5</span>
+      </div>
+      <p class="atajo">
+        <kbd>←</kbd> <kbd>→</kbd> mover · <kbd>Enter</kbd> confirmar ·
+        <kbd>↓</kbd> saltar
+      </p>
+    {:else}
+      <p class="vera-line grande">
+        {#if ratingFinal != null}
+          {ratingFinal} {ratingFinal === 1 ? "estrella" : "estrellas"}. Gracias.
+        {:else}
+          Listo.
+        {/if}
+      </p>
+      <button
+        bind:this={refFin}
+        class="btn-grande naranja"
+        onclick={reiniciar}
+      >
+        Otra vuelta
+      </button>
+      <p class="atajo"><kbd>Enter</kbd> para otra vuelta</p>
+    {/if}
+  </section>
+{/if}
+
+<!--
+  Hint global y overlay de ayuda viven en +layout.svelte (Ayuda.svelte).
+  Acá solo registramos los atajos por pantalla vía $effect → ayuda.set().
+-->
+
+{#if estado.contexto}
+  <Habla
+    contexto={estado.contexto}
+    momento={hablaMomento}
+    visible={hablaVisible}
+    joya={hablaJoya}
+    onCerrar={() => (hablaVisible = false)}
+  />
+{/if}
 
 <style>
-  :global(html), :global(body) {
-    margin: 0; padding: 0; height: 100%;
-    background: #0a0a12;
+  :global(body) {
+    margin: 0;
+    background: #0a0608;
+    color: #fff8e7;
+    font-family:
+      "Inter",
+      system-ui,
+      -apple-system,
+      sans-serif;
+    overflow-x: hidden;
   }
-  .vera-bg {
-    min-height: 100vh;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(420px, 720px) minmax(0, 1fr);
-    background:
-      radial-gradient(circle at 50% 0%, rgba(255,87,34,0.10), transparent 60%),
-      linear-gradient(180deg, #0a0a12 0%, #15080a 100%);
-    color: #e8e8ea;
-    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  :global(button:focus-visible),
+  :global([role="radio"]:focus-visible) {
+    outline: 3px solid #ffae5c;
+    outline-offset: 4px;
+  }
+  :global(.mazo:focus-visible) {
+    outline: none;
+  }
+
+  .fondo {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
     overflow: hidden;
-    position: relative;
-  }
-  .strip {
-    overflow: hidden;
-    position: relative;
-    height: 100vh;
-    mask-image: linear-gradient(180deg, transparent 0%, black 12%, black 88%, transparent 100%);
-  }
-  .strip::after {
-    content: ""; position: absolute; inset: 0;
-    background: linear-gradient(90deg, rgba(10,10,18,0.7), transparent 30%, transparent 70%, rgba(10,10,18,0.7));
     pointer-events: none;
   }
-  .strip-left::after  { background: linear-gradient(90deg, transparent 0%, transparent 60%, rgba(10,10,18,0.85) 100%); }
-  .strip-right::after { background: linear-gradient(90deg, rgba(10,10,18,0.85) 0%, transparent 40%, transparent 100%); }
-  .track {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    padding: 14px;
-    will-change: transform;
+  .drift {
+    position: absolute;
+    width: 160px;
+    height: 240px;
+    border-radius: 12px;
+    top: -40px;
+    opacity: 0.18;
+    filter: blur(3px);
+    background-size: cover;
+    background-position: center;
+    animation: drift 38s linear infinite;
   }
-  .track img {
-    width: 100%;
-    border-radius: 6px;
-    display: block;
-    opacity: 0.55;
-    filter: saturate(0.85) brightness(0.8);
-    transition: opacity 0.4s;
+  .vignette {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(
+      ellipse at center,
+      transparent 30%,
+      rgba(10, 6, 8, 0.92) 90%
+    );
   }
-  .track-up   { animation: drift-up   90s linear infinite; }
-  .track-down { animation: drift-down 110s linear infinite; }
-  @keyframes drift-up   { from { transform: translateY(0); } to { transform: translateY(-50%); } }
-  @keyframes drift-down { from { transform: translateY(-50%); } to { transform: translateY(0); } }
-  @media (max-width: 1100px) {
-    .vera-bg { grid-template-columns: 1fr; }
-    .strip { display: none; }
+  @keyframes drift {
+    0% {
+      transform: translateY(-20%);
+    }
+    100% {
+      transform: translateY(120vh);
+    }
   }
 
-  .vera-stage {
-    display: flex;
-    flex-direction: column;
-    padding: 24px 32px 64px;
-    height: 100vh;
-    overflow-y: auto;
+  .pantalla {
     position: relative;
     z-index: 1;
-  }
-  .topbar {
-    display: flex; justify-content: space-between; align-items: center;
-    margin-bottom: 32px;
-  }
-  .topbar a {
-    color: #888; text-decoration: none; font-size: 13px;
-    padding: 6px 10px; border-radius: 6px;
-    transition: color 0.15s, background 0.15s;
-  }
-  .topbar a:hover { color: #fff; background: rgba(255,255,255,0.05); }
-
-  .progress-bar {
-    height: 3px; background: rgba(255,255,255,0.08); border-radius: 2px;
-    overflow: hidden; margin-bottom: 48px;
-  }
-  .progress-bar .fill {
-    height: 100%; background: linear-gradient(90deg, #ff5722, #ff8a65);
-    transition: width 0.35s cubic-bezier(.2,.7,.2,1);
-  }
-
-  .loading { color: #666; text-align: center; padding: 4rem 0; }
-
-  .content {
-    flex: 1;
-    display: flex; flex-direction: column;
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
     justify-content: center;
-    min-height: 60vh;
+    padding: 36px 20px;
+    text-align: center;
   }
-  .hero {
-    font-size: clamp(2.5rem, 6vw, 4rem);
-    font-weight: 300;
-    line-height: 1.05;
-    margin: 0 0 1rem;
-    letter-spacing: -0.02em;
-  }
-  .brand {
-    background: linear-gradient(90deg, #ff5722, #ffab40);
-    -webkit-background-clip: text; background-clip: text;
-    color: transparent;
-    font-weight: 600;
-  }
-  .lede {
-    font-size: 1.4rem;
-    color: #c8c8cc;
-    margin: 0 0 0.5rem;
-    font-weight: 300;
-  }
-  .meta { color: #888; font-size: 1rem; margin: 0 0 2.5rem; }
-  h2 {
-    font-size: clamp(1.6rem, 3vw, 2.2rem);
-    font-weight: 400;
-    margin: 0 0 1.5rem;
-    line-height: 1.2;
-    letter-spacing: -0.01em;
-  }
-  .sub-h {
-    font-size: 0.8rem;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: #888;
-    margin: 1.75rem 0 0.75rem;
-    font-weight: 600;
-  }
-  .hint {
-    color: #888; font-size: 0.95rem; margin: -0.5rem 0 1.5rem;
+  .pantalla:focus {
+    outline: none;
   }
 
-  .cards {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 12px;
-    margin-bottom: 2rem;
+  /* --- Entrada --- */
+  .marca {
+    font-size: 64px;
+    margin: 0 0 8px;
+    color: #ffd6a8;
+    text-shadow:
+      0 0 24px rgba(255, 140, 60, 0.55),
+      0 0 56px rgba(255, 100, 40, 0.35);
+    letter-spacing: -1px;
   }
-  .opt-card {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 14px;
-    padding: 1.25rem 1.25rem;
-    color: #eee;
-    text-align: left;
-    cursor: pointer;
-    font-family: inherit;
-    display: flex; flex-direction: column; gap: 4px;
-    transition: transform 0.15s, border-color 0.15s, background 0.15s;
+  .marca em {
+    color: #ffae5c;
+    font-style: italic;
+    font-weight: 300;
   }
-  .opt-card:hover {
-    background: rgba(255,255,255,0.07);
-    border-color: rgba(255,255,255,0.15);
-    transform: translateY(-2px);
+  .slogan {
+    color: #ffd6a8;
+    margin: 0 0 4px;
+    font-size: 22px;
+    font-style: italic;
+    text-shadow: 0 0 16px rgba(255, 140, 60, 0.3);
   }
-  .opt-card.on {
-    background: rgba(255,87,34,0.12);
-    border-color: #ff5722;
-    box-shadow: 0 0 0 1px #ff5722, 0 8px 24px rgba(255,87,34,0.2);
+  .sub {
+    color: #d9c0a4;
+    margin: 0 0 36px;
+    font-size: 16px;
   }
-  .opt-card strong { font-size: 1.05rem; font-weight: 600; }
-  .opt-card span { font-size: 0.85rem; color: #999; }
+  .estado {
+    margin-top: 16px;
+    color: #d9c0a4;
+    font-size: 17px;
+  }
+  .estado.error {
+    color: #ffae5c;
+    max-width: 520px;
+  }
+  .error-sub {
+    color: #d9c0a4;
+    font-size: 14px;
+    margin-top: 8px;
+  }
+  .error-sub code {
+    background: rgba(255, 140, 60, 0.18);
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
 
-  .chips {
-    display: flex; flex-wrap: wrap; gap: 8px;
-    margin-bottom: 2rem;
-  }
-  .chips.tight { gap: 6px; }
-  .chip {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.1);
-    color: #ccc;
-    padding: 0.55rem 1rem;
+  /* --- Botones grandes --- */
+  .btn-grande {
+    font-size: 22px;
+    padding: 16px 36px;
     border-radius: 999px;
+    border: none;
     cursor: pointer;
-    font-size: 0.92rem;
-    font-family: inherit;
-    transition: all 0.15s;
+    font-weight: 600;
+    transition:
+      transform 0.15s,
+      box-shadow 0.15s;
   }
-  .chip:hover {
-    background: rgba(255,255,255,0.08);
-    color: #fff;
+  .btn-grande.naranja {
+    background: linear-gradient(135deg, #ff7a2e, #ff4a1c);
+    color: #1a0a04;
+    box-shadow:
+      0 8px 24px rgba(255, 100, 40, 0.45),
+      0 0 32px rgba(255, 140, 60, 0.35);
   }
-  .chip.on {
-    background: #ff5722;
-    border-color: #ff5722;
-    color: #fff;
-    font-weight: 500;
+  .btn-grande.naranja:hover,
+  .btn-grande.naranja:focus-visible {
+    transform: translateY(-2px);
+    box-shadow:
+      0 12px 32px rgba(255, 100, 40, 0.55),
+      0 0 48px rgba(255, 140, 60, 0.5);
   }
 
-  .intent-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 12px;
+  /* --- Contexto + Intención (mismo layout) --- */
+  .contexto h2,
+  .intencion h2 {
+    font-size: 32px;
+    margin: 0 0 32px;
+    color: #ffe6c8;
   }
-  .intent-card {
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 14px;
-    padding: 1.4rem;
-    color: #eee;
-    text-align: left;
+  .opciones {
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .opcion {
+    background: rgba(50, 22, 12, 0.65);
+    border: 1.5px solid rgba(255, 140, 60, 0.35);
+    color: #ffe6c8;
+    padding: 22px 22px;
+    border-radius: 18px;
+    font-size: 18px;
+    min-width: 150px;
+    max-width: 180px;
     cursor: pointer;
-    font-family: inherit;
-    display: flex; flex-direction: column; gap: 6px;
-    transition: transform 0.15s, border-color 0.15s, background 0.15s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.18s;
+    position: relative;
   }
-  .intent-card:hover {
-    background: rgba(255,87,34,0.08);
-    border-color: rgba(255,87,34,0.4);
+  .opcion .label {
+    font-size: 19px;
+    text-align: center;
+    line-height: 1.2;
+  }
+  .opcion .nota {
+    font-size: 11px;
+    color: #ffae5c;
+    font-style: italic;
+    opacity: 0.85;
+    margin-top: 2px;
+  }
+  .opcion.activa {
+    border-color: #ff7a2e;
+    background: rgba(80, 32, 14, 0.95);
     transform: translateY(-3px);
+    box-shadow: 0 0 32px rgba(255, 140, 60, 0.35);
   }
-  .intent-card strong { font-size: 1.1rem; font-weight: 600; }
-  .intent-card span { font-size: 0.88rem; color: #999; }
-
-  .nav-row {
-    display: flex; justify-content: space-between; gap: 1rem;
-    margin-top: 2.5rem;
+  .opcion:disabled {
+    opacity: 0.5;
+    cursor: wait;
+    transform: none;
   }
-  .nav-row > :only-child { margin-left: auto; }
+  .icono {
+    font-size: 38px;
+  }
+  .overlay-cargando {
+    margin-top: 24px;
+    color: #ffd6a8;
+    font-style: italic;
+  }
+  .overlay-cargando::after {
+    content: "";
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    margin-left: 10px;
+    border: 2px solid #ffae5c;
+    border-radius: 50%;
+    border-right-color: transparent;
+    animation: vera-spin 0.8s linear infinite;
+    vertical-align: middle;
+  }
+  @keyframes vera-spin {
+    to { transform: rotate(360deg); }
+  }
 
-  button {
-    padding: 0.75rem 1.5rem;
-    font-size: 0.95rem;
-    border-radius: 10px;
-    cursor: pointer;
+  /* --- Atajos --- */
+  .atajo {
+    color: #998878;
+    font-size: 13px;
+    margin-top: 18px;
+    letter-spacing: 0.5px;
+  }
+  :global(kbd) {
+    background: rgba(255, 140, 60, 0.18);
+    border: 1px solid rgba(255, 140, 60, 0.4);
+    border-radius: 6px;
+    padding: 2px 8px;
     font-family: inherit;
-    font-weight: 500;
-    transition: all 0.15s;
-    border: 1px solid transparent;
+    font-size: 13px;
+    color: #ffe6c8;
+    margin: 0 2px;
   }
-  button.primary {
-    background: #ff5722;
+
+  /* --- Mazo: ficha con poster + info al lado --- */
+  .contador {
+    color: #d9c0a4;
+    font-size: 13px;
+    margin: 0 0 14px;
+    letter-spacing: 1px;
+  }
+  .ficha-mazo {
+    display: flex;
+    gap: 24px;
+    align-items: stretch;
+    max-width: 820px;
+    width: 100%;
+    margin: 0 auto 16px;
+    text-align: left;
+  }
+  .carta-poster {
+    width: 220px;
+    min-width: 220px;
+    height: 330px;
+    border-radius: 14px;
+    background-size: cover;
+    background-position: center;
+    box-shadow:
+      0 16px 48px rgba(0, 0, 0, 0.6),
+      0 0 32px rgba(255, 140, 60, 0.18);
+    position: relative;
+    overflow: hidden;
+  }
+  .poster-overlay {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      180deg,
+      transparent 60%,
+      rgba(0, 0, 0, 0.5) 100%
+    );
+    pointer-events: none;
+  }
+  .carta-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    color: #ffe6c8;
+  }
+  .info-titulo {
+    font-size: 26px;
+    margin: 0;
+    color: #ffe6c8;
+    line-height: 1.15;
+  }
+  .info-meta {
+    font-size: 13px;
+    color: #d9c0a4;
+    margin: 0;
+    letter-spacing: 0.3px;
+  }
+  .info-generos {
+    font-size: 12px;
+    color: #ffae5c;
+    margin: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+  }
+  .info-descripcion {
+    font-size: 14px;
+    line-height: 1.5;
+    color: #e6d4bd;
+    margin: 4px 0 0;
+    max-height: 7em;
+    overflow: hidden;
+  }
+  .info-actores {
+    font-size: 13px;
+    color: #d9c0a4;
+    margin: 0;
+  }
+  .etiqueta {
+    color: #998878;
+    margin-right: 4px;
+  }
+  .info-trivia {
+    font-size: 13px;
+    color: #ffd6a8;
+    background: rgba(255, 140, 60, 0.12);
+    padding: 8px 12px;
+    border-radius: 10px;
+    border-left: 3px solid #ff7a2e;
+    margin: 6px 0 0;
+    font-style: italic;
+  }
+  .info-trivia span {
+    margin-right: 4px;
+    font-style: normal;
+  }
+  .comentario {
+    color: #ffd6a8;
+    font-size: 18px;
+    font-style: italic;
+    min-height: 26px;
+    margin: 4px 0 10px;
+  }
+  .ayuda {
+    color: #998878;
+    font-size: 13px;
+    min-height: 26px;
+    margin: 4px 0 10px;
+  }
+  /* --- Prompt de rating (en mazo cuando "ya la vi") --- */
+  .prompt-rating {
+    background: rgba(80, 32, 14, 0.75);
+    border: 1.5px solid rgba(255, 140, 60, 0.55);
+    border-radius: 16px;
+    padding: 14px 22px;
+    margin: 4px 0 12px;
+  }
+  .prompt-titulo {
+    color: #ffe6c8;
+    font-size: 17px;
+    margin: 0 0 8px;
+  }
+  .prompt-ayuda {
+    color: #998878;
+    font-size: 12px;
+    margin: 8px 0 0;
+  }
+  /* Estrellas seleccionables: las activas brillan, las inactivas son tenues. */
+  .estrellas-elegir {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    align-items: center;
+    margin: 6px 0;
+  }
+  .estrellas-elegir.big {
+    gap: 14px;
+    margin: 18px 0;
+  }
+  .estrellas-elegir .estrella {
+    color: rgba(255, 174, 92, 0.25);
+    font-size: 32px;
+    transition:
+      color 0.15s,
+      text-shadow 0.15s,
+      transform 0.15s;
+  }
+  .estrellas-elegir.big .estrella {
+    font-size: 48px;
+  }
+  .estrellas-elegir .estrella.activa {
+    color: #ffd66a;
+    text-shadow: 0 0 14px rgba(255, 200, 80, 0.65);
+    transform: translateY(-1px);
+  }
+  .estrellas-elegir .rating-num {
+    margin-left: 14px;
+    color: #ffd6a8;
+    font-size: 16px;
+    font-weight: 600;
+    min-width: 36px;
+    text-align: left;
+  }
+  .estrellas-elegir.big .rating-num {
+    font-size: 22px;
+  }
+  /* --- Rating TMDb destacado --- */
+  .tmdb-rating {
+    background: rgba(255, 170, 80, 0.18);
+    border: 1px solid rgba(255, 170, 80, 0.55);
+    color: #ffd66a;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-weight: 600;
+    margin-left: 8px;
+    font-size: 13px;
+    letter-spacing: 0.3px;
+  }
+  .fin-peli {
+    color: #ffd6a8;
+    font-size: 20px;
+    font-style: italic;
+    margin: 0 0 6px;
+  }
+  .atajos-mazo {
+    display: flex;
+    gap: 14px;
+  }
+  .atajo-box {
+    background: rgba(50, 22, 12, 0.6);
+    border: 1.5px solid rgba(255, 140, 60, 0.3);
+    border-radius: 12px;
+    padding: 10px 16px;
+    color: #ffe6c8;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    min-width: 92px;
+  }
+  .atajo-box kbd {
+    font-size: 20px;
+    padding: 4px 12px;
+  }
+  .atajo-box span {
+    font-size: 12px;
+    color: #d9c0a4;
+  }
+
+  /* --- Tadán --- */
+  .vera-line {
+    color: #ffe6c8;
+    font-size: 22px;
+    max-width: 720px;
+    margin: 0 0 14px;
+    line-height: 1.35;
+    position: relative;
+    z-index: 2;
+  }
+  .vera-line.dura {
+    color: #ffae5c;
+    font-style: italic;
+  }
+  .vera-line.grande {
+    font-size: 28px;
+    margin-bottom: 30px;
+  }
+  .backdrop-tadan {
+    position: absolute;
+    inset: 0;
+    background-size: cover;
+    background-position: center top;
+    opacity: 0.35;
+    filter: blur(2px);
+    z-index: 0;
+    /* Crítico: si no es transparente a clicks, tapa los botones del tadán. */
+    pointer-events: none;
+  }
+  .backdrop-tadan::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(
+      ellipse at center,
+      transparent 20%,
+      rgba(10, 6, 8, 0.85) 75%
+    );
+    pointer-events: none;
+  }
+  /* Garantiza que el botón Play y links queden encima del backdrop. */
+  .tadan .btn-grande,
+  .tadan .atajo,
+  .tadan .cierre {
+    position: relative;
+    z-index: 2;
+  }
+  .ficha-tadan {
+    display: flex;
+    gap: 24px;
+    max-width: 880px;
+    width: 100%;
+    margin: 8px 0 16px;
+    text-align: left;
+    position: relative;
+    z-index: 2;
+  }
+  .poster-tadan {
+    width: 240px;
+    min-width: 240px;
+    height: 360px;
+    border-radius: 16px;
+    background-size: cover;
+    background-position: center;
+    box-shadow:
+      0 24px 56px rgba(0, 0, 0, 0.7),
+      0 0 64px rgba(255, 100, 40, 0.25);
+  }
+  .info-tadan {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    color: #ffe6c8;
+  }
+  .tadan-titulo {
+    font-size: 30px;
+    margin: 0;
+    color: #ffe6c8;
+    line-height: 1.1;
+  }
+  .gancho {
+    color: #ffd6a8;
+    font-size: 19px;
+    max-width: 600px;
+    margin: 6px 0 16px;
+    font-style: italic;
+    position: relative;
+    z-index: 2;
+  }
+  .cierre {
+    color: #998878;
+    font-size: 14px;
+    margin: 18px 0 0;
+    position: relative;
+    z-index: 2;
+  }
+
+  /* --- Player mock --- */
+  .player {
+    width: min(80vw, 720px);
+    height: min(50vw, 420px);
+    border-radius: 18px;
+    box-shadow: 0 24px 56px rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    margin-bottom: 24px;
+    overflow: hidden;
+    background-size: cover;
+    background-position: center;
+  }
+  .player-overlay {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(
+      ellipse at center,
+      rgba(0, 0, 0, 0.25) 30%,
+      rgba(0, 0, 0, 0.7) 100%
+    );
+    pointer-events: none;
+  }
+  .player.en-pausa::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    border-radius: 18px;
+  }
+  .player-titulo {
+    font-size: 32px;
     color: #fff;
-    border-color: #ff5722;
+    z-index: 1;
+    text-shadow: 0 4px 12px rgba(0, 0, 0, 0.9);
   }
-  button.primary:hover { background: #ff7043; border-color: #ff7043; }
-  button.primary.big {
-    padding: 1rem 2rem; font-size: 1.05rem; border-radius: 12px;
+  .badge-pausa {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    background: rgba(255, 170, 80, 0.85);
+    color: #1a0a04;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 700;
+    z-index: 2;
   }
-  button.ghost {
-    background: transparent; color: #aaa;
-    border-color: rgba(255,255,255,0.15);
+  .player-controles {
+    display: flex;
+    gap: 14px;
   }
-  button.ghost:hover { color: #fff; border-color: rgba(255,255,255,0.3); }
-  button.link {
-    border: none; background: none; color: #ff8a65;
-    padding: 0; font-size: inherit; text-decoration: underline;
-    margin-left: 0.4rem;
+  .btn-control {
+    padding: 12px 22px;
+    border-radius: 999px;
+    border: 1.5px solid rgba(255, 140, 60, 0.4);
+    background: rgba(50, 22, 12, 0.7);
+    color: #ffe6c8;
+    font-size: 16px;
+    cursor: pointer;
+  }
+  .btn-control:hover,
+  .btn-control:focus-visible {
+    border-color: #ff7a2e;
+    background: rgba(80, 32, 14, 0.9);
   }
 </style>

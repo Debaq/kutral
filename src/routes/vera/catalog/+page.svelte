@@ -7,6 +7,7 @@
     type CatalogCount,
     type MediaType,
   } from "$lib/vera/import";
+  import { ayuda } from "$lib/atajos/store.svelte";
 
   let apiKey = $state("");
   let movie = $state(true);
@@ -38,6 +39,11 @@
   }
 
   onMount(async () => {
+    ayuda.set("importador TMDb", [
+      { tecla: "Tab", desc: "Cambiar de campo" },
+      { tecla: "Enter", desc: "Activar botón con foco" },
+      { tecla: "I", desc: "Ayuda" },
+    ]);
     apiKey = localStorage.getItem("tmdb_key") || "";
     region = localStorage.getItem("vera_watch_region") || "CL";
     await refresh();

@@ -212,6 +212,12 @@ async fn tmdb_discover(
     with_genres: Option<String>,
     origin_country: Option<String>,
     force_genres: Option<String>,
+    // Nuevos filtros opcionales (Vera). Si son None, comportamiento previo.
+    vote_average_gte: Option<f32>,
+    vote_count_gte: Option<u32>,
+    primary_release_date_gte: Option<String>,
+    primary_release_date_lte: Option<String>,
+    with_original_language: Option<String>,
 ) -> Result<TmdbListResp, String> {
     if api_key.is_empty() {
         return Err("falta api key".into());
@@ -224,8 +230,13 @@ async fn tmdb_discover(
         "{}/discover/{}?api_key={}&language={}&page={}&sort_by={}&include_adult=false",
         TMDB_BASE, media_type, api_key, LANG, page, sort
     );
-    if sort.starts_with("vote_average") {
-        url.push_str("&vote_count.gte=100");
+    // Si el caller pasa vote_count_gte se usa; si no, mantenemos el
+    // default histórico de 100 cuando el sort es por vote_average.
+    let vcount = vote_count_gte.unwrap_or_else(|| {
+        if sort.starts_with("vote_average") { 100 } else { 0 }
+    });
+    if vcount > 0 {
+        url.push_str(&format!("&vote_count.gte={}", vcount));
     }
     // Combinar géneros user + forzados (anime fuerza 16)
     let mut all_genres: Vec<String> = Vec::new();
@@ -243,6 +254,18 @@ async fn tmdb_discover(
     }
     if let Some(c) = origin_country.filter(|s| !s.is_empty()) {
         url.push_str(&format!("&with_origin_country={}", c));
+    }
+    if let Some(v) = vote_average_gte {
+        url.push_str(&format!("&vote_average.gte={}", v));
+    }
+    if let Some(d) = primary_release_date_gte.filter(|s| !s.is_empty()) {
+        url.push_str(&format!("&primary_release_date.gte={}", d));
+    }
+    if let Some(d) = primary_release_date_lte.filter(|s| !s.is_empty()) {
+        url.push_str(&format!("&primary_release_date.lte={}", d));
+    }
+    if let Some(l) = with_original_language.filter(|s| !s.is_empty()) {
+        url.push_str(&format!("&with_original_language={}", l));
     }
     fetch_json(&url).await
 }
@@ -264,6 +287,38 @@ async fn tmdb_search(
     let url = format!(
         "{}/search/{}?api_key={}&language={}&page={}&query={}",
         TMDB_BASE, media_type, api_key, LANG, page, q
+    );
+    fetch_json(&url).await
+}
+
+// Recomendaciones / similares por película. Usado por el motor de Vera
+// para apalancarse en el algoritmo de TMDb (collaborative-ish) en lugar
+// de pesos hechos a mano.
+//
+// `kind` controla el endpoint: "recommendations" (default) o "similar".
+// Ambos devuelven el mismo shape TmdbListResp, así que la respuesta es
+// uniforme y el cliente decide cuál pedir.
+#[tauri::command]
+async fn tmdb_recommendations(
+    media_type: String,
+    id: u64,
+    page: u64,
+    api_key: String,
+    kind: Option<String>,
+) -> Result<TmdbListResp, String> {
+    if api_key.is_empty() {
+        return Err("falta api key".into());
+    }
+    if media_type != "movie" && media_type != "tv" {
+        return Err("media_type inválido".into());
+    }
+    let endpoint = match kind.as_deref() {
+        Some("similar") => "similar",
+        _ => "recommendations",
+    };
+    let url = format!(
+        "{}/{}/{}/{}?api_key={}&language={}&page={}",
+        TMDB_BASE, media_type, id, endpoint, api_key, LANG, page
     );
     fetch_json(&url).await
 }
@@ -1528,6 +1583,310 @@ fn vera_platform_list() -> Vec<VeraOption> {
     ].iter().map(|(id, label)| opt(id, label, None)).collect()
 }
 
+// ============================================================
+// RealDebrid — OAuth Device Code flow
+// ============================================================
+
+const RD_CLIENT_ID: &str = "X245A4XAIBGVM"; // public open-source client_id
+const RD_GRANT_DEVICE: &str = "http://oauth.net/grant_type/device/1.0";
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RdDeviceStart {
+    pub device_code: String,
+    pub user_code: String,
+    pub verification_url: String,
+    pub interval: u64,
+    pub expires_in: u64,
+}
+
+#[derive(Deserialize)]
+struct RdCredentialsResp {
+    client_id: String,
+    client_secret: String,
+}
+
+#[derive(Deserialize)]
+struct RdTokenResp {
+    access_token: String,
+    refresh_token: String,
+    expires_in: u64,
+}
+
+#[derive(Serialize)]
+pub struct RdLinked {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub client_id: String,
+    pub client_secret: String,
+    pub expires_in: u64,
+}
+
+#[tauri::command]
+async fn rd_device_start() -> Result<RdDeviceStart, String> {
+    let url = format!(
+        "https://api.real-debrid.com/oauth/v2/device/code?client_id={}&new_credentials=yes",
+        RD_CLIENT_ID
+    );
+    let cli = client()?;
+    let resp = cli.get(&url).send().await.map_err(|e| format!("red: {}", e))?;
+    if !resp.status().is_success() {
+        let st = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("RD {}: {}", st, body));
+    }
+    let v: RdDeviceStart = resp.json().await.map_err(|e| format!("parse: {}", e))?;
+    Ok(v)
+}
+
+#[tauri::command]
+async fn rd_device_poll(
+    device_code: String,
+    interval: u64,
+    expires_in: u64,
+) -> Result<RdLinked, String> {
+    if device_code.is_empty() {
+        return Err("device_code vacío".into());
+    }
+    let cli = client()?;
+    let poll_every = std::cmp::max(interval, 3);
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs(expires_in.max(60));
+
+    let creds_url = format!(
+        "https://api.real-debrid.com/oauth/v2/device/credentials?client_id={}&code={}",
+        RD_CLIENT_ID, device_code
+    );
+
+    loop {
+        if std::time::Instant::now() >= deadline {
+            return Err("código expirado".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(poll_every)).await;
+
+        let resp = cli.get(&creds_url).send().await.map_err(|e| format!("red: {}", e))?;
+        if !resp.status().is_success() {
+            continue;
+        }
+        let body = resp.text().await.unwrap_or_default();
+        let Ok(creds) = serde_json::from_str::<RdCredentialsResp>(&body) else {
+            continue;
+        };
+
+        let form = [
+            ("client_id", creds.client_id.as_str()),
+            ("client_secret", creds.client_secret.as_str()),
+            ("code", device_code.as_str()),
+            ("grant_type", RD_GRANT_DEVICE),
+        ];
+        let tok = cli
+            .post("https://api.real-debrid.com/oauth/v2/token")
+            .form(&form)
+            .send()
+            .await
+            .map_err(|e| format!("red token: {}", e))?;
+        if !tok.status().is_success() {
+            let st = tok.status();
+            let body = tok.text().await.unwrap_or_default();
+            return Err(format!("RD token {}: {}", st, body));
+        }
+        let t: RdTokenResp = tok.json().await.map_err(|e| format!("parse token: {}", e))?;
+        return Ok(RdLinked {
+            access_token: t.access_token,
+            refresh_token: t.refresh_token,
+            client_id: creds.client_id,
+            client_secret: creds.client_secret,
+            expires_in: t.expires_in,
+        });
+    }
+}
+
+// ============================================================
+// Kütral OS — gestión de red (nmcli)
+// ============================================================
+
+#[derive(Serialize)]
+pub struct WifiNetwork {
+    ssid: String,
+    signal: u8,
+    secured: bool,
+    in_use: bool,
+}
+
+#[derive(Serialize)]
+pub struct WifiStatus {
+    online: bool,
+    connected_ssid: Option<String>,
+}
+
+fn parse_nmcli_line(line: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(&next) = chars.peek() {
+                cur.push(next);
+                chars.next();
+                continue;
+            }
+        }
+        if c == ':' {
+            out.push(std::mem::take(&mut cur));
+        } else {
+            cur.push(c);
+        }
+    }
+    out.push(cur);
+    out
+}
+
+#[tauri::command]
+async fn wifi_status() -> Result<WifiStatus, String> {
+    #[cfg(not(target_os = "linux"))]
+    { return Ok(WifiStatus { online: true, connected_ssid: None }); }
+    #[cfg(target_os = "linux")]
+    {
+        use std::process::Command;
+        let online = Command::new("nmcli")
+            .args(["-t", "-f", "STATE", "general", "status"])
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "connected")
+            .unwrap_or(false);
+        let mut connected_ssid: Option<String> = None;
+        if let Ok(o) = Command::new("nmcli")
+            .args(["-t", "-f", "ACTIVE,SSID", "device", "wifi", "list"])
+            .output()
+        {
+            for line in String::from_utf8_lossy(&o.stdout).lines() {
+                let p = parse_nmcli_line(line);
+                if p.len() >= 2 && p[0] == "yes" {
+                    let s = p[1].trim();
+                    if !s.is_empty() && s != "--" {
+                        connected_ssid = Some(s.to_string());
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(WifiStatus { online, connected_ssid })
+    }
+}
+
+#[tauri::command]
+async fn wifi_scan() -> Result<Vec<WifiNetwork>, String> {
+    #[cfg(not(target_os = "linux"))]
+    { return Ok(Vec::new()); }
+    #[cfg(target_os = "linux")]
+    {
+        use std::process::Command;
+        let _ = Command::new("nmcli").args(["device", "wifi", "rescan"]).output();
+        let out = Command::new("nmcli")
+            .args(["-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "device", "wifi", "list"])
+            .output()
+            .map_err(|e| format!("nmcli: {}", e))?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        let body = String::from_utf8_lossy(&out.stdout);
+        let mut nets: Vec<WifiNetwork> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for line in body.lines() {
+            let p = parse_nmcli_line(line);
+            if p.len() < 4 { continue; }
+            let in_use = p[0].trim() == "*";
+            let ssid = p[1].trim().to_string();
+            if ssid.is_empty() || ssid == "--" { continue; }
+            if !seen.insert(ssid.clone()) { continue; }
+            let signal: u8 = p[2].trim().parse().unwrap_or(0);
+            let sec = p[3].trim();
+            let secured = !sec.is_empty() && sec != "--";
+            nets.push(WifiNetwork { ssid, signal, secured, in_use });
+        }
+        nets.sort_by(|a, b| b.signal.cmp(&a.signal));
+        Ok(nets)
+    }
+}
+
+#[tauri::command]
+async fn wifi_connect(ssid: String, password: Option<String>) -> Result<(), String> {
+    if ssid.is_empty() { return Err("ssid vacío".into()); }
+    #[cfg(not(target_os = "linux"))]
+    { let _ = password; return Err("solo soportado en Linux".into()); }
+    #[cfg(target_os = "linux")]
+    {
+        use std::process::Command;
+        let mut args: Vec<String> = vec![
+            "device".into(), "wifi".into(), "connect".into(), ssid,
+        ];
+        if let Some(p) = password.filter(|s| !s.is_empty()) {
+            args.push("password".into());
+            args.push(p);
+        }
+        let out = Command::new("nmcli")
+            .args(&args)
+            .output()
+            .map_err(|e| format!("nmcli: {}", e))?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        Ok(())
+    }
+}
+
+// ============================================================
+// Kütral OS — detección de OS host
+// ============================================================
+
+#[derive(Serialize)]
+pub struct OsInfo {
+    is_kutral_os: bool,
+    platform: &'static str,
+    version: Option<String>,
+}
+
+fn detect_kutral_os() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var("KUTRAL_OS").ok().as_deref() == Some("1") {
+            return true;
+        }
+        if std::path::Path::new("/etc/kutral-os-release").exists() {
+            return true;
+        }
+        if let Ok(contents) = std::fs::read_to_string("/etc/os-release") {
+            for line in contents.lines() {
+                if line.trim() == "ID=kutral-os" {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+#[tauri::command]
+fn os_info() -> OsInfo {
+    let platform = if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else {
+        "other"
+    };
+    OsInfo {
+        is_kutral_os: detect_kutral_os(),
+        platform,
+        version: std::env::var("KUTRAL_OS_VERSION").ok(),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     use tauri_plugin_sql::{Migration, MigrationKind};
@@ -1646,6 +2005,8 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(
             tauri_plugin_sql::Builder::default()
@@ -1656,6 +2017,7 @@ pub fn run() {
             tmdb_discover,
             tmdb_search,
             tmdb_detail,
+            tmdb_recommendations,
             tmdb_genres,
             tmdb_videos,
             check_url,
@@ -1672,7 +2034,13 @@ pub fn run() {
             vera_theme_list,
             vera_platform_list,
             vera_import_catalog,
-            vera_catalog_count
+            vera_catalog_count,
+            os_info,
+            wifi_status,
+            wifi_scan,
+            wifi_connect,
+            rd_device_start,
+            rd_device_poll
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

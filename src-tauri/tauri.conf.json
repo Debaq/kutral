@@ -15,7 +15,8 @@
         "title": "Kütral",
         "width": 1280,
         "height": 800,
-        "maximized": true
+        "maximized": true,
+        "decorations": false
       }
     ],
     "security": {
@@ -29,6 +30,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -36,5 +38,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI5RTJDNDcxOTQ0NTNDMUYKUldRZlBFV1VjY1RpS2VmTDNJZm1LVXRQY0NYakF4WTRZRUVCMGxGeHlETWhwU1NxaCt2MG92YngK",
+      "endpoints": [
+        "https://github.com/Debaq/kutral/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

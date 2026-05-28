@@ -5,6 +5,8 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import Database from "@tauri-apps/plugin-sql";
   import { onMount } from "svelte";
+  import { ayuda } from "$lib/atajos/store.svelte";
+  import { setPlaying } from "$lib/playerState.svelte";
 
   type Progress = {
     imdb_id: string;
@@ -207,6 +209,22 @@
   let cardEls: (HTMLButtonElement | null)[] = $state([]);
   let listLoading = $state(false);
   let listError = $state("");
+  let initialFocusPending = $state(true);
+
+  $effect(() => {
+    if (!initialFocusPending) return;
+    if (listLoading) return;
+    if (showKey) return;
+    const el = cardEls[0];
+    if (!el) return;
+    initialFocusPending = false;
+    el.focus({ preventScroll: false });
+    focusedIdx = 0;
+  });
+
+  $effect(() => {
+    setPlaying(mode === "discover" || mode === "trailer");
+  });
 
   // Cache de status por id: undefined=no chequeado, "checking", "ok"=video disponible,
   // "trailer"=solo trailer (badge), "none"=ocultar
@@ -235,6 +253,13 @@
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   onMount(async () => {
+    // Registrar los atajos del home en la ayuda global.
+    ayuda.set("inicio", [
+      { tecla: "← → ↑ ↓", desc: "Navegar entre cards" },
+      { tecla: "Enter", desc: "Abrir / reproducir" },
+      { tecla: "Esc · Backspace", desc: "Volver / cerrar" },
+      { tecla: "I", desc: "Ayuda" },
+    ]);
     try {
       db = await Database.load("sqlite:kutral.db");
       console.log("[db] kutral.db abierta OK");
@@ -995,6 +1020,8 @@
 
 <svelte:window
   onkeydown={(e) => {
+    // Si la ayuda global está abierta, no procesar otras teclas.
+    if (ayuda.visible) return;
     if (mode === "discover") {
       if (e.key === "Escape" || e.key === "Backspace") {
         e.preventDefault();
@@ -1493,7 +1520,7 @@
     overflow: hidden;
     font-size: 17px;
   }
-  main { display: grid; grid-template-columns: 480px 1fr; height: 100vh; }
+  main { display: grid; grid-template-columns: 480px 1fr; height: 100%; }
   /* Focus visible global para D-pad */
   :global(button:focus-visible),
   :global([data-nav]:focus-visible) {
