@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+mod webserver;
+
 const TMDB_BASE: &str = "https://api.themoviedb.org/3";
 const LANG: &str = "es-ES";
 
@@ -73,6 +75,7 @@ pub struct TmdbDetail {
     pub genres: Vec<String>,
     pub directors: Vec<PersonMini>,
     pub cast: Vec<PersonMini>,
+    pub images: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -108,6 +111,20 @@ struct DetailRaw {
     credits: Option<CreditsRaw>,
     #[serde(default)]
     created_by: Option<Vec<CreatorRaw>>,
+    #[serde(default)]
+    images: Option<ImagesRaw>,
+}
+
+#[derive(Deserialize)]
+struct ImagesRaw {
+    #[serde(default)]
+    backdrops: Vec<ImageFile>,
+}
+
+#[derive(Deserialize)]
+struct ImageFile {
+    #[serde(default)]
+    file_path: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -530,12 +547,13 @@ async fn tmdb_detail(
         return Err("falta api key".into());
     }
     let extras = if media_type == "tv" {
-        "&append_to_response=external_ids,credits"
+        "&append_to_response=external_ids,credits,images"
     } else {
-        "&append_to_response=credits"
+        "&append_to_response=credits,images"
     };
+    // include_image_language: backdrops sin texto (null) + es/en. Más variedad.
     let url = format!(
-        "{}/{}/{}?api_key={}&language={}{}",
+        "{}/{}/{}?api_key={}&language={}{}&include_image_language=es,en,null",
         TMDB_BASE, media_type, id, api_key, LANG, extras
     );
     let raw: DetailRaw = fetch_json(&url).await?;
@@ -590,6 +608,21 @@ async fn tmdb_detail(
         }
     }
 
+    // Backdrops extra (sin contar el principal), hasta 6 para que el front elija.
+    let mut images: Vec<String> = Vec::new();
+    if let Some(img) = raw.images {
+        for b in img.backdrops.into_iter() {
+            if let Some(fp) = b.file_path {
+                if Some(&fp) != raw.backdrop_path.as_ref() {
+                    images.push(fp);
+                }
+            }
+            if images.len() >= 6 {
+                break;
+            }
+        }
+    }
+
     Ok(TmdbDetail {
         id: raw.id,
         media_type,
@@ -604,6 +637,7 @@ async fn tmdb_detail(
         genres,
         directors,
         cast,
+        images,
     })
 }
 
@@ -819,32 +853,38 @@ async fn scrape_level(
     }
 }
 
-#[tauri::command]
-async fn sim_key(key: String) -> Result<(), String> {
-    use enigo::{Enigo, Key, Keyboard, Settings, Direction};
-    eprintln!("[sim_key] intentando '{}'", key);
+pub fn press_key(key: &str) -> Result<(), String> {
+    use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+    eprintln!("[press_key] intentando '{}'", key);
     let mut enigo = match Enigo::new(&Settings::default()) {
         Ok(e) => e,
         Err(e) => {
-            eprintln!("[sim_key] enigo init falló: {}", e);
+            eprintln!("[press_key] enigo init falló: {}", e);
             return Err(format!("enigo init: {}", e));
         }
     };
     let k = match key.to_lowercase().as_str() {
-        "space" => Key::Space,
-        "k" => Key::Unicode('k'),
-        "m" => Key::Unicode('m'),
-        "f" => Key::Unicode('f'),
-        "escape" => Key::Escape,
+        "space" | " " => Key::Space,
+        "escape" | "esc" => Key::Escape,
         "tab" => Key::Tab,
-        "enter" => Key::Return,
-        s if s.len() == 1 => Key::Unicode(s.chars().next().unwrap()),
+        "enter" | "return" => Key::Return,
+        "backspace" | "back" => Key::Backspace,
+        "arrowup" | "up" => Key::UpArrow,
+        "arrowdown" | "down" => Key::DownArrow,
+        "arrowleft" | "left" => Key::LeftArrow,
+        "arrowright" | "right" => Key::RightArrow,
+        s if s.chars().count() == 1 => Key::Unicode(s.chars().next().unwrap()),
         _ => return Err(format!("tecla desconocida: {}", key)),
     };
     match enigo.key(k, Direction::Click) {
-        Ok(_) => { eprintln!("[sim_key] '{}' OK", key); Ok(()) }
-        Err(e) => { eprintln!("[sim_key] '{}' falló: {}", key, e); Err(e.to_string()) }
+        Ok(_) => { eprintln!("[press_key] '{}' OK", key); Ok(()) }
+        Err(e) => { eprintln!("[press_key] '{}' falló: {}", key, e); Err(e.to_string()) }
     }
+}
+
+#[tauri::command]
+async fn sim_key(key: String) -> Result<(), String> {
+    press_key(&key)
 }
 
 #[tauri::command]
@@ -2179,7 +2219,10 @@ pub fn run() {
             audio_set,
             audio_set_mute,
             brightness_get,
-            brightness_set
+            brightness_set,
+            webserver::web_server_start,
+            webserver::web_server_stop,
+            webserver::web_server_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

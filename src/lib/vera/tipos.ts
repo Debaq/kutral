@@ -51,6 +51,7 @@ export interface Pelicula {
   runtime: number | null;   // minutos
   posterPath: string | null;   // path TMDb tipo "/abc.jpg" (sin host)
   backdropPath: string | null; // path TMDb backdrop (imagen de escena)
+  imagenes: string[];          // backdrops extra (fotogramas), paths TMDb sin host
   trivia: string;           // una frase generada por reglas
 
   // De qué fuente vino al pool. La asigna construirPool al mergear; mapear()

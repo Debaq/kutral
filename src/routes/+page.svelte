@@ -5,6 +5,7 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import Database from "@tauri-apps/plugin-sql";
   import { onMount } from "svelte";
+  import { afterNavigate } from "$app/navigation";
   import { ayuda } from "$lib/atajos/store.svelte";
   import { setPlaying } from "$lib/playerState.svelte";
 
@@ -253,6 +254,17 @@
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   onMount(async () => {
+    // CRÍTICO: leer la TMDb key SYNC al PRINCIPIO, antes de cualquier await.
+    // afterNavigate puede correr mientras onMount sigue esperando Database.load,
+    // y handoffPlay necesita la key. Si esto se hace después del await, hay
+    // race: handoffPlay aborta por "sin key" aunque la key esté en localStorage.
+    {
+      const k0 = localStorage.getItem("tmdb_key") || "";
+      apiKey = k0;
+      keyInput = k0;
+      showKey = !k0;
+    }
+
     // Registrar los atajos del home en la ayuda global.
     ayuda.set("inicio", [
       { tecla: "← → ↑ ↓", desc: "Navegar entre cards" },
@@ -271,28 +283,49 @@
     // Listener postMessage por si playimdb coopera
     window.addEventListener("message", onIframeMessage);
 
-    const k = localStorage.getItem("tmdb_key") || "";
-    apiKey = k;
-    keyInput = k;
-    showKey = !k;
+    // apiKey ya fue leída sync al principio del onMount para evitar race
+    // con afterNavigate. Acá solo cargamos lo demás.
     const ts = (localStorage.getItem("trailer_src") as TrailerSource) || "nocookie";
     if (TRAILER_SOURCES.some((s) => s.id === ts)) trailerSource = ts;
-    if (k) {
+    if (apiKey) {
       loadGenres();
       resetAndLoad();
     }
 
-    // Handoff de Vera (B5): si la URL trae ?play=<tmdb_id>&type=movie,
-    // disparar Descubrir directo. Vera redirige acá con esos params al
-    // confirmar la peli activa en su lista.
+    // El handoff de Vera (B5) NO va acá: onMount solo corre una vez en la
+    // SPA, y Vera navega cliente-side con goto(). Movido a afterNavigate
+    // abajo, que sí corre en cada navegación.
+  });
+
+  // Handoff de Vera (B5): se dispara en CADA navegación cliente, incluyendo
+  // el load inicial. SvelteKit no remonta este +page.svelte al hacer goto()
+  // desde /vera, así que onMount no veía la URL nueva. afterNavigate sí.
+  //
+  // Usamos afterNavigate y NO un $effect sobre $page.url para evitar el
+  // ciclo: replaceState abajo cambia la URL, un $effect lo vería y
+  // re-dispararía. afterNavigate ignora replaceState (es un cambio sin
+  // SvelteKit navigation event), entonces corre una sola vez por descubrir.
+  afterNavigate(() => {
     const url = new URL(window.location.href);
     const playId = url.searchParams.get("play");
     const playType = url.searchParams.get("type");
+    // TODO REMOVE [handoff-diag] log 2: confirma que el parser ve la URL nueva.
+    console.log(
+      "[handoff-diag] afterNavigate parser, url=" +
+        url.pathname +
+        url.search +
+        " playId=" +
+        playId +
+        " playType=" +
+        playType,
+    );
     if (playId && playType) {
       // CRÍTICO: limpiar ?play= ANTES de invocar tmdb_detail. Sin esto,
       // un refresh durante o tras el handoff re-dispara el play solo.
+      // replaceState NO triggea afterNavigate (no es una nav real), así
+      // que no entramos en loop.
       history.replaceState({}, "", "/");
-      await handoffPlay(playId, playType);
+      void handoffPlay(playId, playType);
     }
   });
 
@@ -302,6 +335,8 @@
   // startDiscover). Si algo falla, el usuario queda en "browse" (default
   // de Kütral), nunca en pantalla rota ni mode a medias.
   async function handoffPlay(idStr: string, typeStr: string) {
+    // TODO REMOVE [handoff-diag] log 3: confirma que la llamada entró.
+    console.log("[handoff-diag] handoffPlay() invocada con", idStr, typeStr);
     if (!apiKey) {
       console.warn("[handoff] sin api key — abortando, mode queda en browse");
       return;

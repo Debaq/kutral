@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b0b0f">
+<title>Kütral · Mando</title>
+<style>
+  :root {
+    --bg: #0b0b0f;
+    --panel: #15151c;
+    --panel-2: #1c1c26;
+    --border: #2a2a36;
+    --text: #e6e6ec;
+    --muted: #a0a0aa;
+    --accent: #f3a951;
+    --a: #c44b4b;
+    --b: #f3c544;
+    --x: #4a8ed8;
+    --y: #5fb86b;
+    --shadow-dark: rgba(0, 0, 0, 0.6);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: ui-sans-serif, system-ui, sans-serif;
+    overscroll-behavior: none;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+  body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 14px 14px max(14px, env(safe-area-inset-bottom)) 14px;
+    gap: 16px;
+  }
+  .topbar {
+    width: 100%;
+    max-width: 720px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+  .topbar .logo { color: var(--accent); font-size: 16px; }
+  .topbar .name { font-size: 13px; letter-spacing: 0.04em; color: var(--text); }
+  .topbar .badge {
+    margin-left: auto;
+    font-size: 10px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+
+  .gamepad {
+    width: 100%;
+    max-width: 720px;
+    background: linear-gradient(160deg, #1d1d28, #14141c);
+    border: 1px solid var(--border);
+    border-radius: 32px;
+    padding: 28px 24px;
+    box-shadow: 0 18px 40px var(--shadow-dark), inset 0 1px 0 rgba(255,255,255,0.04);
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .center-row {
+    display: flex;
+    justify-content: center;
+    gap: 36px;
+    padding: 4px 0;
+  }
+  .small-btn {
+    background: #2a2a36;
+    border: 0;
+    color: var(--text);
+    padding: 8px 18px;
+    border-radius: 999px;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    cursor: pointer;
+    box-shadow: 0 3px 0 #0a0a10, inset 0 1px 0 rgba(255,255,255,0.06);
+    transition: transform 80ms ease, box-shadow 80ms ease;
+  }
+  .small-btn:active, .small-btn.press {
+    transform: translateY(2px);
+    box-shadow: 0 1px 0 #0a0a10, inset 0 1px 2px rgba(0,0,0,0.5);
+  }
+
+  .pads {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    flex-wrap: nowrap;
+  }
+
+  /* Disco circular base (lado A y lado B) */
+  .disc {
+    position: relative;
+    width: clamp(180px, 42vw, 280px);
+    aspect-ratio: 1 / 1;
+    border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, #232330, #0e0e14 75%);
+    box-shadow:
+      inset 0 4px 12px rgba(0,0,0,0.6),
+      inset 0 -2px 6px rgba(255,255,255,0.04),
+      0 6px 16px rgba(0,0,0,0.5);
+    flex: 0 0 auto;
+  }
+
+  /* D-pad (cruz) en disco izquierdo */
+  .dpad {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-rows: 1fr 1fr 1fr;
+    padding: 22%;
+  }
+  .dpad button {
+    background: #1a1a22;
+    border: 1px solid #2c2c38;
+    color: var(--text);
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    transition: transform 60ms ease, background 60ms ease;
+  }
+  .dpad button:active, .dpad button.press {
+    transform: scale(0.92);
+    background: #2a2a36;
+    color: var(--accent);
+  }
+  .dpad .up    { grid-column: 2; grid-row: 1; border-radius: 8px 8px 0 0; }
+  .dpad .left  { grid-column: 1; grid-row: 2; border-radius: 8px 0 0 8px; }
+  .dpad .mid   { grid-column: 2; grid-row: 2; background: #14141c; border-color: #20202a; cursor: default; }
+  .dpad .right { grid-column: 3; grid-row: 2; border-radius: 0 8px 8px 0; }
+  .dpad .down  { grid-column: 2; grid-row: 3; border-radius: 0 0 8px 8px; }
+
+  /* Botones ABXY en rombo dentro de disco derecho */
+  .abxy {
+    position: absolute;
+    inset: 0;
+  }
+  .abxy button {
+    position: absolute;
+    width: 28%;
+    aspect-ratio: 1 / 1;
+    border-radius: 50%;
+    border: 0;
+    color: #fff;
+    font-weight: 700;
+    font-size: 18px;
+    cursor: pointer;
+    box-shadow: 0 4px 0 rgba(0,0,0,0.45), inset 0 -3px 6px rgba(0,0,0,0.35), inset 0 2px 4px rgba(255,255,255,0.18);
+    display: flex; align-items: center; justify-content: center;
+    transition: transform 60ms ease, box-shadow 60ms ease;
+  }
+  .abxy button:active, .abxy button.press {
+    transform: translateY(3px);
+    box-shadow: 0 1px 0 rgba(0,0,0,0.45), inset 0 -1px 3px rgba(0,0,0,0.5);
+  }
+  .abxy .btn-x { background: var(--x); top: 8%;  left: 36%; }
+  .abxy .btn-y { background: var(--y); top: 36%; left: 8%; }
+  .abxy .btn-a { background: var(--a); top: 36%; right: 8%; }
+  .abxy .btn-b { background: var(--b); top: 64%; left: 36%; color: #2a2a10; }
+
+  .labels {
+    display: flex;
+    justify-content: space-between;
+    max-width: 720px;
+    width: 100%;
+    margin: 0;
+    padding: 0 8px;
+    color: var(--muted);
+    font-size: 11px;
+    text-align: center;
+    gap: 10px;
+  }
+  .labels > div { flex: 1; }
+  .labels b { color: var(--text); font-weight: 600; }
+  .labels span {
+    display: inline-block; margin-right: 4px;
+    padding: 1px 6px; border-radius: 4px;
+    background: var(--panel-2); color: var(--accent);
+    font-family: ui-monospace, monospace; font-size: 10px;
+  }
+
+  .status {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: -4px;
+  }
+  .status.ok { color: var(--y); }
+  .status.err { color: var(--a); }
+
+  @media (max-width: 480px) {
+    body { gap: 10px; padding: 8px; }
+    .gamepad { padding: 20px 14px; border-radius: 24px; gap: 12px; }
+    .center-row { gap: 22px; }
+    .pads { gap: 8px; }
+    .disc { width: clamp(150px, 44vw, 220px); }
+    .topbar { padding: 8px 12px; border-radius: 10px; }
+  }
+
+  /* Solo en celular (puntero coarse) bloqueamos vertical */
+  .rotate-lock {
+    position: fixed; inset: 0;
+    background: #0b0b0f;
+    display: none;
+    align-items: center; justify-content: center;
+    flex-direction: column; gap: 18px;
+    z-index: 9999;
+    text-align: center; padding: 24px;
+  }
+  .rotate-lock .ico {
+    font-size: 64px;
+    animation: spin 1.6s ease-in-out infinite;
+    transform-origin: center;
+    color: var(--accent);
+  }
+  .rotate-lock h2 {
+    margin: 0; font-size: 18px; font-weight: 600; color: var(--text);
+    letter-spacing: 0.02em;
+  }
+  .rotate-lock p {
+    margin: 0; font-size: 13px; color: var(--muted); max-width: 260px;
+    line-height: 1.5;
+  }
+  @keyframes spin {
+    0%   { transform: rotate(-90deg); }
+    40%  { transform: rotate(0deg); }
+    100% { transform: rotate(0deg); }
+  }
+  @media (pointer: coarse) and (orientation: portrait) {
+    .rotate-lock { display: flex; }
+    body > :not(.rotate-lock) { visibility: hidden; }
+  }
+</style>
+</head>
+<body>
+  <div class="rotate-lock" role="alertdialog" aria-label="Gira el teléfono">
+    <div class="ico">📱</div>
+    <h2>Gira el teléfono</h2>
+    <p>El mando va en horizontal. Es lo que hay.</p>
+  </div>
+
+  <div class="topbar">
+    <span class="logo">✦</span>
+    <span class="name">Kütral · Mando</span>
+    <span class="badge" id="badge">conectado</span>
+  </div>
+
+  <div class="status" id="status">Tocá un botón.</div>
+
+  <div class="gamepad" id="gp">
+    <div class="center-row">
+      <button class="small-btn" data-key="m">Select</button>
+      <button class="small-btn" data-key="Escape">Start</button>
+    </div>
+
+    <div class="pads">
+      <div class="disc" aria-label="D-pad">
+        <div class="dpad">
+          <button class="up"    data-key="ArrowUp"    aria-label="Arriba">▲</button>
+          <button class="left"  data-key="ArrowLeft"  aria-label="Izquierda">◀</button>
+          <button class="mid"   disabled tabindex="-1"></button>
+          <button class="right" data-key="ArrowRight" aria-label="Derecha">▶</button>
+          <button class="down"  data-key="ArrowDown"  aria-label="Abajo">▼</button>
+        </div>
+      </div>
+
+      <div class="disc" aria-label="Botones A B X Y">
+        <div class="abxy">
+          <button class="btn-x" data-key=" "         aria-label="X play pause">X</button>
+          <button class="btn-y" data-key="i"         aria-label="Y ayuda">Y</button>
+          <button class="btn-a" data-key="Enter"     aria-label="A aceptar">A</button>
+          <button class="btn-b" data-key="Backspace" aria-label="B volver">B</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="labels">
+    <div><b>D-pad</b><br><span>← → ↑ ↓</span></div>
+    <div><b>A</b><br><span>Enter</span></div>
+    <div><b>B</b><br><span>Atrás</span></div>
+    <div><b>X</b><br><span>Espacio</span></div>
+    <div><b>Y</b><br><span>i</span></div>
+    <div><b>Select</b><br><span>m mute</span></div>
+    <div><b>Start</b><br><span>Esc</span></div>
+  </div>
+
+<script>
+  const status = document.getElementById("status");
+  const badge = document.getElementById("badge");
+  let lastErr = 0;
+  let lockTried = false;
+
+  async function tryLockLandscape() {
+    if (lockTried) return;
+    lockTried = true;
+    try {
+      if (document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen({ navigationUI: "hide" }).catch(() => {});
+      }
+      if (screen.orientation && screen.orientation.lock) {
+        await screen.orientation.lock("landscape").catch(() => {});
+      }
+    } catch {}
+  }
+
+  function flash(el) {
+    el.classList.add("press");
+    setTimeout(() => el.classList.remove("press"), 140);
+  }
+
+  async function send(key, el) {
+    tryLockLandscape();
+    flash(el);
+    try {
+      const r = await fetch("/key", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key }),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      status.textContent = "→ " + (key === " " ? "Space" : key);
+      status.className = "status ok";
+      badge.textContent = "conectado";
+      badge.style.color = "";
+    } catch (e) {
+      lastErr = Date.now();
+      status.textContent = "Error: " + e.message;
+      status.className = "status err";
+      badge.textContent = "sin respuesta";
+      badge.style.color = "var(--a)";
+    }
+  }
+
+  document.querySelectorAll("[data-key]").forEach((el) => {
+    const k = el.dataset.key;
+    let fired = false;
+    el.addEventListener("touchstart", (e) => {
+      e.preventDefault();
+      fired = true;
+      send(k, el);
+    }, { passive: false });
+    el.addEventListener("click", (e) => {
+      if (fired) { fired = false; return; }
+      send(k, el);
+    });
+  });
+
+  // Mapeo teclado físico (útil si abren la web en laptop)
+  window.addEventListener("keydown", (e) => {
+    const map = {
+      "ArrowUp": "ArrowUp", "ArrowDown": "ArrowDown",
+      "ArrowLeft": "ArrowLeft", "ArrowRight": "ArrowRight",
+      "Enter": "Enter", "Backspace": "Backspace", "Escape": "Escape",
+      " ": " ", "i": "i", "I": "i", "m": "m", "M": "m",
+    };
+    const k = map[e.key];
+    if (!k) return;
+    e.preventDefault();
+    const el = document.querySelector(`[data-key="${CSS.escape(k)}"]`) || document.body;
+    send(k, el);
+  });
+</script>
+</body>
+</html>

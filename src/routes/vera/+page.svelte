@@ -1,9 +1,15 @@
 <script lang="ts">
-  // Vera and Chill — flujo B5.
-  // Cuatro pantallas: entrada → contexto → intencion → lista.
-  // En "lista" el usuario navega el pool entero rankeado, ajusta interés
-  // con ← →, marca vista con Backspace y descubre con Enter (handoff a home).
-  // Sin mazo, sin tadán, sin player propio.
+  // Vera and Chill — flujo B6.
+  // Cinco pantallas: entrada → contexto → intencion → CALIFICAR → RANKING.
+  //
+  // CALIFICAR: 8 cartas, una por vez. ←→ ajusta -5..+5. ↑ toggle vista
+  //   (juicio dual). ↓ saltar (interes=-1). Enter pasa a la siguiente.
+  //   Backspace salta al ranking ya.
+  // RANKING: lista navegable, #1 destacada. ↑↓ navega, Enter Descubre,
+  //   Backspace empieza otra ronda (pool fresco, mismo contexto+intent).
+  //
+  // SIN cache de pool: cada entrada = pool fresco vía page+sort_by random.
+  // Persistencia entre sesiones: vera_reacciones_v2 alimenta perfil histórico.
 
   import { fade, fly } from "svelte/transition";
   import { tick, onMount } from "svelte";
@@ -12,7 +18,6 @@
   import type {
     Pelicula,
     Contexto,
-    Intencion,
     EstadoVera,
     Reaccion,
     RankingPeli,
@@ -23,20 +28,22 @@
     cargarCatalogoPorIntent,
     posterUrl,
     backdropUrl,
+    imageUrl,
     TmdbNoKeyError,
     type FiltrosDiscover,
   } from "$lib/vera/tmdb";
   import { INTENCIONES, filtrosParaIntent } from "$lib/vera/intenciones";
-  import {
-    getReaccion,
-    setReaccion,
-    getReaccionesMap,
-  } from "$lib/vera/ratings";
+  import { setReaccion, getReaccionesMap } from "$lib/vera/ratings";
   import { getPerfilHistorico } from "$lib/vera/historial";
   import { ayuda, type AtajoLinea } from "$lib/atajos/store.svelte";
 
   // --- Pantallas ---
-  type Pantalla = "entrada" | "contexto" | "intencion" | "lista";
+  type Pantalla =
+    | "entrada"
+    | "contexto"
+    | "intencion"
+    | "calificar"
+    | "ranking";
   let pantalla = $state<Pantalla>("entrada");
 
   // --- Estado global Vera ---
@@ -75,15 +82,25 @@
 
   // --- Intencion ---
   let idxIntencion = $state(0);
-  // Filtros fijados UNA vez al confirmar el intent. NO derivar — el sort_by
-  // aleatorio de "sorpresa" debe quedar estable durante la sesión.
+  // Filtros fijados al confirmar el intent. NO derivar: el sort_by + page
+  // random deben quedar estables durante la ronda (variar en cada llamada
+  // los reshufflería). "Otra ronda" sí los re-calcula para traer pool fresco.
   let filtrosIntent = $state<FiltrosDiscover | null>(null);
 
-  // --- Lista (B5) ---
+  // --- Calificar (B6, 8 cartas 1x1) ---
+  // CARTAS_OBJETIVO: cuántas pelis del pool se calificán. Si el pool tiene
+  // menos por accidente (TMDb devolvió poco), calificamos lo que haya.
+  const CARTAS_OBJETIVO = 8;
+  let pelisACalificar = $state<Pelicula[]>([]);
+  let idxCalificar = $state(0);
+  // Flag de "saltada" para mostrar feedback chico ("Saltada · -1 automático").
+  let ultimaSaltada = $state(false);
+
+  // --- Ranking (B6, lista navegable, ex "lista" de B5) ---
   let ranking = $state<RankingPeli[]>([]);
   let idxActiva = $state(0);
-  // Cache del perfil histórico: se carga UNA vez al entrar a lista y se
-  // pasa al motor en cada rerankear() para evitar I/O a SQLite por flecha.
+  // Cache del perfil histórico: cargado UNA vez al entrar a calificar y
+  // reusado en cada rerankear() para evitar I/O a SQLite por flecha.
   let historicoCache: PerfilHistorico | null = null;
   // State local de reacciones del catálogo actual. Mirror reactivo de
   // localStorage para que el template re-renderice cuando cambia.
@@ -95,10 +112,10 @@
   let refEntrada = $state<HTMLButtonElement | null>(null);
   let refContexto = $state<HTMLButtonElement | null>(null);
   let refIntencion = $state<HTMLButtonElement | null>(null);
-  let refLista = $state<HTMLElement | null>(null);
+  let refCalificar = $state<HTMLElement | null>(null);
+  let refRanking = $state<HTMLElement | null>(null);
   let refDescubrir = $state<HTMLButtonElement | null>(null);
 
-  // Foco al cambiar pantalla.
   $effect(() => {
     void pantalla;
     void idxContexto;
@@ -107,30 +124,42 @@
       if (pantalla === "entrada") refEntrada?.focus();
       else if (pantalla === "contexto") refContexto?.focus();
       else if (pantalla === "intencion") refIntencion?.focus();
-      else if (pantalla === "lista") (refDescubrir ?? refLista)?.focus();
+      else if (pantalla === "calificar") refCalificar?.focus();
+      else if (pantalla === "ranking")
+        (refDescubrir ?? refRanking)?.focus();
     });
   });
 
   // --- Helpers ---
-
   const clamp = (lo: number, hi: number, v: number) =>
     Math.max(lo, Math.min(hi, v));
 
-  function obtenerReaccion(id: string): { interes: number; juicio: number | null } {
+  function obtenerReaccion(id: string): {
+    interes: number;
+    juicio: number | null;
+  } {
     return reaccionesPorPeli.get(id) ?? { interes: 0, juicio: null };
   }
 
   function actualizarReaccionLocal(
     id: string,
     rec: { interes: number; juicio: number | null },
-  ) {
+  ): void {
     const m = new Map(reaccionesPorPeli);
     m.set(id, rec);
     reaccionesPorPeli = m;
   }
 
-  // Siembra el estado.reacciones desde el catálogo + reacciones persistidas,
-  // para pasarle al motor. Filtra ceros para no inflar el array.
+  // Persiste reacción local + en localStorage. Single source of mutation.
+  function guardarReaccion(
+    p: Pelicula,
+    rec: { interes: number; juicio: number | null },
+  ): void {
+    setReaccion(p.id, { tmdb: p.rating, ...rec });
+    actualizarReaccionLocal(p.id, rec);
+  }
+
+  // Convierte reaccionesPorPeli + catalogo en estado.reacciones para el motor.
   function reaccionesDesdeCatalogo(): Reaccion[] {
     const out: Reaccion[] = [];
     for (const p of catalogo) {
@@ -144,14 +173,13 @@
 
   // --- Navegación ---
 
-  function elegirContextoActual() {
+  function elegirContextoActual(): void {
     estado.contexto = contextos[idxContexto].id;
     pantalla = "intencion";
   }
 
-  // Maneja la elección del intent: fija filtros, carga pool, entra a lista.
-  // Errores quedan en pantalla intencion (no pierde el flujo).
-  async function elegirIntencionActual() {
+  // Confirma el intent y dispara la carga del pool + entrada a calificar.
+  async function elegirIntencionActual(): Promise<void> {
     const id = INTENCIONES[idxIntencion].id;
     estado.intencion = id;
     filtrosIntent = filtrosParaIntent(id);
@@ -162,7 +190,7 @@
     try {
       const pool = await cargarCatalogoPorIntent(filtrosIntent);
       catalogo = pool;
-      await entrarALista();
+      await entrarACalificar();
     } catch (e: unknown) {
       if (e instanceof TmdbNoKeyError) {
         errorPoolEsKey = true;
@@ -175,31 +203,32 @@
     }
   }
 
-  // Entra a la pantalla lista: carga histórico UNA vez, lee reacciones del
-  // catálogo, rankea, navega.
-  async function entrarALista() {
-    // Carga histórico una sola vez. rerankear() reusa este cache.
+  // Prepara la ronda de calificación: carga histórico, hidrata reacciones,
+  // toma las primeras N pelis del pool.
+  async function entrarACalificar(): Promise<void> {
     historicoCache = await getPerfilHistorico();
 
-    // Sembrar reaccionesPorPeli con lo que hay persistido para las pelis
-    // del catálogo actual. Pelis no calificadas previamente arrancan vacías
-    // (interes=0, juicio=null) y NO entran al state hasta que el usuario las toque.
+    // Hidratar reacciones locales con lo persistido.
     const mapaPersistido = getReaccionesMap();
-    const nuevoMap = new Map<string, { interes: number; juicio: number | null }>();
+    const nuevoMap = new Map<
+      string,
+      { interes: number; juicio: number | null }
+    >();
     for (const p of catalogo) {
       const rec = mapaPersistido[p.id];
-      if (rec) nuevoMap.set(p.id, { interes: rec.interes, juicio: rec.juicio });
+      if (rec)
+        nuevoMap.set(p.id, { interes: rec.interes, juicio: rec.juicio });
     }
     reaccionesPorPeli = nuevoMap;
 
-    estado.reacciones = reaccionesDesdeCatalogo();
-    ranking = await recomendar(catalogo, estado, historicoCache);
-    idxActiva = 0;
+    // Tomamos las primeras CARTAS_OBJETIVO pelis del pool (ya están en
+    // orden de armado: discover → reco → diversidad → fallback).
+    pelisACalificar = catalogo.slice(0, CARTAS_OBJETIVO);
+    idxCalificar = 0;
+    ultimaSaltada = false;
 
-    // Precarga pósters + backdrops en background.
     precargarImagenes(catalogo);
-
-    pantalla = "lista";
+    pantalla = "calificar";
   }
 
   function precargarImagenes(pelis: Pelicula[]): void {
@@ -217,26 +246,13 @@
     }
   }
 
-  // Re-rankear preservando foco sobre la misma peli (NO sobre el índice).
-  // Usa historicoCache para evitar releer SQLite/localStorage en cada flecha.
-  async function rerankear() {
-    if (!historicoCache || catalogo.length === 0) return;
-    const activaId = ranking[idxActiva]?.pelicula.id;
-    estado.reacciones = reaccionesDesdeCatalogo();
-    ranking = await recomendar(catalogo, estado, historicoCache);
-    if (activaId) {
-      const nuevoIdx = ranking.findIndex((r) => r.pelicula.id === activaId);
-      if (nuevoIdx >= 0) idxActiva = nuevoIdx;
-    }
-  }
+  // --- Acciones en pantalla "calificar" ---
 
-  // Ajusta el interés (o juicio si la peli ya está marcada vista) de la activa.
-  function ajustarInteres(delta: -1 | 1) {
-    if (ranking.length === 0) return;
-    const activa = ranking[idxActiva];
-    if (!activa) return;
-    const id = activa.pelicula.id;
-    const actual = obtenerReaccion(id);
+  function ajustarCarta(delta: -1 | 1): void {
+    const p = pelisACalificar[idxCalificar];
+    if (!p) return;
+    ultimaSaltada = false;
+    const actual = obtenerReaccion(p.id);
     let nueva: { interes: number; juicio: number | null };
     if (actual.juicio !== null) {
       nueva = {
@@ -249,47 +265,113 @@
         juicio: null,
       };
     }
-    setReaccion(id, { tmdb: activa.pelicula.rating, ...nueva });
-    actualizarReaccionLocal(id, nueva);
-    void rerankear();
+    guardarReaccion(p, nueva);
   }
 
-  // Alterna "ya la vi" sobre la activa.
-  //   - Si no vista: pasa a vista con juicio = 0 (neutro), ← → ahora ajusta juicio.
-  //   - Si vista: vuelve a no-vista (juicio = null), ← → vuelve a ajustar interes.
-  function toggleVista() {
-    if (ranking.length === 0) return;
-    const activa = ranking[idxActiva];
-    if (!activa) return;
-    const id = activa.pelicula.id;
-    const actual = obtenerReaccion(id);
-    const nueva = {
+  function toggleVistaCarta(): void {
+    const p = pelisACalificar[idxCalificar];
+    if (!p) return;
+    ultimaSaltada = false;
+    const actual = obtenerReaccion(p.id);
+    guardarReaccion(p, {
       interes: actual.interes,
       juicio: actual.juicio === null ? 0 : null,
-    };
-    setReaccion(id, { tmdb: activa.pelicula.rating, ...nueva });
-    actualizarReaccionLocal(id, nueva);
-    void rerankear();
+    });
   }
 
-  // Handoff al player de la home: navega con ?play=<tmdb_id>&type=movie.
-  // La home detecta los params en onMount, hace tmdb_detail, entra a discover.
-  // (palabra de marca: "Descubrir", no "Reproducir" ni "Play")
-  function descubrir() {
+  // ↓ Saltar carta: asigna interes=-1 (puntaje bajo automático, no descarta).
+  // El silencio cuenta — quien salta enseña al sistema que no le interesó
+  // tanto como para opinar. La peli aparece más abajo en el ranking pero
+  // no desaparece. Mensaje educativo en pantalla.
+  function saltarCarta(): void {
+    const p = pelisACalificar[idxCalificar];
+    if (!p) return;
+    const actual = obtenerReaccion(p.id);
+    // Solo asignar -1 si todavía no calificó (no pisar si ya puso algo).
+    if (actual.interes === 0 && actual.juicio === null) {
+      guardarReaccion(p, { interes: -1, juicio: null });
+    }
+    ultimaSaltada = true;
+    avanzarCarta();
+  }
+
+  function avanzarCarta(): void {
+    if (idxCalificar + 1 < pelisACalificar.length) {
+      idxCalificar++;
+      ultimaSaltada = false;
+    } else {
+      // Última carta — pasar a ranking.
+      void irAlRanking();
+    }
+  }
+
+  // --- Ranking ---
+
+  // Pasa de calificar a ranking. Computa el ranking en base a reacciones
+  // (de sesión + persistidas) y el histórico cacheado.
+  async function irAlRanking(): Promise<void> {
+    if (!historicoCache) {
+      historicoCache = await getPerfilHistorico();
+    }
+    estado.reacciones = reaccionesDesdeCatalogo();
+    ranking = await recomendar(catalogo, estado, historicoCache);
+    idxActiva = 0;
+    pantalla = "ranking";
+  }
+
+  // Otra ronda: nuevos filtros (page+sort random), nuevo pool, vuelve a calificar.
+  // Mantiene contexto + intent (pero re-resuelve los filtros).
+  async function otraRonda(): Promise<void> {
+    if (estado.intencion === null) {
+      pantalla = "intencion";
+      return;
+    }
+    cargandoPool = true;
+    errorPool = null;
+    errorPoolEsKey = false;
+    try {
+      // Re-resolver filtros: page + sort_by random nuevos.
+      filtrosIntent = filtrosParaIntent(estado.intencion);
+      catalogo = await cargarCatalogoPorIntent(filtrosIntent);
+      await entrarACalificar();
+    } catch (e: unknown) {
+      if (e instanceof TmdbNoKeyError) {
+        errorPoolEsKey = true;
+        errorPool = e.message;
+      } else {
+        errorPool = e instanceof Error ? e.message : String(e);
+      }
+      // Caer en intencion para reintentar.
+      pantalla = "intencion";
+    } finally {
+      cargandoPool = false;
+    }
+  }
+
+  // Handoff al player de la home con la peli activa del ranking.
+  // Palabra de marca: "Descubrir", no "Reproducir" ni "Play".
+  function descubrir(): void {
     if (ranking.length === 0) return;
     const activa = ranking[idxActiva];
     if (!activa) return;
     goto(`/?play=${activa.pelicula.id}&type=movie`);
   }
 
-  function salirDeVera() {
+  function salirDeVera(): void {
     goto("/");
   }
 
-  // Backspace dual: en pantalla "lista" = toggle vista; en otras = paso atrás.
-  function backspaceDual() {
-    if (pantalla === "lista") {
-      toggleVista();
+  // Backspace tiene tres semánticas según pantalla:
+  //   - calificar: saltar al ranking ya (con lo calificado).
+  //   - ranking: otra ronda (pool fresco).
+  //   - otras: paso atrás.
+  function backspaceMultiple(): void {
+    if (pantalla === "calificar") {
+      void irAlRanking();
+      return;
+    }
+    if (pantalla === "ranking") {
+      void otraRonda();
       return;
     }
     if (pantalla === "intencion") pantalla = "contexto";
@@ -297,7 +379,7 @@
     else if (pantalla === "entrada") salirDeVera();
   }
 
-  // --- Atajos (7 + Backspace = 8 teclas) ---
+  // --- Atajos ---
 
   function atajosActuales(): AtajoLinea[] {
     if (pantalla === "entrada") {
@@ -325,12 +407,22 @@
         { tecla: "I-I", desc: "Ayuda" },
       ];
     }
-    if (pantalla === "lista") {
+    if (pantalla === "calificar") {
       return [
-        { tecla: "↑ ↓", desc: "Navegar pelis" },
-        { tecla: "← →", desc: "Ajustar interés (-5..+5)" },
-        { tecla: "Backspace", desc: "Marcar / desmarcar como vista" },
+        { tecla: "← →", desc: "Ajustar puntaje (-5..+5)" },
+        { tecla: "↑", desc: "Marcar / desmarcar como vista" },
+        { tecla: "↓", desc: "Saltar (puntaje -1 automático)" },
+        { tecla: "Enter", desc: "Siguiente carta" },
+        { tecla: "Backspace", desc: "Ir al ranking ya" },
+        { tecla: "Esc", desc: "Salir de Vera" },
+        { tecla: "I-I", desc: "Ayuda" },
+      ];
+    }
+    if (pantalla === "ranking") {
+      return [
+        { tecla: "↑ ↓", desc: "Navegar entre pelis" },
         { tecla: "Enter", desc: "Descubrir esta peli" },
+        { tecla: "Backspace", desc: "Otra ronda (pelis nuevas)" },
         { tecla: "Esc", desc: "Salir de Vera" },
         { tecla: "I-I", desc: "Ayuda" },
       ];
@@ -338,7 +430,6 @@
     return [];
   }
 
-  // Sincroniza el overlay de ayuda global con la pantalla actual.
   $effect(() => {
     void pantalla;
     void cargandoPool;
@@ -346,23 +437,21 @@
     ayuda.set(pantalla, atajosActuales());
   });
 
-  // --- Handler único de teclado (8 teclas: ← → ↑ ↓ Enter Esc I-I Backspace) ---
-  function onKey(e: KeyboardEvent) {
-    if (ayuda.visible) return; // la ayuda lo intercepta todo
+  // --- Handler único de teclado (8 teclas: ← → ↑ ↓ Enter Esc I Backspace) ---
+  function onKey(e: KeyboardEvent): void {
+    if (ayuda.visible) return;
 
     const k = e.key;
 
-    // Esc global: salir de Vera.
     if (k === "Escape") {
       e.preventDefault();
       salirDeVera();
       return;
     }
 
-    // Backspace: dual. Toggle vista en lista; paso atrás en otras.
     if (k === "Backspace") {
       e.preventDefault();
-      backspaceDual();
+      backspaceMultiple();
       return;
     }
 
@@ -412,7 +501,28 @@
       return;
     }
 
-    if (pantalla === "lista") {
+    if (pantalla === "calificar") {
+      if (pelisACalificar.length === 0) return;
+      if (k === "ArrowLeft") {
+        e.preventDefault();
+        ajustarCarta(-1);
+      } else if (k === "ArrowRight") {
+        e.preventDefault();
+        ajustarCarta(1);
+      } else if (k === "ArrowUp") {
+        e.preventDefault();
+        toggleVistaCarta();
+      } else if (k === "ArrowDown") {
+        e.preventDefault();
+        saltarCarta();
+      } else if (k === "Enter") {
+        e.preventDefault();
+        avanzarCarta();
+      }
+      return;
+    }
+
+    if (pantalla === "ranking") {
       if (ranking.length === 0) return;
       if (k === "ArrowUp") {
         e.preventDefault();
@@ -420,12 +530,6 @@
       } else if (k === "ArrowDown") {
         e.preventDefault();
         idxActiva = Math.min(ranking.length - 1, idxActiva + 1);
-      } else if (k === "ArrowLeft") {
-        e.preventDefault();
-        ajustarInteres(-1);
-      } else if (k === "ArrowRight") {
-        e.preventDefault();
-        ajustarInteres(1);
       } else if (k === "Enter") {
         e.preventDefault();
         descubrir();
@@ -434,13 +538,13 @@
     }
   }
 
-  // Pelis para drift de fondo. Solo aparece desde lista (hay catálogo cargado).
+  // Drift de fondo desde el pool (vacío hasta que se carga).
   let driftPosters = $derived(catalogo.slice(0, 12));
 </script>
 
 <svelte:window onkeydown={onKey} />
 
-<!-- Fondo cinematográfico (drift de pósters cuando hay catálogo) -->
+<!-- Fondo cinematográfico (drift desde catálogo cuando existe) -->
 <div class="fondo" aria-hidden="true">
   {#each driftPosters as p, i (p.id)}
     <div
@@ -457,7 +561,7 @@
       <span class="marca-vera">Vera</span> <em>and Chill</em>
     </h1>
     <p class="slogan">Tú pones el sillón. Yo propongo qué ver.</p>
-    <p class="sub">Sin vueltas. Una lista, vos elegís, vamos.</p>
+    <p class="sub">Calificás 8, te muestro el ranking, elegís.</p>
     <button
       bind:this={refEntrada}
       class="btn-grande naranja"
@@ -544,28 +648,119 @@
       </p>
     {/if}
   </section>
-{:else if pantalla === "lista"}
-  <section class="pantalla lista" bind:this={refLista} tabindex="-1">
+{:else if pantalla === "calificar"}
+  <section
+    class="pantalla calificar"
+    bind:this={refCalificar}
+    tabindex="-1"
+  >
+    {#if pelisACalificar.length === 0}
+      <p class="vacio">No hay películas para calificar.</p>
+    {:else}
+      {@const carta = pelisACalificar[idxCalificar]}
+      {@const reac = obtenerReaccion(carta.id)}
+      {@const visto = reac.juicio !== null}
+      {@const valor = visto ? (reac.juicio ?? 0) : reac.interes}
+
+      <p class="contador">
+        Carta {idxCalificar + 1} / {pelisACalificar.length}
+      </p>
+
+      {#key carta.id}
+        <div class="ficha-carta" in:fade={{ duration: 240 }}>
+          <div
+            class="poster-carta"
+            style="background-color:{carta.poster}; background-image:url('{posterUrl(carta, 'w500')}')"
+          ></div>
+          <div class="info-carta">
+            <h2 class="titulo">
+              {carta.titulo}
+              {#if visto}<span class="badge-visto" title="Ya vista">✓</span>{/if}
+            </h2>
+            <p class="meta">
+              {carta.anio} · {carta.director}
+              {#if carta.runtime} · {carta.runtime} min{/if}
+              {#if carta.rating}
+                <span class="tmdb-rating">★ {carta.rating.toFixed(1)} TMDb</span>
+              {/if}
+            </p>
+            <p class="generos">{carta.generos.join(" · ")}</p>
+            <p class="descripcion">{carta.descripcion}</p>
+            {#if carta.actores.length}
+              <p class="actores">
+                <span class="etiqueta">Con</span>
+                {carta.actores.slice(0, 4).join(", ")}
+              </p>
+            {/if}
+            {#if carta.imagenes.length}
+              <div class="fotogramas">
+                {#each carta.imagenes.slice(0, 3) as img}
+                  <div
+                    class="fotograma"
+                    style="background-image:url('{imageUrl(img, 'w300')}')"
+                    aria-hidden="true"
+                  ></div>
+                {/each}
+              </div>
+            {/if}
+            {#if carta.trivia}
+              <p class="trivia">💡 {carta.trivia}</p>
+            {/if}
+
+            <div class="control-interes">
+              <p class="control-etiqueta">
+                {visto ? "Tu juicio" : "Tu interés"}:
+                <strong>{valor > 0 ? `+${valor}` : valor}</strong>
+              </p>
+              <div class="escala">
+                {#each [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5] as v}
+                  <span
+                    class="celda"
+                    class:activa={v === valor}
+                    class:visto
+                    class:negativa={v < 0}
+                    class:positiva={v > 0}
+                  >{v > 0 ? `+${v}` : v}</span>
+                {/each}
+              </div>
+              {#if ultimaSaltada}
+                <p class="saltada-msg">
+                  Saltada · −1 automático. Si querés que cuente, calificá.
+                </p>
+              {/if}
+            </div>
+          </div>
+        </div>
+      {/key}
+
+      <p class="atajo">
+        <kbd>←</kbd> <kbd>→</kbd> puntaje · <kbd>↑</kbd> ya la vi ·
+        <kbd>↓</kbd> saltar · <kbd>Enter</kbd> siguiente ·
+        <kbd>Backspace</kbd> ir al ranking
+      </p>
+    {/if}
+  </section>
+{:else if pantalla === "ranking"}
+  <section class="pantalla ranking" bind:this={refRanking} tabindex="-1">
     {#if ranking.length === 0}
       <p class="vacio">No hay películas para ofrecer.</p>
     {:else}
       {@const activa = ranking[idxActiva]}
       {@const reac = obtenerReaccion(activa.pelicula.id)}
       {@const visto = reac.juicio !== null}
-      {@const valor = visto ? (reac.juicio ?? 0) : reac.interes}
 
       <!-- Backdrop -->
       {#if activa.pelicula.backdropPath}
         {#key activa.pelicula.id}
           <div
-            class="backdrop-lista"
+            class="backdrop-ranking"
             style="background-image:url('{backdropUrl(activa.pelicula, 'w1280')}')"
             aria-hidden="true"
           ></div>
         {/key}
       {/if}
 
-      <!-- Activa: ficha completa -->
+      <!-- #1 destacada -->
       {#key activa.pelicula.id}
         <div class="ficha-activa" in:fade={{ duration: 240 }}>
           <div
@@ -574,7 +769,7 @@
           ></div>
           <div class="info-activa">
             <h2 class="titulo">
-              <span class="rango">#1</span>
+              <span class="rango">#{idxActiva + 1}</span>
               {activa.pelicula.titulo}
               {#if visto}<span class="badge-visto" title="Ya vista">✓</span>{/if}
             </h2>
@@ -593,21 +788,20 @@
                 {activa.pelicula.actores.slice(0, 4).join(", ")}
               </p>
             {/if}
+            {#if activa.pelicula.imagenes.length}
+              <div class="fotogramas">
+                {#each activa.pelicula.imagenes.slice(0, 3) as img}
+                  <div
+                    class="fotograma"
+                    style="background-image:url('{imageUrl(img, 'w300')}')"
+                    aria-hidden="true"
+                  ></div>
+                {/each}
+              </div>
+            {/if}
             {#if activa.pelicula.trivia}
               <p class="trivia">💡 {activa.pelicula.trivia}</p>
             {/if}
-
-            <div class="control-interes">
-              <p class="control-etiqueta">
-                {visto ? "Tu juicio" : "Tu interés"}: <strong>{valor > 0 ? `+${valor}` : valor}</strong>
-              </p>
-              <div class="escala">
-                {#each [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5] as v}
-                  <span class="celda" class:activa={v === valor} class:visto class:negativa={v < 0} class:positiva={v > 0}>{v > 0 ? `+${v}` : v}</span>
-                {/each}
-              </div>
-            </div>
-
             <button
               bind:this={refDescubrir}
               class="btn-grande naranja"
@@ -640,10 +834,9 @@
         </div>
       {/if}
 
-      <p class="atajo lista-atajo">
-        <kbd>↑</kbd> <kbd>↓</kbd> navegar · <kbd>←</kbd> <kbd>→</kbd> interés ·
-        <kbd>Backspace</kbd> {visto ? "desmarcar visto" : "marcar vista"} ·
-        <kbd>Enter</kbd> descubrir
+      <p class="atajo ranking-atajo">
+        <kbd>↑</kbd> <kbd>↓</kbd> navegar · <kbd>Enter</kbd> descubrir ·
+        <kbd>Backspace</kbd> otra ronda
       </p>
     {/if}
   </section>
@@ -667,7 +860,8 @@
     outline: 3px solid #ffae5c;
     outline-offset: 4px;
   }
-  :global(.lista:focus-visible) {
+  :global(.ranking:focus-visible),
+  :global(.calificar:focus-visible) {
     outline: none;
   }
 
@@ -718,7 +912,7 @@
   }
   .pantalla:focus { outline: none; }
 
-  /* --- Entrada (marca arcoíris en "Vera") --- */
+  /* --- Entrada (marca arcoíris) --- */
   .marca {
     font-size: 64px;
     margin: 0 0 8px;
@@ -786,7 +980,7 @@
       0 0 48px rgba(255, 140, 60, 0.5);
   }
 
-  /* --- Contexto + Intención (mismo layout) --- */
+  /* --- Contexto + Intención --- */
   .contexto h2,
   .intencion h2 {
     font-size: 32px;
@@ -882,49 +1076,35 @@
     border-radius: 4px;
   }
 
-  /* --- Lista (B5): activa arriba grande, resto navegable abajo --- */
-  .lista {
+  /* --- Calificar (B6): 1 carta a la vez con ficha completa --- */
+  .calificar,
+  .ranking {
     justify-content: flex-start;
-    padding: 28px 20px 60px;
+    padding: 24px 20px 60px;
   }
   .vacio {
     color: #ffd6a8;
     font-size: 18px;
     margin-top: 60px;
   }
-
-  .backdrop-lista {
-    position: absolute;
-    inset: 0;
-    background-size: cover;
-    background-position: center top;
-    opacity: 0.28;
-    filter: blur(2px);
-    z-index: 0;
-    pointer-events: none;
+  .contador {
+    color: #d9c0a4;
+    font-size: 13px;
+    margin: 0 0 14px;
+    letter-spacing: 1px;
   }
-  .backdrop-lista::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: radial-gradient(
-      ellipse at center,
-      transparent 20%,
-      rgba(10, 6, 8, 0.85) 75%
-    );
-    pointer-events: none;
-  }
-
+  .ficha-carta,
   .ficha-activa {
     display: flex;
     gap: 28px;
     max-width: 900px;
     width: 100%;
-    margin: 0 0 24px;
+    margin: 0 0 16px;
     text-align: left;
     position: relative;
     z-index: 2;
   }
+  .poster-carta,
   .poster-activa {
     width: 240px;
     min-width: 240px;
@@ -936,6 +1116,7 @@
       0 24px 56px rgba(0, 0, 0, 0.7),
       0 0 64px rgba(255, 100, 40, 0.25);
   }
+  .info-carta,
   .info-activa {
     flex: 1;
     display: flex;
@@ -999,6 +1180,20 @@
     color: #998878;
     margin-right: 4px;
   }
+  .fotogramas {
+    display: flex;
+    gap: 8px;
+    margin: 4px 0 0;
+  }
+  .fotograma {
+    flex: 1 1 0;
+    aspect-ratio: 16 / 9;
+    border-radius: 8px;
+    background-size: cover;
+    background-position: center;
+    background-color: #1f1410;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  }
   .trivia {
     font-size: 13px;
     color: #ffd6a8;
@@ -1010,7 +1205,7 @@
     font-style: italic;
   }
 
-  /* --- Control de interés --- */
+  /* --- Control de interés (calificar) --- */
   .control-interes {
     margin-top: 14px;
     padding: 12px 16px;
@@ -1059,8 +1254,36 @@
     background: rgba(138, 184, 122, 0.25);
     border-color: #8ab87a;
   }
+  .saltada-msg {
+    margin: 8px 0 0;
+    color: #ffae5c;
+    font-size: 12px;
+    font-style: italic;
+  }
 
-  /* --- Resto del ranking --- */
+  /* --- Ranking (B6) --- */
+  .backdrop-ranking {
+    position: absolute;
+    inset: 0;
+    background-size: cover;
+    background-position: center top;
+    opacity: 0.28;
+    filter: blur(2px);
+    z-index: 0;
+    pointer-events: none;
+  }
+  .backdrop-ranking::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(
+      ellipse at center,
+      transparent 20%,
+      rgba(10, 6, 8, 0.85) 75%
+    );
+    pointer-events: none;
+  }
+
   .resto {
     max-width: 900px;
     width: 100%;
@@ -1122,8 +1345,7 @@
     font-size: 16px;
     text-align: center;
   }
-
-  .lista-atajo {
+  .ranking-atajo {
     position: relative;
     z-index: 2;
     margin-top: 16px;

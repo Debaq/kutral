@@ -59,25 +59,19 @@ interface TmdbListResp {
   results: TmdbItemMini[];
 }
 
-// Cache vieja del sistema previo (pool fijo). Se borra una sola vez
-// en migrarCacheVieja(). No reutilizar este nombre.
-const CACHE_VIEJA = "vera_catalogo_v2";
+// Caches viejas del pool. Se purgan al iniciar Vera. NO cachear pools
+// nuevos: B6 prioriza variedad ("cada entrada a Vera = pelis nuevas").
+const CACHE_VIEJA_V2 = "vera_catalogo_v2";
+const CACHE_VIEJA_PREFIX = "vera_pool_";
 
-// Keyword TMDb sombrilla para representación LGBT+ (B5).
-// Garantiza que SIEMPRE haya 1-2 pelis con esta keyword en el pool,
-// sin importar el intent. Sin marcar, sin etiquetar, sin sección aparte
-// — solo presencia mezclada.
+// Keyword TMDb sombrilla para representación LGBT+.
+// Garantiza presencia mínima en cada pool, sin importar el intent.
+// Sin marcar, sin etiquetar, sin sección aparte — solo presencia mezclada.
 const KEYWORD_LGBT = "158718";
-// Cuántas inyectar como mínimo (best-effort: si no hay candidatas, no rompe).
-const PRESENCIA_GARANTIZADA_LGBT = 2;
+const PRESENCIA_GARANTIZADA_LGBT = 1;
 
-// Cache nueva: clave = vera_pool_<hash> donde el hash combina filtros + semillas.
-// TTL 24h porque /discover varía poco intra-día pero queremos frescura semanal.
-const CACHE_PREFIX = "vera_pool_";
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-
-// Mínimo de pelis para que el mazo (8) funcione bien.
-// Por debajo, activamos el fallback de SEMILLA_FALLBACK.
+// Mínimo de pelis para el pool. Por debajo, activamos SEMILLA_FALLBACK.
+// 8 = cantidad de cartas que el usuario va a calificar.
 const MIN_POOL = 8;
 
 // Lo que devuelve `tmdb_detail` desde Rust. Solo los campos que usamos.
@@ -95,6 +89,7 @@ interface TmdbDetail {
   genres: string[];
   directors: { id: number; name: string }[];
   cast: { id: number; name: string; character: string | null }[];
+  images: string[];
 }
 
 // Filtros del cliente para `tmdb_discover`. Camel case en el invoke (Tauri convención).
@@ -323,6 +318,7 @@ function mapear(d: TmdbDetail, idx: number, total: number): Pelicula {
     runtime: d.runtime,
     posterPath: d.poster_path,
     backdropPath: d.backdrop_path,
+    imagenes: d.images ?? [],
     trivia: generarTrivia(d),
     // Default: discover (la mayoría viene de ahí). construirPool sobreescribe
     // a "reco" o "fallback" cuando corresponde.
@@ -330,89 +326,24 @@ function mapear(d: TmdbDetail, idx: number, total: number): Pelicula {
   };
 }
 
-// --- Cache: hash, lectura, escritura, purga, migración ---
+// --- Purga de cache vieja (B6: ya no cacheamos pools) ---
 
-function hashFiltros(filtros: FiltrosDiscover, semillas: string[]): string {
-  const payload = {
-    ...filtros,
-    _seeds: [...semillas].sort().join(","),
-  };
-  const stable = JSON.stringify(
-    payload,
-    Object.keys(payload).sort(),
-  );
-  // djb2 simple, suficiente para una clave de localStorage.
-  let h = 5381;
-  for (let i = 0; i < stable.length; i++) {
-    h = ((h * 33) ^ stable.charCodeAt(i)) >>> 0;
-  }
-  return h.toString(36);
-}
-
-interface PoolCacheado {
-  ts: number;
-  pelis: Pelicula[];
-}
-
-function leerPool(hash: string): Pelicula[] | null {
+// One-shot al inicio de cada construirPool: barre todas las claves de cache
+// previas (B5 y antes) que se acumulan en localStorage. Idempotente.
+// B6 NO escribe cache nueva: cada entrada a Vera trae pool fresco.
+function purgarCachesViejas(): void {
   try {
-    const raw = localStorage.getItem(CACHE_PREFIX + hash);
-    if (!raw) return null;
-    const data = JSON.parse(raw) as PoolCacheado;
-    if (Date.now() - data.ts > CACHE_TTL_MS) {
-      // Expirada: borrar y reportar miss.
-      localStorage.removeItem(CACHE_PREFIX + hash);
-      return null;
+    if (localStorage.getItem(CACHE_VIEJA_V2) !== null) {
+      localStorage.removeItem(CACHE_VIEJA_V2);
     }
-    return data.pelis;
-  } catch {
-    return null;
-  }
-}
-
-function guardarPool(hash: string, pelis: Pelicula[]): void {
-  try {
-    const body: PoolCacheado = { ts: Date.now(), pelis };
-    localStorage.setItem(CACHE_PREFIX + hash, JSON.stringify(body));
-  } catch {
-    // localStorage lleno / privado — ignorar.
-  }
-}
-
-// Barre todas las claves CACHE_PREFIX y borra las vencidas.
-// Importante porque los hashes cambian con filtros/semillas y se acumulan.
-// Idempotente, segura de llamar muchas veces.
-function purgarPoolsVencidos(): void {
-  try {
     const aBorrar: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (!k || !k.startsWith(CACHE_PREFIX)) continue;
-      try {
-        const raw = localStorage.getItem(k);
-        if (!raw) continue;
-        const data = JSON.parse(raw) as PoolCacheado;
-        if (Date.now() - data.ts > CACHE_TTL_MS) aBorrar.push(k);
-      } catch {
-        // Entrada corrupta: borrar también.
-        aBorrar.push(k);
-      }
+      if (k && k.startsWith(CACHE_VIEJA_PREFIX)) aBorrar.push(k);
     }
     for (const k of aBorrar) localStorage.removeItem(k);
   } catch {
     // Sin localStorage — nada que purgar.
-  }
-}
-
-// Migración one-shot: borra la cache fija del sistema previo.
-// Idempotente, segura de llamar muchas veces.
-function migrarCacheVieja(): void {
-  try {
-    if (localStorage.getItem(CACHE_VIEJA) !== null) {
-      localStorage.removeItem(CACHE_VIEJA);
-    }
-  } catch {
-    // Sin localStorage — nada que migrar.
   }
 }
 
@@ -546,25 +477,19 @@ export async function fetchRecommendations(
 // Pool del mazo. Mezcla discover + recommendations, dedupe por id,
 // garantiza mínimo con SEMILLA_FALLBACK.
 // El filtro de yaVistas se aplica SIEMPRE a la salida — la cache guarda
-// el pool completo, no filtrado, para que el historial pueda crecer sin
-// congelar el snapshot.
-// La firma incluye yaVistas desde B1 (B1 lo deja vacío; B2 lo conectará).
+// Construye el pool del mazo. B6: SIN cache. Cada llamada = pool fresco
+// desde TMDb. La variedad entre sesiones se garantiza con page+sort_by
+// aleatorios en intenciones.ts.
+//
+// Sí mantiene la firma con yaVistas por si en el futuro se quiere usar.
+// Por ahora yaVistas se ignora — las vistas aparecen en el ranking con badge.
 export async function construirPool(
   filtros: FiltrosDiscover,
   semillas: string[],
   yaVistas: string[],
 ): Promise<Pelicula[]> {
-  migrarCacheVieja();
-  purgarPoolsVencidos();
-
-  const hash = hashFiltros(filtros, semillas);
-  const yaSet = new Set(yaVistas);
-
-  const cached = leerPool(hash);
-  if (cached) {
-    // Cache hit: pool completo sin filtrar. Filtrar SIEMPRE a la salida.
-    return cached.filter((p) => !yaSet.has(p.id));
-  }
+  // Limpieza one-shot de caches viejos (B5 y anteriores) acumulados.
+  purgarCachesViejas();
 
   const apiKey = localStorage.getItem("tmdb_key") ?? "";
   if (!apiKey) throw new TmdbNoKeyError();
@@ -577,12 +502,10 @@ export async function construirPool(
   ]);
 
   // Filtrar recommendations a las compatibles con el intent.
-  // Decisión de producto: cuando el intent es específico (liviano/denso/
-  // adrenalina), el pedido actual manda sobre el historial. Sin esto,
-  // recommendations de tu historial pisa al intent ("pedí comedia, me
-  // trajo crimen"). Para sorpresa (idsIntencion vacío) acepta todo.
-  // Split defensivo por coma O pipe: tolera ambos separadores.
-  // Hoy intenciones.ts usa pipe (OR en TMDb); coma queda soportada por compat.
+  // Decisión de producto (B3 fix): el intent específico manda sobre el
+  // historial. Sin esto, recommendations del historial pisa al intent
+  // ("pedí comedia, me trajo crimen"). Para sorpresa (idsIntencion vacío)
+  // acepta todo. Split defensivo coma O pipe (intenciones.ts usa pipe).
   const idsIntencion = new Set(
     (filtros.with_genres ?? "").split(/[,|]/).filter(Boolean),
   );
@@ -591,19 +514,17 @@ export async function construirPool(
   );
 
   // Merge: discover primero (representa el intent puro), reco rellena.
-  // Asignamos procedencia explícita en cada inserción para que el motor
-  // pueda darle peso a "vino de reco".
+  // Procedencia asignada al insertar para que el motor pueda pesar "reco".
   const pool = new Map<string, Pelicula>();
   for (const p of disc) pool.set(p.id, { ...p, procedencia: "discover" });
   for (const p of recoCompatible) {
     if (!pool.has(p.id)) pool.set(p.id, { ...p, procedencia: "reco" });
   }
 
-  // 4ta fuente B5: presencia LGBT+ garantizada.
-  // Consulta /discover?with_keywords=158718 SIN cruzar con género del intent
-  // (la intersección sería casi vacía: comedia queer es nicho). NO se filtra
-  // con compatibleConIntencion por el mismo motivo. Se inyectan hasta
-  // PRESENCIA_GARANTIZADA_LGBT que no estén ya en el pool.
+  // 4ta fuente: presencia LGBT+ garantizada.
+  // /discover?with_keywords=158718 SIN cruzar con género del intent (la
+  // intersección sería casi vacía). NO se filtra con compatibleConIntencion
+  // por el mismo motivo. Se inyectan hasta PRESENCIA_GARANTIZADA_LGBT.
   try {
     const lgbt = await fetchDiscover({
       with_keywords: KEYWORD_LGBT,
@@ -624,8 +545,8 @@ export async function construirPool(
 
   let completo = [...pool.values()];
 
-  // Fallback: si el pool COMPLETO no llega al mínimo, traer SEMILLA_FALLBACK.
-  // También se filtra por intent — mejor 5 livianos genuinos que 8 mezclados.
+  // Fallback: si el pool no llega al mínimo, traer SEMILLA_FALLBACK
+  // (también filtrada por intent — mejor 5 livianos genuinos que 8 mezclados).
   if (completo.length < MIN_POOL) {
     const yaEnPool = new Set(completo.map((p) => p.id));
     const candidatos = SEMILLA_FALLBACK.filter(
@@ -638,31 +559,11 @@ export async function construirPool(
     completo = [...completo, ...fallbackCompatible];
   }
 
-  // TODO REMOVE [B4a-pool] — texto plano para que sea fácil de pasear.
-  console.log(
-    "[B4a-pool] " +
-      (filtros.with_genres ?? "(sorpresa)") +
-      " · " + completo.length + " pelis\n" +
-      completo
-        .map(
-          (p) =>
-            "  " +
-            p.tono.padEnd(8) +
-            " " +
-            p.procedencia.padEnd(9) +
-            " " +
-            (p.generos[0] ?? "—").padEnd(20) +
-            " " +
-            p.titulo,
-        )
-        .join("\n"),
-  );
+  // yaVistas: B6 lo ignora deliberadamente (las vistas aparecen en ranking
+  // con badge). Lo dejamos como param sin uso para no romper la firma.
+  void yaVistas;
 
-  // Cache: pool completo, sin filtrar por vistas.
-  guardarPool(hash, completo);
-
-  // Filtro vistas a la salida.
-  return completo.filter((p) => !yaSet.has(p.id));
+  return completo;
 }
 
 // Carga el pool para un intent ya resuelto a filtros.
@@ -702,4 +603,13 @@ export function backdropUrl(
 ): string {
   if (!p.backdropPath) return "";
   return `${IMG_BASE}/${size}${p.backdropPath}`;
+}
+
+// URL de un fotograma extra (path crudo TMDb). Para las miniaturas de la ficha.
+export function imageUrl(
+  path: string,
+  size: "w300" | "w500" | "w780" = "w300",
+): string {
+  if (!path) return "";
+  return `${IMG_BASE}/${size}${path}`;
 }
