@@ -617,7 +617,7 @@ async fn tmdb_detail(
                     images.push(fp);
                 }
             }
-            if images.len() >= 6 {
+            if images.len() >= 12 {
                 break;
             }
         }

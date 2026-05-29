@@ -127,7 +127,11 @@
     exitOpen = false;
   }
   function onExitKey(e: KeyboardEvent) {
-    if (e.key === "Escape") { e.preventDefault(); cancelExit(); }
+    // Modales se cierran con Esc o Backspace (regla global B8).
+    if (e.key === "Escape" || e.key === "Backspace") {
+      e.preventDefault();
+      cancelExit();
+    }
   }
 </script>
 

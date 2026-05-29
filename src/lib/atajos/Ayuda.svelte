@@ -38,7 +38,8 @@
     if (k !== "Shift" && k !== "Control" && k !== "Alt" && k !== "Meta") {
       lastIAt = 0;
     }
-    if (ayuda.visible && k === "Escape") {
+    // Modales se cierran con Esc o Backspace.
+    if (ayuda.visible && (k === "Escape" || k === "Backspace")) {
       e.preventDefault();
       e.stopPropagation();
       ayuda.close();

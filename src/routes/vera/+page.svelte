@@ -1,12 +1,13 @@
 <script lang="ts">
-  // Vera and Chill — flujo B6.
+  // Vera and Chill — flujo B6 + B8 (esc/backspace consistentes).
   // Cinco pantallas: entrada → contexto → intencion → CALIFICAR → RANKING.
   //
   // CALIFICAR: 8 cartas, una por vez. ←→ ajusta -5..+5. ↑ toggle vista
   //   (juicio dual). ↓ saltar (interes=-1). Enter pasa a la siguiente.
-  //   Backspace salta al ranking ya.
-  // RANKING: lista navegable, #1 destacada. ↑↓ navega, Enter Descubre,
-  //   Backspace empieza otra ronda (pool fresco, mismo contexto+intent).
+  // RANKING: lista navegable, #1 destacada. ↑↓ navega, Enter Descubre.
+  //
+  // Esc = volver atrás (a la pantalla previa, o a home si ya estás en entrada).
+  // Backspace = salir directo a la home, sin importar la pantalla.
   //
   // SIN cache de pool: cada entrada = pool fresco vía page+sort_by random.
   // Persistencia entre sesiones: vera_reacciones_v2 alimenta perfil histórico.
@@ -361,50 +362,50 @@
     goto("/");
   }
 
-  // Backspace tiene tres semánticas según pantalla:
-  //   - calificar: saltar al ranking ya (con lo calificado).
-  //   - ranking: otra ronda (pool fresco).
-  //   - otras: paso atrás.
-  function backspaceMultiple(): void {
-    if (pantalla === "calificar") {
-      void irAlRanking();
-      return;
-    }
-    if (pantalla === "ranking") {
-      void otraRonda();
-      return;
-    }
-    if (pantalla === "intencion") pantalla = "contexto";
+  // Esc: paso atrás dentro del flujo. Si ya estás en la primera pantalla
+  // (entrada), sale a la home.
+  function escAtras(): void {
+    if (pantalla === "entrada") salirDeVera();
     else if (pantalla === "contexto") pantalla = "entrada";
-    else if (pantalla === "entrada") salirDeVera();
+    else if (pantalla === "intencion") pantalla = "contexto";
+    else if (pantalla === "calificar") pantalla = "intencion";
+    else if (pantalla === "ranking") pantalla = "calificar";
   }
+  // Backspace: salir directo a la home, sin importar la pantalla.
+  // Reemplaza las semánticas previas de "ir al ranking ya" / "otra ronda".
+  // Si querés esas funciones, salí a home y reentrá a Vera.
 
   // --- Atajos ---
 
   function atajosActuales(): AtajoLinea[] {
+    // Reglas globales — todas las pantallas las heredan al final:
+    //   Esc       = paso atrás (a la pantalla anterior; si ya estás en
+    //               entrada, sale a home).
+    //   Backspace = salir directo a la home raíz.
+    //   I-I       = ayuda.
+    const globales: AtajoLinea[] = [
+      { tecla: "Esc", desc: "Volver atrás" },
+      { tecla: "Backspace", desc: "Salir a home" },
+      { tecla: "I-I", desc: "Ayuda" },
+    ];
     if (pantalla === "entrada") {
       return [
         { tecla: "Enter", desc: "Empezar" },
-        { tecla: "Esc", desc: "Salir de Vera" },
-        { tecla: "I-I", desc: "Ayuda" },
+        ...globales,
       ];
     }
     if (pantalla === "contexto") {
       return [
         { tecla: "← → ↑ ↓", desc: "Mover entre opciones" },
         { tecla: "Enter", desc: "Confirmar contexto" },
-        { tecla: "Backspace", desc: "Volver a entrada" },
-        { tecla: "Esc", desc: "Salir de Vera" },
-        { tecla: "I-I", desc: "Ayuda" },
+        ...globales,
       ];
     }
     if (pantalla === "intencion") {
       return [
         { tecla: "← →", desc: "Elegir intención" },
         { tecla: "Enter", desc: "Confirmar y buscar" },
-        { tecla: "Backspace", desc: "Volver a contexto" },
-        { tecla: "Esc", desc: "Salir de Vera" },
-        { tecla: "I-I", desc: "Ayuda" },
+        ...globales,
       ];
     }
     if (pantalla === "calificar") {
@@ -413,18 +414,14 @@
         { tecla: "↑", desc: "Marcar / desmarcar como vista" },
         { tecla: "↓", desc: "Saltar (puntaje -1 automático)" },
         { tecla: "Enter", desc: "Siguiente carta" },
-        { tecla: "Backspace", desc: "Ir al ranking ya" },
-        { tecla: "Esc", desc: "Salir de Vera" },
-        { tecla: "I-I", desc: "Ayuda" },
+        ...globales,
       ];
     }
     if (pantalla === "ranking") {
       return [
         { tecla: "↑ ↓", desc: "Navegar entre pelis" },
         { tecla: "Enter", desc: "Descubrir esta peli" },
-        { tecla: "Backspace", desc: "Otra ronda (pelis nuevas)" },
-        { tecla: "Esc", desc: "Salir de Vera" },
-        { tecla: "I-I", desc: "Ayuda" },
+        ...globales,
       ];
     }
     return [];
@@ -443,15 +440,17 @@
 
     const k = e.key;
 
+    // Esc = paso atrás (consistente en toda la app).
     if (k === "Escape") {
       e.preventDefault();
-      salirDeVera();
+      escAtras();
       return;
     }
 
+    // Backspace = salir directo a la home raíz (consistente en toda la app).
     if (k === "Backspace") {
       e.preventDefault();
-      backspaceMultiple();
+      salirDeVera();
       return;
     }
 
@@ -596,7 +595,7 @@
     </div>
     <p class="atajo">
       <kbd>←</kbd> <kbd>→</kbd> elegir · <kbd>Enter</kbd> confirmar ·
-      <kbd>Backspace</kbd> volver
+      <kbd>Esc</kbd> atrás · <kbd>Backspace</kbd> a home
     </p>
   </section>
 {:else if pantalla === "intencion"}
@@ -644,7 +643,7 @@
     {:else}
       <p class="atajo">
         <kbd>←</kbd> <kbd>→</kbd> elegir · <kbd>Enter</kbd> confirmar ·
-        <kbd>Backspace</kbd> volver
+        <kbd>Esc</kbd> atrás · <kbd>Backspace</kbd> a home
       </p>
     {/if}
   </section>
@@ -736,7 +735,7 @@
       <p class="atajo">
         <kbd>←</kbd> <kbd>→</kbd> puntaje · <kbd>↑</kbd> ya la vi ·
         <kbd>↓</kbd> saltar · <kbd>Enter</kbd> siguiente ·
-        <kbd>Backspace</kbd> ir al ranking
+        <kbd>Esc</kbd> atrás · <kbd>Backspace</kbd> a home
       </p>
     {/if}
   </section>
@@ -836,7 +835,7 @@
 
       <p class="atajo ranking-atajo">
         <kbd>↑</kbd> <kbd>↓</kbd> navegar · <kbd>Enter</kbd> descubrir ·
-        <kbd>Backspace</kbd> otra ronda
+        <kbd>Esc</kbd> atrás · <kbd>Backspace</kbd> a home
       </p>
     {/if}
   </section>
@@ -957,8 +956,8 @@
 
   /* --- Botones grandes --- */
   .btn-grande {
-    font-size: 22px;
-    padding: 16px 36px;
+    font-size: 30px;
+    padding: 22px 52px;
     border-radius: 999px;
     border: none;
     cursor: pointer;
@@ -1089,27 +1088,27 @@
   }
   .contador {
     color: #d9c0a4;
-    font-size: 13px;
-    margin: 0 0 14px;
+    font-size: 20px;
+    margin: 0 0 20px;
     letter-spacing: 1px;
   }
   .ficha-carta,
   .ficha-activa {
     display: flex;
-    gap: 28px;
-    max-width: 900px;
+    gap: 48px;
+    max-width: 1500px;
     width: 100%;
-    margin: 0 0 16px;
+    margin: 0 0 28px;
     text-align: left;
     position: relative;
     z-index: 2;
   }
   .poster-carta,
   .poster-activa {
-    width: 240px;
-    min-width: 240px;
-    height: 360px;
-    border-radius: 16px;
+    width: 380px;
+    min-width: 380px;
+    height: 570px;
+    border-radius: 22px;
     background-size: cover;
     background-position: center;
     box-shadow:
@@ -1121,11 +1120,11 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 14px;
     color: #ffe6c8;
   }
   .titulo {
-    font-size: 28px;
+    font-size: 48px;
     margin: 0;
     color: #ffe6c8;
     line-height: 1.1;
@@ -1133,15 +1132,15 @@
   .rango {
     color: #ff7a2e;
     font-weight: 700;
-    margin-right: 8px;
+    margin-right: 12px;
   }
   .badge-visto {
     color: #8ab87a;
-    margin-left: 8px;
-    font-size: 22px;
+    margin-left: 12px;
+    font-size: 36px;
   }
   .meta {
-    font-size: 14px;
+    font-size: 24px;
     color: #d9c0a4;
     margin: 0;
     letter-spacing: 0.3px;
@@ -1150,91 +1149,91 @@
     background: rgba(255, 170, 80, 0.18);
     border: 1px solid rgba(255, 170, 80, 0.55);
     color: #ffd66a;
-    padding: 2px 10px;
+    padding: 4px 16px;
     border-radius: 999px;
     font-weight: 600;
-    margin-left: 8px;
-    font-size: 13px;
+    margin-left: 12px;
+    font-size: 22px;
   }
   .generos {
-    font-size: 12px;
+    font-size: 20px;
     color: #ffae5c;
     margin: 0;
     text-transform: uppercase;
     letter-spacing: 0.8px;
   }
   .descripcion {
-    font-size: 14px;
+    font-size: 24px;
     line-height: 1.5;
     color: #e6d4bd;
-    margin: 4px 0 0;
+    margin: 8px 0 0;
     max-height: 7em;
     overflow: hidden;
   }
   .actores {
-    font-size: 13px;
+    font-size: 22px;
     color: #d9c0a4;
     margin: 0;
   }
   .etiqueta {
     color: #998878;
-    margin-right: 4px;
+    margin-right: 6px;
   }
   .fotogramas {
     display: flex;
-    gap: 8px;
-    margin: 4px 0 0;
+    gap: 14px;
+    margin: 8px 0 0;
   }
   .fotograma {
     flex: 1 1 0;
     aspect-ratio: 16 / 9;
-    border-radius: 8px;
+    border-radius: 12px;
     background-size: cover;
     background-position: center;
     background-color: #1f1410;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
   }
   .trivia {
-    font-size: 13px;
+    font-size: 22px;
     color: #ffd6a8;
     background: rgba(255, 140, 60, 0.12);
-    padding: 8px 12px;
-    border-radius: 10px;
-    border-left: 3px solid #ff7a2e;
-    margin: 6px 0 0;
+    padding: 14px 20px;
+    border-radius: 14px;
+    border-left: 5px solid #ff7a2e;
+    margin: 10px 0 0;
     font-style: italic;
   }
 
   /* --- Control de interés (calificar) --- */
   .control-interes {
-    margin-top: 14px;
-    padding: 12px 16px;
+    margin-top: 22px;
+    padding: 20px 26px;
     background: rgba(50, 22, 12, 0.6);
-    border-radius: 12px;
+    border-radius: 16px;
     border: 1px solid rgba(255, 140, 60, 0.3);
   }
   .control-etiqueta {
-    font-size: 13px;
+    font-size: 22px;
     color: #d9c0a4;
-    margin: 0 0 8px;
+    margin: 0 0 14px;
     letter-spacing: 0.3px;
   }
   .control-etiqueta strong {
     color: #ffe6c8;
-    font-size: 18px;
-    margin-left: 4px;
+    font-size: 30px;
+    margin-left: 6px;
   }
   .escala {
     display: flex;
-    gap: 4px;
+    gap: 8px;
     justify-content: space-between;
   }
   .celda {
     flex: 1;
     text-align: center;
-    padding: 6px 0;
-    border-radius: 6px;
-    font-size: 12px;
+    padding: 14px 0;
+    border-radius: 10px;
+    font-size: 22px;
     color: #998878;
     background: rgba(0, 0, 0, 0.2);
     border: 1px solid transparent;
@@ -1285,16 +1284,16 @@
   }
 
   .resto {
-    max-width: 900px;
+    max-width: 1500px;
     width: 100%;
-    margin: 8px 0 16px;
+    margin: 12px 0 24px;
     position: relative;
     z-index: 2;
   }
   .resto-titulo {
     color: #998878;
-    font-size: 13px;
-    margin: 0 0 8px;
+    font-size: 20px;
+    margin: 0 0 12px;
     text-align: left;
     letter-spacing: 0.5px;
     text-transform: uppercase;
@@ -1305,19 +1304,19 @@
     margin: 0;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 8px;
   }
   .resto-lista li {
     display: grid;
-    grid-template-columns: 36px 1fr 80px 80px 24px;
-    gap: 12px;
+    grid-template-columns: 52px 1fr 110px 110px 36px;
+    gap: 18px;
     align-items: center;
-    padding: 8px 12px;
-    border-radius: 8px;
+    padding: 14px 20px;
+    border-radius: 12px;
     background: rgba(50, 22, 12, 0.4);
     border: 1px solid rgba(255, 140, 60, 0.1);
     color: #d9c0a4;
-    font-size: 14px;
+    font-size: 22px;
     text-align: left;
   }
   .resto-lista li.visto {
@@ -1337,12 +1336,12 @@
   .resto-anio,
   .resto-rating {
     color: #998878;
-    font-size: 12px;
+    font-size: 19px;
     text-align: right;
   }
   .resto-badge {
     color: #8ab87a;
-    font-size: 16px;
+    font-size: 24px;
     text-align: center;
   }
   .ranking-atajo {
@@ -1354,18 +1353,18 @@
   /* --- Atajos hint --- */
   .atajo {
     color: #998878;
-    font-size: 13px;
-    margin-top: 18px;
+    font-size: 19px;
+    margin-top: 26px;
     letter-spacing: 0.5px;
   }
   :global(kbd) {
     background: rgba(255, 140, 60, 0.18);
     border: 1px solid rgba(255, 140, 60, 0.4);
-    border-radius: 6px;
-    padding: 2px 8px;
+    border-radius: 8px;
+    padding: 4px 12px;
     font-family: inherit;
-    font-size: 13px;
+    font-size: 19px;
     color: #ffe6c8;
-    margin: 0 2px;
+    margin: 0 3px;
   }
 </style>

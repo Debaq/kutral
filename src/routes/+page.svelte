@@ -28,6 +28,8 @@
   let unavailableSet = $state<Set<string>>(new Set());
   let personOpen = $state<PersonInfo | null>(null);
   let personLoading = $state(false);
+  // Carrusel de escenas (backdrops) en pantalla completa.
+  let carousel = $state<{ images: string[]; idx: number } | null>(null);
 
   type TrailerSource = "nocookie" | "youtube" | "invidious" | "piped";
   const TRAILER_SOURCES: { id: TrailerSource; label: string; build: (k: string) => string }[] = [
@@ -114,6 +116,7 @@
     genres: string[];
     directors: PersonMini[];
     cast: PersonMini[];
+    images?: string[];
   };
   type PersonFilm = {
     id: number;
@@ -266,11 +269,13 @@
     }
 
     // Registrar los atajos del home en la ayuda global.
+    // Esc y Backspace en browse no hacen nada (ya estás en la raíz).
+    // En discover/trailer: Esc o Backspace cierran y vuelven a browse.
     ayuda.set("inicio", [
       { tecla: "← → ↑ ↓", desc: "Navegar entre cards" },
-      { tecla: "Enter", desc: "Abrir / reproducir" },
-      { tecla: "Esc · Backspace", desc: "Volver / cerrar" },
-      { tecla: "I", desc: "Ayuda" },
+      { tecla: "Enter", desc: "Abrir / descubrir" },
+      { tecla: "Esc · Backspace", desc: "Cerrar player (en discover)" },
+      { tecla: "I-I", desc: "Ayuda" },
     ]);
     try {
       db = await Database.load("sqlite:kutral.db");
@@ -719,6 +724,18 @@
     }
   }
 
+  function openCarousel(images: string[], idx: number) {
+    carousel = { images, idx };
+  }
+  function closeCarousel() {
+    carousel = null;
+  }
+  function carouselGo(delta: number) {
+    if (!carousel) return;
+    const n = carousel.images.length;
+    carousel.idx = (carousel.idx + delta + n) % n;
+  }
+
   function closePerson() {
     personOpen = null;
   }
@@ -861,34 +878,6 @@
     setFs(true);
     registerBackShortcuts(false);
     setTimeout(() => document.querySelector<HTMLElement>(".back-btn")?.focus(), 50);
-    // Auto-inspect en background (stderr de tauri dev)
-    if (selected.imdb_id) {
-      invoke<string>("inspect_player", { imdbId: selected.imdb_id })
-        .then(() => console.log("[inspect_player] dump enviado a stderr"))
-        .catch((e) => console.warn("[inspect_player] error", e));
-    }
-  }
-
-  function testDiag(e: MouseEvent) {
-    (e.currentTarget as HTMLElement).blur();
-    invoke("sim_diagnostic").then((r) => console.log("[diag]", r));
-  }
-  function testSpace(e: MouseEvent) {
-    (e.currentTarget as HTMLElement).blur();
-    const iframe = document.querySelector(".discover-mode iframe") as HTMLIFrameElement | null;
-    iframe?.focus();
-    setTimeout(() => invoke("sim_key", { key: "space" }), 100);
-  }
-  function testWake(e: MouseEvent) {
-    (e.currentTarget as HTMLElement).blur();
-    invoke("sim_mouse_wake");
-  }
-
-  function runInspectPlayer() {
-    if (!selected?.imdb_id) return;
-    invoke<string>("inspect_player", { imdbId: selected.imdb_id })
-      .then(() => console.log("[inspect_player] dump enviado a stderr"))
-      .catch((e) => console.warn("[inspect_player] error", e));
   }
 
   function reportUnavailableFromDiscover() {
@@ -1047,6 +1036,14 @@
     const t = e.target as HTMLElement | null;
     const inInput = t?.tagName === "INPUT" || t?.tagName === "TEXTAREA";
 
+    if (carousel) {
+      if (e.key === "Escape" || e.key === "Backspace" || e.key === "Enter") {
+        e.preventDefault(); closeCarousel(); return;
+      }
+      if (e.key === "ArrowRight") { e.preventDefault(); carouselGo(1); return; }
+      if (e.key === "ArrowLeft")  { e.preventDefault(); carouselGo(-1); return; }
+      return;
+    }
     if (personOpen && (e.key === "Escape" || e.key === "Backspace")) {
       e.preventDefault();
       closePerson();
@@ -1112,8 +1109,6 @@
         stopDiscover();
         return;
       }
-      // Wake controles del player ante cualquier tecla (línea de tiempo visible)
-      invoke("sim_mouse_wake").catch(() => {});
       return;
     }
     onGlobalKey(e);
@@ -1159,18 +1154,6 @@
     </button>
     <button data-nav class="report-btn" onclick={reportUnavailableFromDiscover} title="Marcar como no disponible">
       ⚠ No funciona
-    </button>
-    <button data-nav class="inspect-btn" onclick={runInspectPlayer} title="Volcar info del player a stderr">
-      🔍 Inspect
-    </button>
-    <button data-nav class="test-btn" onclick={testDiag} title="Diagnóstico enigo">
-      🧪 Diag
-    </button>
-    <button data-nav class="test-btn" style:left="430px" onclick={testSpace} title="Simular Space al iframe">
-      ⏯ Space
-    </button>
-    <button data-nav class="test-btn" style:left="520px" onclick={testWake} title="Mover mouse 8px">
-      🖱 Wake
     </button>
     <iframe
       src={discoverUrl(selected.imdb_id)}
@@ -1321,6 +1304,24 @@
                     <span class="person-name">{p.name}</span>
                     {#if p.character}<span class="person-character">{p.character}</span>{/if}
                   </button>
+                {/each}
+              </div>
+            </div>
+          {/if}
+          {#if selected.images && selected.images.length}
+            {@const scenes = selected.images}
+            <div class="people-row">
+              <h4 class="people-title">Escenas</h4>
+              <div class="scenes-strip">
+                {#each scenes.slice(0, 8) as path, i}
+                  <button
+                    data-nav
+                    class="scene-shot"
+                    style:background-image="url({img(`${IMG}/w500${path}`, 500)})"
+                    onclick={() => openCarousel(scenes, i)}
+                    title="Ver escena (Enter)"
+                    aria-label={`Escena ${i + 1}`}
+                  ></button>
                 {/each}
               </div>
             </div>
@@ -1563,8 +1564,23 @@
     </div>
   {/if}
 
+  {#if carousel}
+    <div class="carousel-bg" onclick={closeCarousel} onkeydown={(e) => { if (e.key === "Escape" || e.key === "Backspace") closeCarousel(); }} role="presentation">
+      <button data-nav class="modal-close carousel-close" onclick={closeCarousel} title="Cerrar (Esc)">✕</button>
+      <button class="carousel-arrow left" onclick={(e) => { e.stopPropagation(); carouselGo(-1); }} aria-label="Anterior">‹</button>
+      <img
+        class="carousel-img"
+        src={img(`${IMG}/original${carousel.images[carousel.idx]}`, 1280)}
+        alt={`Escena ${carousel.idx + 1}`}
+        onclick={(e) => e.stopPropagation()}
+      />
+      <button class="carousel-arrow right" onclick={(e) => { e.stopPropagation(); carouselGo(1); }} aria-label="Siguiente">›</button>
+      <div class="carousel-counter">{carousel.idx + 1} / {carousel.images.length}</div>
+    </div>
+  {/if}
+
   {#if unavailable.open}
-    <div class="modal-bg" onclick={() => (unavailable.open = false)} onkeydown={(e) => { if (e.key === "Escape") unavailable.open = false; }} role="presentation">
+    <div class="modal-bg" onclick={() => (unavailable.open = false)} onkeydown={(e) => { if (e.key === "Escape" || e.key === "Backspace") unavailable.open = false; }} role="presentation">
       <div
         class="modal"
         onclick={(e) => e.stopPropagation()}
@@ -1741,6 +1757,68 @@
   }
   .people-strip {
     display: flex; gap: 10px; flex-wrap: wrap;
+  }
+  .scenes-strip {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+  }
+  .scene-shot {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    padding: 0;
+    background-size: cover; background-position: center;
+    background-color: #2a2a35;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+    cursor: pointer;
+    transition: transform 0.15s, border-color 0.15s;
+  }
+  .scene-shot:hover { transform: translateY(-2px); }
+  .scene-shot:focus {
+    outline: none;
+    border-color: #f5c518;
+    transform: translateY(-2px) scale(1.03);
+    box-shadow: 0 6px 18px rgba(0,0,0,0.55), 0 0 0 2px rgba(245,197,24,0.4);
+  }
+
+  /* --- Carrusel de escenas --- */
+  .carousel-bg {
+    position: fixed; inset: 0; z-index: 200;
+    background: rgba(0,0,0,0.92);
+    display: flex; align-items: center; justify-content: center;
+    gap: 12px;
+  }
+  .carousel-img {
+    max-width: 88vw; max-height: 82vh;
+    border-radius: 10px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+    object-fit: contain;
+  }
+  .carousel-close {
+    position: absolute; top: 24px; right: 28px;
+    z-index: 2;
+  }
+  .carousel-arrow {
+    flex: 0 0 auto;
+    width: 72px; height: 72px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255,255,255,0.1);
+    color: #fff; font-size: 48px; line-height: 1;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.15s;
+  }
+  .carousel-arrow:hover { background: rgba(255,255,255,0.22); }
+  .carousel-counter {
+    position: absolute; bottom: 28px; left: 50%;
+    transform: translateX(-50%);
+    color: #ddd; font-size: 20px;
+    background: rgba(0,0,0,0.5);
+    padding: 6px 18px; border-radius: 999px;
   }
   .person-chip {
     flex: 0 0 80px; width: 80px;
@@ -2101,30 +2179,6 @@
     transition: background 0.12s, color 0.12s;
   }
   .report-btn:hover { background: rgba(220,38,38,0.9); color: #fff; }
-  .inspect-btn {
-    position: absolute; top: 14px; left: 180px; z-index: 1000;
-    padding: 10px 16px;
-    background: rgba(20,20,28,0.75);
-    color: #88c0d0;
-    border: 1px solid rgba(136,192,208,0.5);
-    border-radius: 999px;
-    font-size: 13px; font-weight: 600;
-    cursor: pointer;
-    backdrop-filter: blur(6px);
-  }
-  .inspect-btn:hover { background: rgba(136,192,208,0.9); color: #0d0d12; }
-  .test-btn {
-    position: absolute; top: 14px; left: 340px; z-index: 1000;
-    padding: 10px 14px;
-    background: rgba(20,20,28,0.75);
-    color: #c0c0c8;
-    border: 1px solid #444;
-    border-radius: 999px;
-    font-size: 12px; font-weight: 600;
-    cursor: pointer;
-    backdrop-filter: blur(6px);
-  }
-  .test-btn:hover { background: #f5c518; color: #0d0d12; border-color: #f5c518; }
 
   /* Vista unavailable */
   .unavail-screen {
