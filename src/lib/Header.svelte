@@ -5,8 +5,12 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
   import WifiManager from "$lib/WifiManager.svelte";
+  import VolumeControl from "$lib/VolumeControl.svelte";
+  import BrightnessControl from "$lib/BrightnessControl.svelte";
+  import Notifications from "$lib/Notifications.svelte";
   import { player } from "$lib/playerState.svelte";
   import { config, isKioskActive } from "$lib/config.svelte";
+  import { notify, unreadCount } from "$lib/notifications.svelte";
 
   type WifiState = { online: boolean; connected_ssid: string | null };
 
@@ -22,25 +26,17 @@
   let now = $state(fmtTime(new Date()));
   let wifi = $state<WifiState>({ online: true, connected_ssid: null });
   let wifiOpen = $state(false);
-  let revealed = $state(false);
-  let hideTimer: number | null = null;
+  let volOpen = $state(false);
+  let brOpen = $state(false);
+  let notifOpen = $state(false);
+  let prevOnline = true;
+  const hidden = $derived(player.playing);
+  const unread = $derived(unreadCount());
 
-  const hidden = $derived(player.playing && !revealed && !wifiOpen && !exitOpen);
-
-  function scheduleHide() {
-    if (hideTimer !== null) clearTimeout(hideTimer);
-    hideTimer = window.setTimeout(() => { revealed = false; }, 2500);
-  }
-  function reveal() {
-    revealed = true;
-    scheduleHide();
-  }
-  function keepShown() {
-    if (hideTimer !== null) { clearTimeout(hideTimer); hideTimer = null; }
-    revealed = true;
-  }
-  function onHeaderLeave() {
-    if (player.playing) scheduleHide();
+  function only<T extends "vol" | "br" | "notif">(which: T) {
+    volOpen = which === "vol" ? !volOpen : false;
+    brOpen = which === "br" ? !brOpen : false;
+    notifOpen = which === "notif" ? !notifOpen : false;
   }
 
   function fmtTime(d: Date): string {
@@ -55,6 +51,12 @@
     } catch {
       wifi = { online: navigator.onLine, connected_ssid: null };
     }
+    if (prevOnline && !wifi.online) {
+      notify("warn", "Sin conexión", "La red se cayó.");
+    } else if (!prevOnline && wifi.online) {
+      notify("success", "Conexión restablecida", wifi.connected_ssid ?? undefined);
+    }
+    prevOnline = wifi.online;
   }
 
   onMount(() => {
@@ -124,21 +126,11 @@
   }
 </script>
 
-{#if player.playing && hidden}
-  <div
-    class="reveal-zone"
-    onmouseenter={reveal}
-    role="presentation"
-  ></div>
-{/if}
-
 <div
   class="titlebar"
   class:hidden
   role="banner"
   data-tauri-drag-region
-  onmouseenter={keepShown}
-  onmouseleave={onHeaderLeave}
 >
   <div class="brand" data-tauri-drag-region>
     <span class="logo" data-tauri-drag-region>✦</span>
@@ -162,6 +154,29 @@
       </span>
     {/if}
     <span class="clock" data-tauri-drag-region>{now}</span>
+
+    <div class="pop-host">
+      <button class="ic-btn" onclick={() => only("br")} title="Brillo" aria-label="Brillo">
+        🔆
+      </button>
+      <BrightnessControl bind:open={brOpen} />
+    </div>
+
+    <div class="pop-host">
+      <button class="ic-btn" onclick={() => only("vol")} title="Volumen" aria-label="Volumen">
+        🔊
+      </button>
+      <VolumeControl bind:open={volOpen} />
+    </div>
+
+    <div class="pop-host">
+      <button class="ic-btn nt-btn" onclick={() => only("notif")} title="Notificaciones" aria-label="Notificaciones">
+        🔔
+        {#if unread > 0}<span class="nt-badge">{unread > 9 ? "9+" : unread}</span>{/if}
+      </button>
+      <Notifications bind:open={notifOpen} />
+    </div>
+
     <button
       class="cfg-btn"
       onclick={goConfig}
@@ -252,15 +267,6 @@
     transform: translateY(-100%);
     pointer-events: none;
   }
-  .reveal-zone {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 6px;
-    z-index: 1001;
-    background: transparent;
-  }
   .brand {
     display: flex;
     align-items: center;
@@ -326,6 +332,38 @@
   }
   .cfg-btn:hover { background: #1c1c26; color: #fff; }
   .cfg-btn:focus { outline: 2px solid #f3a951; outline-offset: 1px; }
+
+  .pop-host {
+    position: relative;
+    display: flex;
+    align-items: stretch;
+  }
+  .ic-btn {
+    background: transparent;
+    border: 0;
+    color: #c8c8d0;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    line-height: 1;
+    position: relative;
+  }
+  .ic-btn:hover { background: #1c1c26; color: #fff; }
+  .ic-btn:focus { outline: 2px solid #f3a951; outline-offset: 1px; }
+  .nt-badge {
+    position: absolute;
+    top: 0; right: 0;
+    background: #c42b1c;
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    border-radius: 8px;
+    padding: 1px 4px;
+    line-height: 1.2;
+    min-width: 12px;
+    text-align: center;
+  }
   .controls {
     display: flex;
     align-items: stretch;

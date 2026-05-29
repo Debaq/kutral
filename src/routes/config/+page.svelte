@@ -3,6 +3,9 @@
   import { goto } from "$app/navigation";
   import { invoke } from "@tauri-apps/api/core";
   import { openUrl } from "@tauri-apps/plugin-opener";
+  import { getVersion } from "@tauri-apps/api/app";
+  import { check, type Update } from "@tauri-apps/plugin-updater";
+  import { relaunch } from "@tauri-apps/plugin-process";
   import {
     config,
     loadConfig,
@@ -10,6 +13,7 @@
     LANGS,
     type ModeOverride,
   } from "$lib/config.svelte";
+  import { notify } from "$lib/notifications.svelte";
 
   type RdDeviceStart = {
     device_code: string;
@@ -44,12 +48,24 @@
   let countdownTimer: number | null = null;
   let secondsLeft = $state(0);
 
-  onMount(() => {
+  // Updater
+  let currentVer = $state("");
+  type UpdStage = "idle" | "checking" | "uptodate" | "available" | "installing" | "ready" | "error";
+  let updStage = $state<UpdStage>("idle");
+  let updPending: Update | null = null;
+  let updVersion = $state("");
+  let updNotes = $state("");
+  let updErr = $state("");
+  let updDownloaded = $state(0);
+  let updTotal = $state(0);
+
+  onMount(async () => {
     loadConfig();
     tmdb = config.tmdbKey;
     rd = config.rdKey;
     lang = config.lang;
     mode = config.modeOverride;
+    try { currentVer = await getVersion(); } catch {}
   });
 
   onDestroy(() => {
@@ -155,6 +171,54 @@
     const r = (s % 60).toString().padStart(2, "0");
     return `${m}:${r}`;
   }
+
+  async function checkUpdate() {
+    updStage = "checking";
+    updErr = "";
+    try {
+      const u = await check();
+      if (!u) {
+        updStage = "uptodate";
+        return;
+      }
+      updPending = u;
+      updVersion = u.version;
+      updNotes = u.body || "";
+      updStage = "available";
+      notify("info", `Actualización ${u.version} disponible`, u.body || undefined);
+    } catch (e) {
+      updErr = String(e);
+      updStage = "error";
+    }
+  }
+
+  async function installUpdate() {
+    if (!updPending) return;
+    updStage = "installing";
+    updDownloaded = 0;
+    updTotal = 0;
+    try {
+      await updPending.downloadAndInstall((ev) => {
+        switch (ev.event) {
+          case "Started": updTotal = ev.data.contentLength ?? 0; break;
+          case "Progress": updDownloaded += ev.data.chunkLength; break;
+          case "Finished": updStage = "ready"; break;
+        }
+      });
+      await relaunch();
+    } catch (e) {
+      updErr = String(e);
+      updStage = "error";
+    }
+  }
+
+  function updPct(): number {
+    if (updTotal <= 0) return 0;
+    return Math.min(100, Math.round((updDownloaded / updTotal) * 100));
+  }
+  function updMb(b: number): string {
+    return (b / 1024 / 1024).toFixed(1);
+  }
 </script>
 
 <svelte:head>
@@ -203,6 +267,42 @@
               <div><strong>Kiosko / embedido</strong><span>Pantalla completa. Solo "Salir" + gestor WiFi.</span></div>
             </label>
           </div>
+        </section>
+
+        <section class="block">
+          <h2>Actualizaciones</h2>
+          <p class="hint">
+            Versión actual: <em>{currentVer || "?"}</em>
+          </p>
+
+          {#if updStage === "idle"}
+            <button class="btn-link" onclick={checkUpdate}>Buscar actualizaciones</button>
+          {:else if updStage === "checking"}
+            <p class="upd-line"><span class="spinner"></span> Buscando…</p>
+          {:else if updStage === "uptodate"}
+            <p class="upd-line upd-ok">Estás al día.</p>
+            <button class="link-tiny" onclick={checkUpdate}>Volver a buscar</button>
+          {:else if updStage === "available"}
+            <p class="upd-line">
+              Disponible: <strong>v{updVersion}</strong>
+            </p>
+            {#if updNotes}<pre class="upd-notes">{updNotes}</pre>{/if}
+            <button class="btn-link" onclick={installUpdate}>Instalar y reiniciar</button>
+            <button class="link-tiny" onclick={() => { updStage = "idle"; }}>Más tarde</button>
+          {:else if updStage === "installing"}
+            <p class="upd-line"><span class="spinner"></span> Descargando…</p>
+            {#if updTotal > 0}
+              <div class="bar"><div class="bar-fill" style="width: {updPct()}%"></div></div>
+              <p class="upd-mb">{updMb(updDownloaded)} / {updMb(updTotal)} MB · {updPct()}%</p>
+            {:else}
+              <p class="upd-mb">{updMb(updDownloaded)} MB</p>
+            {/if}
+          {:else if updStage === "ready"}
+            <p class="upd-line"><span class="spinner"></span> Reiniciando…</p>
+          {:else if updStage === "error"}
+            <p class="err">{updErr}</p>
+            <button class="link-tiny" onclick={checkUpdate}>Reintentar</button>
+          {/if}
         </section>
       </div>
 
@@ -536,5 +636,46 @@
   .btn-save:disabled { opacity: 0.4; cursor: default; }
   .hint-actions {
     margin: 0; color: #6e6e78; font-size: 12px;
+  }
+
+  .upd-line {
+    margin: 0 0 8px;
+    font-size: 13px;
+    color: #c8c8d0;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .upd-line strong { color: #f3a951; }
+  .upd-ok { color: #9be38a; }
+  .upd-notes {
+    background: #0d0d12;
+    border: 1px solid #1f1f28;
+    border-radius: 8px;
+    padding: 10px 12px;
+    max-height: 140px;
+    overflow: auto;
+    font-size: 11.5px;
+    color: #c8c8d0;
+    margin: 0 0 10px;
+    white-space: pre-wrap;
+    font-family: ui-monospace, monospace;
+  }
+  .bar {
+    width: 100%;
+    height: 6px;
+    background: #1f1f28;
+    border-radius: 3px;
+    overflow: hidden;
+    margin: 4px 0 6px;
+  }
+  .bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #f3a951, #ffb86b);
+    transition: width 0.2s ease;
+  }
+  .upd-mb {
+    margin: 0;
+    color: #888892;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
   }
 </style>

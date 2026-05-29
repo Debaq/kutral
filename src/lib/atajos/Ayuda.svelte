@@ -1,9 +1,12 @@
 <script lang="ts">
-  // Overlay global de ayuda. Vive en +layout.svelte, escucha I y Esc en window.
+  // Overlay global de ayuda. Vive en +layout.svelte, escucha I-I (doble tap) y Esc.
   // Cada ruta registra sus atajos llamando ayuda.set(pantalla, lineas).
 
   import { fade } from "svelte/transition";
   import { ayuda } from "./store.svelte";
+
+  const DOUBLE_TAP_MS = 500;
+  let lastIAt = 0;
 
   function onKey(e: KeyboardEvent) {
     const k = e.key;
@@ -21,9 +24,19 @@
     }
 
     if (k === "i" || k === "I") {
-      e.preventDefault();
-      ayuda.toggle();
+      const now = Date.now();
+      if (now - lastIAt <= DOUBLE_TAP_MS) {
+        e.preventDefault();
+        ayuda.toggle();
+        lastIAt = 0;
+      } else {
+        lastIAt = now;
+      }
       return;
+    }
+    // Cualquier otra tecla (excepto modificadores) rompe la secuencia I-I.
+    if (k !== "Shift" && k !== "Control" && k !== "Alt" && k !== "Meta") {
+      lastIAt = 0;
     }
     if (ayuda.visible && k === "Escape") {
       e.preventDefault();
@@ -37,7 +50,7 @@
 
 <!-- Hint global abajo derecha — visible siempre, en toda ruta. -->
 <div class="hint-global" aria-hidden="true">
-  <kbd>I</kbd> ayuda
+  <kbd>I</kbd><kbd>I</kbd> ayuda
 </div>
 
 {#if ayuda.visible}
@@ -55,7 +68,7 @@
           </div>
         {/each}
       </div>
-      <p class="cierra"><kbd>I</kbd> o <kbd>Esc</kbd> para cerrar</p>
+      <p class="cierra"><kbd>I</kbd><kbd>I</kbd> o <kbd>Esc</kbd> para cerrar</p>
     </div>
   </div>
 {/if}

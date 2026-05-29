@@ -1701,6 +1701,135 @@ async fn rd_device_poll(
 }
 
 // ============================================================
+// Audio (wpctl) + Brillo (brightnessctl)
+// ============================================================
+
+#[derive(Serialize)]
+pub struct AudioState {
+    volume: u8,
+    muted: bool,
+    available: bool,
+}
+
+#[tauri::command]
+async fn audio_get() -> Result<AudioState, String> {
+    #[cfg(not(target_os = "linux"))]
+    { return Ok(AudioState { volume: 50, muted: false, available: false }); }
+    #[cfg(target_os = "linux")]
+    {
+        use std::process::Command;
+        let out = match Command::new("wpctl")
+            .args(["get-volume", "@DEFAULT_AUDIO_SINK@"])
+            .output()
+        {
+            Ok(o) if o.status.success() => o,
+            _ => return Ok(AudioState { volume: 50, muted: false, available: false }),
+        };
+        let s = String::from_utf8_lossy(&out.stdout);
+        let mut volume = 50u8;
+        if let Some(idx) = s.find("Volume:") {
+            let after = &s[idx + 7..];
+            if let Some(tok) = after.split_whitespace().next() {
+                if let Ok(v) = tok.parse::<f32>() {
+                    let pct = (v * 100.0).round();
+                    volume = pct.clamp(0.0, 150.0) as u8;
+                }
+            }
+        }
+        let muted = s.contains("MUTED");
+        Ok(AudioState { volume, muted, available: true })
+    }
+}
+
+#[tauri::command]
+async fn audio_set(volume: u8) -> Result<(), String> {
+    let v = volume.min(150);
+    #[cfg(not(target_os = "linux"))]
+    { let _ = v; return Ok(()); }
+    #[cfg(target_os = "linux")]
+    {
+        use std::process::Command;
+        let arg = format!("{:.2}", v as f32 / 100.0);
+        let out = Command::new("wpctl")
+            .args(["set-volume", "@DEFAULT_AUDIO_SINK@", &arg])
+            .output()
+            .map_err(|e| format!("wpctl: {}", e))?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        Ok(())
+    }
+}
+
+#[tauri::command]
+async fn audio_set_mute(muted: bool) -> Result<(), String> {
+    #[cfg(not(target_os = "linux"))]
+    { let _ = muted; return Ok(()); }
+    #[cfg(target_os = "linux")]
+    {
+        use std::process::Command;
+        let arg = if muted { "1" } else { "0" };
+        let out = Command::new("wpctl")
+            .args(["set-mute", "@DEFAULT_AUDIO_SINK@", arg])
+            .output()
+            .map_err(|e| format!("wpctl: {}", e))?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Serialize)]
+pub struct BrightnessState {
+    percent: u8,
+    available: bool,
+}
+
+#[tauri::command]
+async fn brightness_get() -> Result<BrightnessState, String> {
+    #[cfg(not(target_os = "linux"))]
+    { return Ok(BrightnessState { percent: 100, available: false }); }
+    #[cfg(target_os = "linux")]
+    {
+        use std::process::Command;
+        let cur = Command::new("brightnessctl").args(["get"]).output();
+        let max = Command::new("brightnessctl").args(["max"]).output();
+        if let (Ok(c), Ok(m)) = (cur, max) {
+            if c.status.success() && m.status.success() {
+                let cs = String::from_utf8_lossy(&c.stdout).trim().parse::<u64>().unwrap_or(0);
+                let ms = String::from_utf8_lossy(&m.stdout).trim().parse::<u64>().unwrap_or(0);
+                if ms > 0 {
+                    let p = ((cs as f64 / ms as f64) * 100.0).round() as u8;
+                    return Ok(BrightnessState { percent: p.min(100), available: true });
+                }
+            }
+        }
+        Ok(BrightnessState { percent: 100, available: false })
+    }
+}
+
+#[tauri::command]
+async fn brightness_set(percent: u8) -> Result<(), String> {
+    let p = percent.clamp(5, 100);
+    #[cfg(not(target_os = "linux"))]
+    { let _ = p; return Ok(()); }
+    #[cfg(target_os = "linux")]
+    {
+        use std::process::Command;
+        let arg = format!("{}%", p);
+        let out = Command::new("brightnessctl")
+            .args(["set", &arg])
+            .output()
+            .map_err(|e| format!("brightnessctl: {}", e))?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        Ok(())
+    }
+}
+
+// ============================================================
 // Kütral OS — gestión de red (nmcli)
 // ============================================================
 
@@ -2040,7 +2169,12 @@ pub fn run() {
             wifi_scan,
             wifi_connect,
             rd_device_start,
-            rd_device_poll
+            rd_device_poll,
+            audio_get,
+            audio_set,
+            audio_set_mute,
+            brightness_get,
+            brightness_set
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
