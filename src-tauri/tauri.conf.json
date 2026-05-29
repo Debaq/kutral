@@ -16,7 +16,8 @@
         "width": 1280,
         "height": 800,
         "maximized": true,
-        "decorations": false
+        "decorations": false,
+        "backgroundColor": "#0a0608"
       }
     ],
     "security": {

@@ -2,12 +2,42 @@
 <html lang="es">
   <head>
     <meta charset="utf-8" />
-    <link rel="icon" href="%sveltekit.assets%/favicon.png" />
+    <link rel="icon" type="image/webp" href="%sveltekit.assets%/logo-32.webp" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Kütral</title>
+    <style>
+      /* Fondo negro inmediato — evita el flash blanco del webview Tauri
+         antes de que Svelte tome control. */
+      html, body { background: #0a0608; margin: 0; padding: 0; }
+
+      /* Splash arriba de todo al inicio. Cuando Svelte monta, +layout.svelte
+         le agrega .ready → fadeout, y al terminar lo elimina del DOM.
+         No queda de fondo. */
+      #kutral-splash {
+        position: fixed;
+        inset: 0;
+        background: #0a0608;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        pointer-events: none;
+        transition: opacity 0.5s ease-out;
+        opacity: 1;
+      }
+      #kutral-splash.ready { opacity: 0; }
+      #kutral-splash img {
+        max-width: 70vw;
+        max-height: 70vh;
+        object-fit: contain;
+      }
+    </style>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">
+    <div id="kutral-splash" aria-hidden="true">
+      <img src="%sveltekit.assets%/banner.webp" alt="" />
+    </div>
     <div style="display: contents">%sveltekit.body%</div>
   </body>
 </html>

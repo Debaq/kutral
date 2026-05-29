@@ -142,8 +142,14 @@
   data-tauri-drag-region
 >
   <div class="brand" data-tauri-drag-region>
-    <span class="logo" data-tauri-drag-region>✦</span>
-    <span class="name" data-tauri-drag-region>Kütral</span>
+    <img
+      class="logo-img"
+      src="/logo-64.webp"
+      alt="Kütral"
+      width="32"
+      height="32"
+      data-tauri-drag-region
+    />
   </div>
 
   <div class="status" data-tauri-drag-region>
@@ -299,15 +305,13 @@
     flex: 1;
     min-width: 0;
   }
-  .logo {
-    color: #f3a951;
-    font-size: 14px;
-    line-height: 1;
-  }
-  .name {
-    font-size: 13px;
-    letter-spacing: 0.04em;
-    color: #d8d8e0;
+  .logo-img {
+    height: 22px;
+    width: auto;
+    object-fit: contain;
+    display: block;
+    -webkit-user-drag: none;
+    user-select: none;
   }
   .status {
     display: flex;

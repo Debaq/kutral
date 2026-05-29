@@ -10,6 +10,14 @@
   onMount(() => {
     loadConfig();
     initDetection();
+    // Apagar el splash de app.html una vez que el layout monta:
+    // .ready dispara el fadeout CSS (0.5s); después removemos el nodo
+    // del DOM para que no quede ocupando memoria ni capturando algo.
+    const splash = document.getElementById("kutral-splash");
+    if (splash) {
+      splash.classList.add("ready");
+      setTimeout(() => splash.remove(), 600);
+    }
   });
 
   const kiosk = $derived(
