@@ -281,7 +281,56 @@
       loadGenres();
       resetAndLoad();
     }
+
+    // Handoff de Vera (B5): si la URL trae ?play=<tmdb_id>&type=movie,
+    // disparar Descubrir directo. Vera redirige acá con esos params al
+    // confirmar la peli activa en su lista.
+    const url = new URL(window.location.href);
+    const playId = url.searchParams.get("play");
+    const playType = url.searchParams.get("type");
+    if (playId && playType) {
+      // CRÍTICO: limpiar ?play= ANTES de invocar tmdb_detail. Sin esto,
+      // un refresh durante o tras el handoff re-dispara el play solo.
+      history.replaceState({}, "", "/");
+      await handoffPlay(playId, playType);
+    }
   });
+
+  // Handoff Vera → home: resuelve un tmdb_id en Detail y entra al modo
+  // discover (el flujo real de Descubrir). Reusa la misma maquinaria que
+  // usa la home cuando se clickea una card (tmdb_detail → selected →
+  // startDiscover). Si algo falla, el usuario queda en "browse" (default
+  // de Kütral), nunca en pantalla rota ni mode a medias.
+  async function handoffPlay(idStr: string, typeStr: string) {
+    if (!apiKey) {
+      console.warn("[handoff] sin api key — abortando, mode queda en browse");
+      return;
+    }
+    const id = parseInt(idStr, 10);
+    if (!Number.isFinite(id)) {
+      console.warn("[handoff] id inválido:", idStr);
+      return;
+    }
+    if (typeStr !== "movie" && typeStr !== "tv") {
+      console.warn("[handoff] type inválido:", typeStr);
+      return;
+    }
+    try {
+      const d = await invoke<Detail>("tmdb_detail", {
+        mediaType: typeStr,
+        id,
+        apiKey,
+      });
+      selected = d;
+      await loadProgressForSelected();
+      // Mismo flujo que el botón "Descubrir" de la card.
+      await startDiscover();
+    } catch (e) {
+      console.warn("[handoff] falló, fallback a browse:", e);
+      selected = null;
+      mode = "browse";
+    }
+  }
 
   function onIframeMessage(e: MessageEvent) {
     // Log todo para diagnóstico

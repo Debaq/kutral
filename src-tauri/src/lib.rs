@@ -218,6 +218,8 @@ async fn tmdb_discover(
     primary_release_date_gte: Option<String>,
     primary_release_date_lte: Option<String>,
     with_original_language: Option<String>,
+    // B5: keywords TMDb (ej. 158718 para LGBT+). Acepta coma=AND o pipe=OR.
+    with_keywords: Option<String>,
 ) -> Result<TmdbListResp, String> {
     if api_key.is_empty() {
         return Err("falta api key".into());
@@ -266,6 +268,9 @@ async fn tmdb_discover(
     }
     if let Some(l) = with_original_language.filter(|s| !s.is_empty()) {
         url.push_str(&format!("&with_original_language={}", l));
+    }
+    if let Some(k) = with_keywords.filter(|s| !s.is_empty()) {
+        url.push_str(&format!("&with_keywords={}", k));
     }
     fetch_json(&url).await
 }

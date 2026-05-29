@@ -11,6 +11,24 @@ import type { Pelicula, Tono, Intencion } from "./tipos";
 import { SEMILLA_FALLBACK } from "./probes";
 import { getVistas, getSemillas } from "./historial";
 
+// Cache de géneros por tmdb_id en localStorage.
+// Sin TTL — los géneros de una peli no cambian. La pobla mapear() cada vez
+// que enriquecemos una peli, y la consume historial.getPerfilHistorico().
+// Permite tener perfil histórico real sin pegarle de nuevo a TMDb.
+const CACHE_GENEROS = "vera_generos_cache";
+
+function cacheGenerosDe(tmdbId: number, generos: string[]): void {
+  if (generos.length === 0) return;
+  try {
+    const raw = localStorage.getItem(CACHE_GENEROS);
+    const cache: Record<string, string[]> = raw ? JSON.parse(raw) : {};
+    cache[String(tmdbId)] = generos;
+    localStorage.setItem(CACHE_GENEROS, JSON.stringify(cache));
+  } catch {
+    // localStorage lleno / privado — ignorar, no es fatal.
+  }
+}
+
 // Géneros TMDb (numéricos) por intención. Reservado para B3.
 // Cada intent abarca varios géneros para que discover devuelva variedad.
 const GENEROS_POR_INTENCION: Record<Intencion, string> = {
@@ -45,6 +63,14 @@ interface TmdbListResp {
 // en migrarCacheVieja(). No reutilizar este nombre.
 const CACHE_VIEJA = "vera_catalogo_v2";
 
+// Keyword TMDb sombrilla para representación LGBT+ (B5).
+// Garantiza que SIEMPRE haya 1-2 pelis con esta keyword en el pool,
+// sin importar el intent. Sin marcar, sin etiquetar, sin sección aparte
+// — solo presencia mezclada.
+const KEYWORD_LGBT = "158718";
+// Cuántas inyectar como mínimo (best-effort: si no hay candidatas, no rompe).
+const PRESENCIA_GARANTIZADA_LGBT = 2;
+
 // Cache nueva: clave = vera_pool_<hash> donde el hash combina filtros + semillas.
 // TTL 24h porque /discover varía poco intra-día pero queremos frescura semanal.
 const CACHE_PREFIX = "vera_pool_";
@@ -73,7 +99,8 @@ interface TmdbDetail {
 
 // Filtros del cliente para `tmdb_discover`. Camel case en el invoke (Tauri convención).
 export interface FiltrosDiscover {
-  with_genres?: string;              // "28,12" estilo TMDb
+  with_genres?: string;              // "28,12" estilo TMDb (coma=AND, pipe=OR)
+  with_keywords?: string;            // ej. "158718" para LGBT+ (mismas reglas)
   primary_release_date_gte?: string; // "2020-01-01"
   primary_release_date_lte?: string;
   vote_average_gte?: number;
@@ -83,35 +110,39 @@ export interface FiltrosDiscover {
   page?: number;                     // default 1 (la frescura la da el TTL)
 }
 
-// Géneros TMDb en español (LANG=es-ES en Rust).
-// Mapeo a tono. Si una peli tiene varios géneros, gana el bloque que más aporta.
-const GENEROS_LIVIANOS = new Set([
-  "Comedia",
-  "Animación",
-  "Familia",
-  "Música",
-  "Romance",
-  "Aventura",
-]);
-const GENEROS_DENSOS = new Set([
-  "Drama",
-  "Terror",
-  "Suspense",
-  "Misterio",
-  "Crimen",
-  "Bélica",
-  "Documental",
-  "Historia",
-]);
+// Tabla de pesos por género para determinar el tono.
+// Reemplaza los sets binarios anteriores (LIVIANOS/DENSOS) para capturar
+// gravedad: una peli "Comedia + Crimen + Acción" no debería contar como
+// liviana porque tenga Comedia entre sus etiquetas.
+//   +N → tira a liviano
+//   -N → tira a denso
+//    0 → neutro (no aporta)
+const PESOS_TONO: Record<string, number> = {
+  Comedia: 2,
+  Animación: 2,
+  Familia: 2,
+  Romance: 1,
+  Aventura: 1,
+  Música: 1,
+  Fantasía: 1,
+  Drama: -1,
+  Documental: -1,
+  Historia: -1,
+  Misterio: -1,
+  "Ciencia ficción": -1,
+  Western: -1,
+  Acción: -2,
+  Crimen: -2,
+  Suspense: -2,
+  Terror: -3,
+  Bélica: -3,
+  "Película de TV": 0,
+};
 
 function determinarTono(generos: string[]): Tono {
-  let l = 0;
-  let d = 0;
-  for (const g of generos) {
-    if (GENEROS_LIVIANOS.has(g)) l++;
-    if (GENEROS_DENSOS.has(g)) d++;
-  }
-  return l >= d ? "liviano" : "denso";
+  let s = 0;
+  for (const g of generos) s += PESOS_TONO[g] ?? 0;
+  return s >= 0 ? "liviano" : "denso";
 }
 
 // familyFriendly conservador: solo lo marcamos true si hay género family/animation.
@@ -129,6 +160,110 @@ function determinarFamily(generos: string[]): boolean {
   if (generos.some((g) => GENEROS_NO_FAMILY.has(g))) return false;
   if (generos.some((g) => GENEROS_FAMILY_OK.has(g))) return true;
   return false;
+}
+
+// Tabla canónica de géneros TMDb (movies, LANG=es-ES). Una sola fuente de verdad.
+// Si TMDb agrega o renombra un género, actualizar acá y la inversa se reajusta.
+const GENEROS_TMDB: Record<string, string> = {
+  "28":    "Acción",
+  "12":    "Aventura",
+  "16":    "Animación",
+  "35":    "Comedia",
+  "80":    "Crimen",
+  "99":    "Documental",
+  "18":    "Drama",
+  "10751": "Familia",
+  "14":    "Fantasía",
+  "36":    "Historia",
+  "27":    "Terror",
+  "10402": "Música",
+  "9648":  "Misterio",
+  "10749": "Romance",
+  "878":   "Ciencia ficción",
+  "10770": "Película de TV",
+  "53":    "Suspense",
+  "10752": "Bélica",
+  "37":    "Western",
+};
+
+// Inversa derivada — única fuente: GENEROS_TMDB.
+const NOMBRE_A_ID_TMDB: Record<string, string> = Object.fromEntries(
+  Object.entries(GENEROS_TMDB).map(([id, n]) => [n, id]),
+);
+
+// Verificación de boot: caza typos en las tablas locales contra la canónica.
+// Si algún nombre usado en PESOS_TONO o en los sets de familia no existe
+// en GENEROS_TMDB → warning. Costo: 0, corre solo al cargar el módulo.
+{
+  const canonicos = new Set(Object.values(GENEROS_TMDB));
+  for (const s of [
+    ...Object.keys(PESOS_TONO),
+    ...GENEROS_FAMILY_OK,
+    ...GENEROS_NO_FAMILY,
+  ]) {
+    if (!canonicos.has(s)) {
+      console.warn(
+        "[vera/tmdb] género en tabla local no existe en GENEROS_TMDB:",
+        s,
+      );
+    }
+  }
+}
+
+// Tono esperado para un intent dado, derivado del signo agregado de los
+// pesos de sus géneros. Si el intent está vacío (sorpresa) → null = sin
+// restricción de tono.
+function tonoEsperadoDeIntent(idsIntencion: Set<string>): Tono | null {
+  if (idsIntencion.size === 0) return null;
+  let s = 0;
+  for (const id of idsIntencion) {
+    const nombre = GENEROS_TMDB[id];
+    if (!nombre) continue;
+    s += PESOS_TONO[nombre] ?? 0;
+  }
+  if (s === 0) return null;
+  return s > 0 ? "liviano" : "denso";
+}
+
+// Decide si una peli es compatible con el intent.
+// Dos condiciones (ambas deben cumplirse):
+//   (a) al menos un género en común con el intent.
+//   (b) el tono de la peli coincide con el tono esperado del intent.
+// Sin intent (sorpresa, idsIntencion vacío) acepta todo.
+// Si encuentra un género que TMDb devolvió pero NO está en GENEROS_TMDB,
+// warnea — caza desincronización silenciosa entre TMDb y nuestra tabla.
+function compatibleConIntencion(
+  p: Pelicula,
+  idsIntencion: Set<string>,
+): boolean {
+  if (idsIntencion.size === 0) return true;
+
+  // (a) Matcheo de género.
+  let matchGenero = false;
+  for (const g of p.generos) {
+    const id = NOMBRE_A_ID_TMDB[g];
+    if (id === undefined) {
+      console.warn(
+        "[vera/tmdb] género TMDb sin id canónico (revisar GENEROS_TMDB):",
+        g,
+        "en",
+        p.titulo,
+      );
+      continue;
+    }
+    if (idsIntencion.has(id)) {
+      matchGenero = true;
+      break;
+    }
+  }
+  if (!matchGenero) return false;
+
+  // (b) Matcheo de tono. Una peli con "Comedia + Crimen + Acción" matcheaba
+  // por Comedia pero su tono ponderado es denso → no la queremos en liviano.
+  const tonoReq = tonoEsperadoDeIntent(idsIntencion);
+  if (tonoReq !== null && p.tono !== tonoReq) return false;
+
+  return true;
 }
 
 // Una trivia chica, generada por reglas. No es "trivia" real (eso necesita IA
@@ -163,6 +298,8 @@ function ganchoDe(overview: string): string {
 // con popularity / vote_count reales.
 function mapear(d: TmdbDetail, idx: number, total: number): Pelicula {
   const generos = d.genres ?? [];
+  // Cacheo géneros para que getPerfilHistorico no tenga que pegarle a TMDb.
+  cacheGenerosDe(d.id, generos);
   const tono = determinarTono(generos);
   const familyFriendly = determinarFamily(generos);
   const director = d.directors[0]?.name ?? "Sin director";
@@ -187,6 +324,9 @@ function mapear(d: TmdbDetail, idx: number, total: number): Pelicula {
     posterPath: d.poster_path,
     backdropPath: d.backdrop_path,
     trivia: generarTrivia(d),
+    // Default: discover (la mayoría viene de ahí). construirPool sobreescribe
+    // a "reco" o "fallback" cuando corresponde.
+    procedencia: "discover",
   };
 }
 
@@ -288,6 +428,7 @@ async function discoverItems(
     apiKey,
     sortBy: filtros.sort_by ?? "popularity.desc",
     withGenres: filtros.with_genres,
+    withKeywords: filtros.with_keywords,
     voteAverageGte: filtros.vote_average_gte,
     voteCountGte: filtros.vote_count_gte ?? 100,
     primaryReleaseDateGte: filtros.primary_release_date_gte,
@@ -419,21 +560,8 @@ export async function construirPool(
   const hash = hashFiltros(filtros, semillas);
   const yaSet = new Set(yaVistas);
 
-  // TODO REMOVE [B3-test] — instrumentación temporal para verificar pruebas B3.
-  console.log("[B3-test] construirPool", {
-    hash,
-    filtros,
-    semillas,
-    yaVistas_count: yaVistas.length,
-  });
-
   const cached = leerPool(hash);
   if (cached) {
-    // TODO REMOVE [B3-test]
-    console.log("[B3-test] cache HIT", {
-      hash,
-      cached_count: cached.length,
-    });
     // Cache hit: pool completo sin filtrar. Filtrar SIEMPRE a la salida.
     return cached.filter((p) => !yaSet.has(p.id));
   }
@@ -448,34 +576,87 @@ export async function construirPool(
       : Promise.resolve([] as Pelicula[]),
   ]);
 
-  // TODO REMOVE [B3-test]
-  console.log("[B3-test] traído", {
-    discover: disc.length,
-    reco: reco.length,
-  });
+  // Filtrar recommendations a las compatibles con el intent.
+  // Decisión de producto: cuando el intent es específico (liviano/denso/
+  // adrenalina), el pedido actual manda sobre el historial. Sin esto,
+  // recommendations de tu historial pisa al intent ("pedí comedia, me
+  // trajo crimen"). Para sorpresa (idsIntencion vacío) acepta todo.
+  // Split defensivo por coma O pipe: tolera ambos separadores.
+  // Hoy intenciones.ts usa pipe (OR en TMDb); coma queda soportada por compat.
+  const idsIntencion = new Set(
+    (filtros.with_genres ?? "").split(/[,|]/).filter(Boolean),
+  );
+  const recoCompatible = reco.filter((p) =>
+    compatibleConIntencion(p, idsIntencion),
+  );
 
-  // Merge: prioriza recommendations (señal del usuario), discover rellena.
+  // Merge: discover primero (representa el intent puro), reco rellena.
+  // Asignamos procedencia explícita en cada inserción para que el motor
+  // pueda darle peso a "vino de reco".
   const pool = new Map<string, Pelicula>();
-  for (const p of reco) pool.set(p.id, p);
-  for (const p of disc) if (!pool.has(p.id)) pool.set(p.id, p);
+  for (const p of disc) pool.set(p.id, { ...p, procedencia: "discover" });
+  for (const p of recoCompatible) {
+    if (!pool.has(p.id)) pool.set(p.id, { ...p, procedencia: "reco" });
+  }
+
+  // 4ta fuente B5: presencia LGBT+ garantizada.
+  // Consulta /discover?with_keywords=158718 SIN cruzar con género del intent
+  // (la intersección sería casi vacía: comedia queer es nicho). NO se filtra
+  // con compatibleConIntencion por el mismo motivo. Se inyectan hasta
+  // PRESENCIA_GARANTIZADA_LGBT que no estén ya en el pool.
+  try {
+    const lgbt = await fetchDiscover({
+      with_keywords: KEYWORD_LGBT,
+      sort_by: "popularity.desc",
+      vote_count_gte: 50,
+      page: 1,
+    });
+    let inyectadas = 0;
+    for (const p of lgbt) {
+      if (inyectadas >= PRESENCIA_GARANTIZADA_LGBT) break;
+      if (pool.has(p.id)) continue;
+      pool.set(p.id, { ...p, procedencia: "diversidad" });
+      inyectadas++;
+    }
+  } catch (e) {
+    console.warn("[vera/tmdb] fuente LGBT+ falló (best-effort):", e);
+  }
 
   let completo = [...pool.values()];
 
   // Fallback: si el pool COMPLETO no llega al mínimo, traer SEMILLA_FALLBACK.
+  // También se filtra por intent — mejor 5 livianos genuinos que 8 mezclados.
   if (completo.length < MIN_POOL) {
     const yaEnPool = new Set(completo.map((p) => p.id));
     const candidatos = SEMILLA_FALLBACK.filter(
       (id) => !yaEnPool.has(String(id)),
     );
     const fallback = await enriquecerIds(candidatos, apiKey);
-    completo = [...completo, ...fallback];
+    const fallbackCompatible = fallback
+      .filter((p) => compatibleConIntencion(p, idsIntencion))
+      .map((p) => ({ ...p, procedencia: "fallback" as const }));
+    completo = [...completo, ...fallbackCompatible];
   }
 
-  // TODO REMOVE [B3-test]
-  console.log("[B3-test] pool final", {
-    total: completo.length,
-    titulos: completo.slice(0, 8).map((p) => p.titulo),
-  });
+  // TODO REMOVE [B4a-pool] — texto plano para que sea fácil de pasear.
+  console.log(
+    "[B4a-pool] " +
+      (filtros.with_genres ?? "(sorpresa)") +
+      " · " + completo.length + " pelis\n" +
+      completo
+        .map(
+          (p) =>
+            "  " +
+            p.tono.padEnd(8) +
+            " " +
+            p.procedencia.padEnd(9) +
+            " " +
+            (p.generos[0] ?? "—").padEnd(20) +
+            " " +
+            p.titulo,
+        )
+        .join("\n"),
+  );
 
   // Cache: pool completo, sin filtrar por vistas.
   guardarPool(hash, completo);

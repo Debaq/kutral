@@ -1,36 +1,24 @@
 <script lang="ts">
-  // Vera and Chill — prototipo 100% teclado.
-  // Cero ratón: la app se navega entera con teclas físicas.
-  // Cada pantalla mueve el foco a su acción primaria al montarse.
-  // Catálogo viene de TMDb vía comandos Tauri (ver $lib/vera/tmdb.ts).
+  // Vera and Chill — flujo B5.
+  // Cuatro pantallas: entrada → contexto → intencion → lista.
+  // En "lista" el usuario navega el pool entero rankeado, ajusta interés
+  // con ← →, marca vista con Backspace y descubre con Enter (handoff a home).
+  // Sin mazo, sin tadán, sin player propio.
 
-  import { fade, fly, scale } from "svelte/transition";
-  import { cubicOut } from "svelte/easing";
-  import { tick } from "svelte";
+  import { fade, fly } from "svelte/transition";
+  import { tick, onMount } from "svelte";
   import { goto } from "$app/navigation";
 
-  import {
-    CARTAS_MAZO,
-    UMBRAL_NO_MATCH,
-    DEMO_PAUSA_MS,
-    DEMO_PAUSA_MINIMA_MS,
-  } from "$lib/vera/config";
   import type {
     Pelicula,
     Contexto,
     Intencion,
     EstadoVera,
-    Gesto,
-    Recomendaciones,
+    Reaccion,
+    RankingPeli,
+    PerfilHistorico,
   } from "$lib/vera/tipos";
-  import { recomendar, elegirMazo } from "$lib/vera/motor";
-  import {
-    comentarioMazo,
-    fraseTadan,
-    fraseNoConvence,
-    fraseCierre,
-    fraseNoMatch,
-  } from "$lib/vera/frases";
+  import { recomendar } from "$lib/vera/motor";
   import {
     cargarCatalogoPorIntent,
     posterUrl,
@@ -39,85 +27,34 @@
     type FiltrosDiscover,
   } from "$lib/vera/tmdb";
   import { INTENCIONES, filtrosParaIntent } from "$lib/vera/intenciones";
-  import { setRating } from "$lib/vera/ratings";
+  import {
+    getReaccion,
+    setReaccion,
+    getReaccionesMap,
+  } from "$lib/vera/ratings";
+  import { getPerfilHistorico } from "$lib/vera/historial";
   import { ayuda, type AtajoLinea } from "$lib/atajos/store.svelte";
-  import Habla from "$lib/habla/Habla.svelte";
 
-  // --- Carga del catálogo ---
-  // B3: el catálogo NO se precarga en onMount. Se carga al confirmar
-  // un intent en la pantalla "intencion", con los filtros del intent.
-  // La entrada queda instantánea.
+  // --- Pantallas ---
+  type Pantalla = "entrada" | "contexto" | "intencion" | "lista";
+  let pantalla = $state<Pantalla>("entrada");
+
+  // --- Estado global Vera ---
+  let estado = $state<EstadoVera>({
+    contexto: null,
+    intencion: null,
+    reacciones: [],
+    horaActual: new Date().getHours(),
+  });
+
+  // --- Catálogo (pool) ---
   let catalogo = $state<Pelicula[]>([]);
   let cargandoPool = $state(false);
   let errorPool = $state<string | null>(null);
   let errorPoolEsKey = $state(false);
 
-  // Precarga las imágenes del pool en el HTTP cache del navegador para que
-  // el mazo aparezca sin esperar. Async, no bloqueante.
-  function precargarImagenes(pelis: Pelicula[]): void {
-    for (const p of pelis) {
-      const url = posterUrl(p, "w500");
-      if (url) {
-        const img = new Image();
-        img.src = url;
-      }
-      const back = backdropUrl(p, "w780");
-      if (back) {
-        const img = new Image();
-        img.src = back;
-      }
-    }
-  }
-
-  // Pantallas del flujo.
-  type Pantalla =
-    | "entrada"
-    | "contexto"
-    | "intencion"
-    | "mazo"
-    | "tadan"
-    | "noMatch"
-    | "reproduciendo"
-    | "pausa"
-    | "fin";
-
-  let pantalla = $state<Pantalla>("entrada");
-
-  // Estado global Vera.
-  let estado = $state<EstadoVera>({
-    contexto: null,
-    intencion: null,
-    reacciones: [],
-    vistas: [],
-    interesadas: [],
-    horaActual: new Date().getHours(),
-  });
-
-  // Mazo y carta en pantalla.
-  let mazo = $state<Pelicula[]>([]);
-  let indiceMazo = $state(0);
-  let comentarioVivo = $state<string>("");
-
-  // Recomendaciones del motor.
-  let recs = $state<Recomendaciones>({
-    segura: null,
-    distinta: null,
-    sorpresa: null,
-  });
-  let cartaActual = $state<"segura" | "distinta" | "sorpresa">("segura");
-
-  // Habla state.
-  let hablaVisible = $state(false);
-  let hablaMomento = $state<"bienvenida" | "pausa" | "fin" | "joya">(
-    "bienvenida",
-  );
-  let hablaJoya = $state(false);
-  let pausaTimer: ReturnType<typeof setTimeout> | null = null;
-  let pausaInicio = 0;
-
-  // Selección activa de contexto (navegable con flechas).
-  // Regla de marca: "ninos" SIEMPRE implica un adulto presente.
-  // No existe "niños solos" en Kütral.
+  // --- Contexto ---
+  // Regla de marca: "ninos" SIEMPRE implica adulto presente.
   const contextos: {
     id: Contexto;
     label: string;
@@ -136,26 +73,32 @@
   ];
   let idxContexto = $state(0);
 
-  // Selección activa de intent (navegable con ←/→).
+  // --- Intencion ---
   let idxIntencion = $state(0);
-  // Filtros fijados una sola vez al confirmar el intent. NO recalcular ni
-  // derivar — el sort_by de "sorpresa" es random y debe mantenerse estable.
+  // Filtros fijados UNA vez al confirmar el intent. NO derivar — el sort_by
+  // aleatorio de "sorpresa" debe quedar estable durante la sesión.
   let filtrosIntent = $state<FiltrosDiscover | null>(null);
 
-  // Drift de fondo: tomamos las 12 primeras pelis ya cargadas.
-  let driftPosters = $derived(catalogo.slice(0, 12));
+  // --- Lista (B5) ---
+  let ranking = $state<RankingPeli[]>([]);
+  let idxActiva = $state(0);
+  // Cache del perfil histórico: se carga UNA vez al entrar a lista y se
+  // pasa al motor en cada rerankear() para evitar I/O a SQLite por flecha.
+  let historicoCache: PerfilHistorico | null = null;
+  // State local de reacciones del catálogo actual. Mirror reactivo de
+  // localStorage para que el template re-renderice cuando cambia.
+  let reaccionesPorPeli = $state<
+    Map<string, { interes: number; juicio: number | null }>
+  >(new Map());
 
-  // Refs para mover el foco.
+  // --- Refs para foco ---
   let refEntrada = $state<HTMLButtonElement | null>(null);
   let refContexto = $state<HTMLButtonElement | null>(null);
   let refIntencion = $state<HTMLButtonElement | null>(null);
-  let refMazo = $state<HTMLElement | null>(null);
-  let refTadan = $state<HTMLButtonElement | null>(null);
-  let refNoMatch = $state<HTMLButtonElement | null>(null);
-  let refPlayer = $state<HTMLButtonElement | null>(null);
-  let refFin = $state<HTMLButtonElement | null>(null);
+  let refLista = $state<HTMLElement | null>(null);
+  let refDescubrir = $state<HTMLButtonElement | null>(null);
 
-  // Foco al cambiar de pantalla.
+  // Foco al cambiar pantalla.
   $effect(() => {
     void pantalla;
     void idxContexto;
@@ -164,50 +107,62 @@
       if (pantalla === "entrada") refEntrada?.focus();
       else if (pantalla === "contexto") refContexto?.focus();
       else if (pantalla === "intencion") refIntencion?.focus();
-      else if (pantalla === "mazo") refMazo?.focus();
-      else if (pantalla === "tadan") refTadan?.focus();
-      else if (pantalla === "noMatch") refNoMatch?.focus();
-      else if (pantalla === "reproduciendo" || pantalla === "pausa")
-        refPlayer?.focus();
-      else if (pantalla === "fin") refFin?.focus();
+      else if (pantalla === "lista") (refDescubrir ?? refLista)?.focus();
     });
   });
+
+  // --- Helpers ---
+
+  const clamp = (lo: number, hi: number, v: number) =>
+    Math.max(lo, Math.min(hi, v));
+
+  function obtenerReaccion(id: string): { interes: number; juicio: number | null } {
+    return reaccionesPorPeli.get(id) ?? { interes: 0, juicio: null };
+  }
+
+  function actualizarReaccionLocal(
+    id: string,
+    rec: { interes: number; juicio: number | null },
+  ) {
+    const m = new Map(reaccionesPorPeli);
+    m.set(id, rec);
+    reaccionesPorPeli = m;
+  }
+
+  // Siembra el estado.reacciones desde el catálogo + reacciones persistidas,
+  // para pasarle al motor. Filtra ceros para no inflar el array.
+  function reaccionesDesdeCatalogo(): Reaccion[] {
+    const out: Reaccion[] = [];
+    for (const p of catalogo) {
+      const r = reaccionesPorPeli.get(p.id);
+      if (!r) continue;
+      if (r.interes === 0 && r.juicio === null) continue;
+      out.push({ pelicula: p, interes: r.interes, juicio: r.juicio });
+    }
+    return out;
+  }
 
   // --- Navegación ---
 
   function elegirContextoActual() {
-    const c = contextos[idxContexto];
-    estado.contexto = c.id;
+    estado.contexto = contextos[idxContexto].id;
     pantalla = "intencion";
   }
 
-  // Handler de selección del intent. CRÍTICO:
-  //   1. Fija filtrosIntent UNA sola vez con filtrosParaIntent(id) y lo guarda
-  //      en $state local. No usar $derived: el sort_by de "sorpresa" es random
-  //      y debe quedar estable para que la cache sea consistente.
-  //   2. Carga el pool con esos filtros (B1 + B2 fusión historial).
-  //   3. Si OK, arma mazo y navega. Si falla, muestra error dentro de "intencion"
-  //      sin perder el flujo. Reusa TmdbNoKeyError del módulo tmdb (no duplica).
+  // Maneja la elección del intent: fija filtros, carga pool, entra a lista.
+  // Errores quedan en pantalla intencion (no pierde el flujo).
   async function elegirIntencionActual() {
     const id = INTENCIONES[idxIntencion].id;
     estado.intencion = id;
-
-    // Resolver filtros una sola vez y persistir.
-    const filtros = filtrosParaIntent(id);
-    filtrosIntent = filtros;
+    filtrosIntent = filtrosParaIntent(id);
 
     cargandoPool = true;
     errorPool = null;
     errorPoolEsKey = false;
     try {
-      const pool = await cargarCatalogoPorIntent(filtros);
+      const pool = await cargarCatalogoPorIntent(filtrosIntent);
       catalogo = pool;
-      mazo = elegirMazo(pool, estado, CARTAS_MAZO);
-      indiceMazo = 0;
-      comentarioVivo = "";
-      // Precarga en background — no esperar.
-      precargarImagenes(pool);
-      pantalla = "mazo";
+      await entrarALista();
     } catch (e: unknown) {
       if (e instanceof TmdbNoKeyError) {
         errorPoolEsKey = true;
@@ -220,315 +175,194 @@
     }
   }
 
-  function saltarASorpresa() {
-    const i = INTENCIONES.findIndex((o) => o.id === "sorpresa");
-    if (i >= 0) idxIntencion = i;
-    void elegirIntencionActual();
+  // Entra a la pantalla lista: carga histórico UNA vez, lee reacciones del
+  // catálogo, rankea, navega.
+  async function entrarALista() {
+    // Carga histórico una sola vez. rerankear() reusa este cache.
+    historicoCache = await getPerfilHistorico();
+
+    // Sembrar reaccionesPorPeli con lo que hay persistido para las pelis
+    // del catálogo actual. Pelis no calificadas previamente arrancan vacías
+    // (interes=0, juicio=null) y NO entran al state hasta que el usuario las toque.
+    const mapaPersistido = getReaccionesMap();
+    const nuevoMap = new Map<string, { interes: number; juicio: number | null }>();
+    for (const p of catalogo) {
+      const rec = mapaPersistido[p.id];
+      if (rec) nuevoMap.set(p.id, { interes: rec.interes, juicio: rec.juicio });
+    }
+    reaccionesPorPeli = nuevoMap;
+
+    estado.reacciones = reaccionesDesdeCatalogo();
+    ranking = await recomendar(catalogo, estado, historicoCache);
+    idxActiva = 0;
+
+    // Precarga pósters + backdrops en background.
+    precargarImagenes(catalogo);
+
+    pantalla = "lista";
   }
 
-  // Cuando el usuario marca "ya la vi", entramos en modo rating:
-  // se pausa el avance hasta que califique con flechas + Enter (o saltee con I).
-  let ratingPendiente = $state<Pelicula | null>(null);
-  // Selección actual del rating (1-5). Las flechas la mueven.
-  let ratingSel = $state<number>(3);
-
-  function reaccionar(gesto: Gesto) {
-    const p = mazo[indiceMazo];
-    if (!p) return;
-    if (gesto === "vista") {
-      ratingPendiente = p;
-      ratingSel = 3;
-      return;
-    }
-    completarReaccion(p, gesto, undefined);
-  }
-
-  function completarReaccion(
-    p: Pelicula,
-    gesto: Gesto,
-    userRating: number | undefined,
-  ) {
-    estado.reacciones = [
-      ...estado.reacciones,
-      { pelicula: p, gesto, userRating: userRating ?? null },
-    ];
-    if (gesto === "vista") {
-      estado.vistas = [...estado.vistas, p.id];
-      setRating(p.id, {
-        tmdb: p.rating,
-        user: userRating ?? null,
-        visto: true,
-      });
-    }
-    if (gesto === "interes")
-      estado.interesadas = [...estado.interesadas, p.id];
-
-    comentarioVivo = comentarioMazo(p, gesto);
-
-    setTimeout(() => {
-      if (indiceMazo + 1 >= mazo.length) {
-        cerrarMazo();
-      } else {
-        indiceMazo++;
-        comentarioVivo = "";
+  function precargarImagenes(pelis: Pelicula[]): void {
+    for (const p of pelis) {
+      const url = posterUrl(p, "w500");
+      if (url) {
+        const img = new Image();
+        img.src = url;
       }
-    }, 700);
-  }
-
-  function aplicarRatingMazo(stars: number | null) {
-    const p = ratingPendiente;
-    if (!p) return;
-    ratingPendiente = null;
-    completarReaccion(p, "vista", stars ?? undefined);
-  }
-
-  // Rating final (en pantalla fin): el usuario califica la peli que vio.
-  // null = aún no decidió. 0 (sentinel) = saltó. 1-5 = puntuó.
-  let ratingFinal = $state<number | null>(null);
-  let ratingFinalDecidido = $state(false);
-  let ratingSelFinal = $state<number>(3);
-
-  function aplicarRatingFinal(stars: number | null) {
-    ratingFinal = stars;
-    ratingFinalDecidido = true;
-    const p = peliMostrada();
-    if (p) {
-      setRating(p.id, {
-        tmdb: p.rating,
-        user: stars,
-        visto: true,
-      });
+      const back = backdropUrl(p, "w780");
+      if (back) {
+        const img = new Image();
+        img.src = back;
+      }
     }
   }
 
-  function cerrarMazo() {
-    recs = recomendar(catalogo, estado);
-    const mejor = recs.segura;
-    if (!mejor || mejor.score < UMBRAL_NO_MATCH) {
-      pantalla = "noMatch";
-      return;
+  // Re-rankear preservando foco sobre la misma peli (NO sobre el índice).
+  // Usa historicoCache para evitar releer SQLite/localStorage en cada flecha.
+  async function rerankear() {
+    if (!historicoCache || catalogo.length === 0) return;
+    const activaId = ranking[idxActiva]?.pelicula.id;
+    estado.reacciones = reaccionesDesdeCatalogo();
+    ranking = await recomendar(catalogo, estado, historicoCache);
+    if (activaId) {
+      const nuevoIdx = ranking.findIndex((r) => r.pelicula.id === activaId);
+      if (nuevoIdx >= 0) idxActiva = nuevoIdx;
     }
-    cartaActual = "segura";
-    pantalla = "tadan";
   }
 
-  let textoNoConvence = $state("");
-  function noMeConvence() {
-    textoNoConvence = fraseNoConvence();
-    if (cartaActual === "segura" && recs.distinta) {
-      cartaActual = "distinta";
-      return;
+  // Ajusta el interés (o juicio si la peli ya está marcada vista) de la activa.
+  function ajustarInteres(delta: -1 | 1) {
+    if (ranking.length === 0) return;
+    const activa = ranking[idxActiva];
+    if (!activa) return;
+    const id = activa.pelicula.id;
+    const actual = obtenerReaccion(id);
+    let nueva: { interes: number; juicio: number | null };
+    if (actual.juicio !== null) {
+      nueva = {
+        interes: actual.interes,
+        juicio: clamp(-5, 5, actual.juicio + delta),
+      };
+    } else {
+      nueva = {
+        interes: clamp(-5, 5, actual.interes + delta),
+        juicio: null,
+      };
     }
-    if (cartaActual !== "sorpresa" && recs.sorpresa) {
-      cartaActual = "sorpresa";
-      return;
-    }
-    pantalla = "noMatch";
+    setReaccion(id, { tmdb: activa.pelicula.rating, ...nueva });
+    actualizarReaccionLocal(id, nueva);
+    void rerankear();
   }
 
-  function peliMostrada(): Pelicula | null {
-    if (cartaActual === "segura") return recs.segura?.pelicula ?? null;
-    if (cartaActual === "distinta") return recs.distinta?.pelicula ?? null;
-    return recs.sorpresa?.pelicula ?? null;
-  }
-
-  function reproducir() {
-    pantalla = "reproduciendo";
-    hablaMomento = "bienvenida";
-    hablaJoya = false;
-    hablaVisible = true;
-    setTimeout(() => (hablaVisible = false), 5500);
-  }
-
-  function pausar() {
-    pantalla = "pausa";
-    pausaInicio = Date.now();
-    pausaTimer = setTimeout(() => {
-      const transcurrido = Date.now() - pausaInicio;
-      if (transcurrido < DEMO_PAUSA_MINIMA_MS) return;
-      hablaMomento = "pausa";
-      hablaJoya = false;
-      hablaVisible = true;
-    }, DEMO_PAUSA_MS);
-  }
-
-  function reanudar() {
-    if (pausaTimer) {
-      clearTimeout(pausaTimer);
-      pausaTimer = null;
-    }
-    hablaVisible = false;
-    pantalla = "reproduciendo";
-  }
-
-  function terminar() {
-    if (pausaTimer) clearTimeout(pausaTimer);
-    pantalla = "fin";
-    const esJoya = estado.contexto === "solo" && Math.random() < 0.45;
-    hablaMomento = "fin";
-    hablaJoya = esJoya;
-    hablaVisible = true;
-  }
-
-  function reiniciar() {
-    estado = {
-      contexto: null,
-      intencion: null,
-      reacciones: [],
-      vistas: [],
-      interesadas: [],
-      horaActual: new Date().getHours(),
+  // Alterna "ya la vi" sobre la activa.
+  //   - Si no vista: pasa a vista con juicio = 0 (neutro), ← → ahora ajusta juicio.
+  //   - Si vista: vuelve a no-vista (juicio = null), ← → vuelve a ajustar interes.
+  function toggleVista() {
+    if (ranking.length === 0) return;
+    const activa = ranking[idxActiva];
+    if (!activa) return;
+    const id = activa.pelicula.id;
+    const actual = obtenerReaccion(id);
+    const nueva = {
+      interes: actual.interes,
+      juicio: actual.juicio === null ? 0 : null,
     };
-    catalogo = [];
-    mazo = [];
-    indiceMazo = 0;
-    comentarioVivo = "";
-    recs = { segura: null, distinta: null, sorpresa: null };
-    cartaActual = "segura";
-    textoNoConvence = "";
-    hablaVisible = false;
-    idxContexto = 0;
-    idxIntencion = 0;
-    filtrosIntent = null;
-    cargandoPool = false;
-    errorPool = null;
-    errorPoolEsKey = false;
-    ratingPendiente = null;
-    ratingSel = 3;
-    ratingFinal = null;
-    ratingFinalDecidido = false;
-    ratingSelFinal = 3;
-    pantalla = "entrada";
+    setReaccion(id, { tmdb: activa.pelicula.rating, ...nueva });
+    actualizarReaccionLocal(id, nueva);
+    void rerankear();
+  }
+
+  // Handoff al player de la home: navega con ?play=<tmdb_id>&type=movie.
+  // La home detecta los params en onMount, hace tmdb_detail, entra a discover.
+  // (palabra de marca: "Descubrir", no "Reproducir" ni "Play")
+  function descubrir() {
+    if (ranking.length === 0) return;
+    const activa = ranking[idxActiva];
+    if (!activa) return;
+    goto(`/?play=${activa.pelicula.id}&type=movie`);
   }
 
   function salirDeVera() {
-    if (pausaTimer) clearTimeout(pausaTimer);
-    hablaVisible = false;
     goto("/");
   }
 
-  // La ayuda vive en src/lib/atajos/Ayuda.svelte (overlay global).
-  // Acá solo registramos los atajos de cada pantalla en el store compartido.
+  // Backspace dual: en pantalla "lista" = toggle vista; en otras = paso atrás.
+  function backspaceDual() {
+    if (pantalla === "lista") {
+      toggleVista();
+      return;
+    }
+    if (pantalla === "intencion") pantalla = "contexto";
+    else if (pantalla === "contexto") pantalla = "entrada";
+    else if (pantalla === "entrada") salirDeVera();
+  }
+
+  // --- Atajos (7 + Backspace = 8 teclas) ---
+
   function atajosActuales(): AtajoLinea[] {
     if (pantalla === "entrada") {
       return [
         { tecla: "Enter", desc: "Empezar" },
         { tecla: "Esc", desc: "Salir de Vera" },
-        { tecla: "I", desc: "Ayuda" },
+        { tecla: "I-I", desc: "Ayuda" },
       ];
     }
     if (pantalla === "contexto") {
       return [
         { tecla: "← → ↑ ↓", desc: "Mover entre opciones" },
         { tecla: "Enter", desc: "Confirmar contexto" },
+        { tecla: "Backspace", desc: "Volver a entrada" },
         { tecla: "Esc", desc: "Salir de Vera" },
-        { tecla: "I", desc: "Ayuda" },
+        { tecla: "I-I", desc: "Ayuda" },
       ];
     }
     if (pantalla === "intencion") {
       return [
         { tecla: "← →", desc: "Elegir intención" },
         { tecla: "Enter", desc: "Confirmar y buscar" },
-        { tecla: "↓", desc: "Saltar a sorpresa" },
+        { tecla: "Backspace", desc: "Volver a contexto" },
         { tecla: "Esc", desc: "Salir de Vera" },
-        { tecla: "I", desc: "Ayuda" },
+        { tecla: "I-I", desc: "Ayuda" },
       ];
     }
-    if (pantalla === "mazo" && ratingPendiente) {
+    if (pantalla === "lista") {
       return [
-        { tecla: "← →", desc: "Mover estrella" },
-        { tecla: "Enter", desc: "Confirmar puntuación" },
-        { tecla: "↓", desc: "Saltar sin puntuar" },
+        { tecla: "↑ ↓", desc: "Navegar pelis" },
+        { tecla: "← →", desc: "Ajustar interés (-5..+5)" },
+        { tecla: "Backspace", desc: "Marcar / desmarcar como vista" },
+        { tecla: "Enter", desc: "Descubrir esta peli" },
         { tecla: "Esc", desc: "Salir de Vera" },
-        { tecla: "I", desc: "Ayuda" },
-      ];
-    }
-    if (pantalla === "mazo") {
-      return [
-        { tecla: "←", desc: "Pasar (sin opinar)" },
-        { tecla: "↑", desc: "Ya la vi (te pide puntuar)" },
-        { tecla: "→", desc: "Me llama" },
-        { tecla: "Esc", desc: "Salir de Vera" },
-        { tecla: "I", desc: "Ayuda" },
-      ];
-    }
-    if (pantalla === "tadan") {
-      return [
-        { tecla: "Enter", desc: "Play" },
-        { tecla: "↓", desc: "No me convence (otra carta)" },
-        { tecla: "Esc", desc: "Salir de Vera" },
-        { tecla: "I", desc: "Ayuda" },
-      ];
-    }
-    if (pantalla === "noMatch") {
-      return [
-        { tecla: "Enter", desc: "Volver a empezar" },
-        { tecla: "Esc", desc: "Salir de Vera" },
-        { tecla: "I", desc: "Ayuda" },
-      ];
-    }
-    if (pantalla === "reproduciendo") {
-      return [
-        { tecla: "Enter", desc: "Pausar" },
-        { tecla: "↓", desc: "Terminar" },
-        { tecla: "Esc", desc: "Salir de Vera" },
-        { tecla: "I", desc: "Ayuda" },
-      ];
-    }
-    if (pantalla === "pausa") {
-      return [
-        { tecla: "Enter", desc: "Reanudar" },
-        { tecla: "↓", desc: "Terminar" },
-        { tecla: "Esc", desc: "Salir de Vera" },
-        { tecla: "I", desc: "Ayuda" },
-      ];
-    }
-    if (pantalla === "fin" && !ratingFinalDecidido) {
-      return [
-        { tecla: "← →", desc: "Mover estrella" },
-        { tecla: "Enter", desc: "Confirmar puntuación" },
-        { tecla: "↓", desc: "Saltar sin puntuar" },
-        { tecla: "Esc", desc: "Salir de Vera" },
-        { tecla: "I", desc: "Ayuda" },
-      ];
-    }
-    if (pantalla === "fin") {
-      return [
-        { tecla: "Enter", desc: "Otra vuelta" },
-        { tecla: "Esc", desc: "Salir de Vera" },
-        { tecla: "I", desc: "Ayuda" },
+        { tecla: "I-I", desc: "Ayuda" },
       ];
     }
     return [];
   }
 
-  // Sincroniza los atajos visibles en el overlay de ayuda global
-  // con la pantalla y el modo actual (rating, etc.).
+  // Sincroniza el overlay de ayuda global con la pantalla actual.
   $effect(() => {
     void pantalla;
-    void ratingPendiente;
-    void ratingFinalDecidido;
     void cargandoPool;
     void errorPool;
     ayuda.set(pantalla, atajosActuales());
   });
 
-  // Atajos limitados a 7 teclas: ← → ↑ ↓ Enter Esc I
-  // I la maneja el overlay global (Ayuda.svelte). Acá lo ignoramos.
+  // --- Handler único de teclado (8 teclas: ← → ↑ ↓ Enter Esc I-I Backspace) ---
   function onKey(e: KeyboardEvent) {
-    // Si la ayuda está abierta, no interpretamos otras teclas.
-    if (ayuda.visible) return;
+    if (ayuda.visible) return; // la ayuda lo intercepta todo
 
     const k = e.key;
 
-    if (hablaVisible && k === "Escape") {
-      hablaVisible = false;
-      e.preventDefault();
-      return;
-    }
+    // Esc global: salir de Vera.
     if (k === "Escape") {
       e.preventDefault();
       salirDeVera();
+      return;
+    }
+
+    // Backspace: dual. Toggle vista en lista; paso atrás en otras.
+    if (k === "Backspace") {
+      e.preventDefault();
+      backspaceDual();
       return;
     }
 
@@ -556,9 +390,7 @@
     }
 
     if (pantalla === "intencion") {
-      // Mientras carga el pool, las teclas no hacen nada (excepto Esc global).
       if (cargandoPool) return;
-      // Si hubo error, Enter reintenta el intent seleccionado.
       if (errorPool) {
         if (k === "Enter") {
           e.preventDefault();
@@ -576,123 +408,39 @@
       } else if (k === "Enter") {
         e.preventDefault();
         void elegirIntencionActual();
-      } else if (k === "ArrowDown") {
-        // ↓ siempre = saltar al default (sorpresa). Consistente con mazo/fin.
-        e.preventDefault();
-        saltarASorpresa();
       }
       return;
     }
 
-    if (pantalla === "mazo") {
-      // Modo rating: flechas mueven, Enter confirma, ↓ salta.
-      if (ratingPendiente) {
-        if (k === "ArrowLeft") {
-          e.preventDefault();
-          ratingSel = Math.max(1, ratingSel - 1);
-        } else if (k === "ArrowRight") {
-          e.preventDefault();
-          ratingSel = Math.min(5, ratingSel + 1);
-        } else if (k === "Enter") {
-          e.preventDefault();
-          aplicarRatingMazo(ratingSel);
-        } else if (k === "ArrowDown") {
-          e.preventDefault();
-          aplicarRatingMazo(null);
-        }
-        return;
-      }
-      if (comentarioVivo) return;
-      if (k === "ArrowLeft") {
+    if (pantalla === "lista") {
+      if (ranking.length === 0) return;
+      if (k === "ArrowUp") {
         e.preventDefault();
-        reaccionar("pasar");
-      } else if (k === "ArrowUp") {
+        idxActiva = Math.max(0, idxActiva - 1);
+      } else if (k === "ArrowDown") {
         e.preventDefault();
-        reaccionar("vista");
+        idxActiva = Math.min(ranking.length - 1, idxActiva + 1);
+      } else if (k === "ArrowLeft") {
+        e.preventDefault();
+        ajustarInteres(-1);
       } else if (k === "ArrowRight") {
         e.preventDefault();
-        reaccionar("interes");
-      }
-      return;
-    }
-
-    if (pantalla === "tadan") {
-      if (k === "Enter") {
+        ajustarInteres(1);
+      } else if (k === "Enter") {
         e.preventDefault();
-        reproducir();
-      } else if (k === "ArrowDown") {
-        e.preventDefault();
-        noMeConvence();
-      }
-      return;
-    }
-
-    if (pantalla === "noMatch") {
-      if (k === "Enter") {
-        e.preventDefault();
-        reiniciar();
-      }
-      return;
-    }
-
-    if (pantalla === "reproduciendo") {
-      if (k === "Enter") {
-        e.preventDefault();
-        pausar();
-      } else if (k === "ArrowDown") {
-        e.preventDefault();
-        terminar();
-      }
-      return;
-    }
-
-    if (pantalla === "pausa") {
-      if (k === "Enter") {
-        e.preventDefault();
-        reanudar();
-      } else if (k === "ArrowDown") {
-        e.preventDefault();
-        terminar();
-      }
-      return;
-    }
-
-    if (pantalla === "fin") {
-      if (!ratingFinalDecidido) {
-        if (k === "ArrowLeft") {
-          e.preventDefault();
-          ratingSelFinal = Math.max(1, ratingSelFinal - 1);
-        } else if (k === "ArrowRight") {
-          e.preventDefault();
-          ratingSelFinal = Math.min(5, ratingSelFinal + 1);
-        } else if (k === "Enter") {
-          e.preventDefault();
-          aplicarRatingFinal(ratingSelFinal);
-        } else if (k === "ArrowDown") {
-          e.preventDefault();
-          aplicarRatingFinal(null);
-        }
-        return;
-      }
-      if (k === "Enter") {
-        e.preventDefault();
-        reiniciar();
+        descubrir();
       }
       return;
     }
   }
 
-  // Memos del tadán.
-  let peliTadan = $derived(peliMostrada());
-  let textoTadan = $derived(
-    peliTadan ? fraseTadan(estado, peliTadan) : "",
-  );
-  let cierre = $derived(fraseCierre());
+  // Pelis para drift de fondo. Solo aparece desde lista (hay catálogo cargado).
+  let driftPosters = $derived(catalogo.slice(0, 12));
 </script>
 
 <svelte:window onkeydown={onKey} />
 
-<!-- Fondo cinematográfico común -->
+<!-- Fondo cinematográfico (drift de pósters cuando hay catálogo) -->
 <div class="fondo" aria-hidden="true">
   {#each driftPosters as p, i (p.id)}
     <div
@@ -706,10 +454,10 @@
 {#if pantalla === "entrada"}
   <section class="pantalla entrada" in:fade={{ duration: 380 }}>
     <h1 class="marca">
-      Vera <em>and Chill</em>
+      <span class="marca-vera">Vera</span> <em>and Chill</em>
     </h1>
     <p class="slogan">Tú pones el sillón. Yo propongo qué ver.</p>
-    <p class="sub">Sesenta segundos. Una sola película. Sin vueltas.</p>
+    <p class="sub">Sin vueltas. Una lista, vos elegís, vamos.</p>
     <button
       bind:this={refEntrada}
       class="btn-grande naranja"
@@ -738,14 +486,13 @@
         >
           <span class="icono">{c.icono}</span>
           <span class="label">{c.label}</span>
-          {#if c.nota}
-            <span class="nota">{c.nota}</span>
-          {/if}
+          {#if c.nota}<span class="nota">{c.nota}</span>{/if}
         </button>
       {/each}
     </div>
     <p class="atajo">
-      <kbd>←</kbd> <kbd>→</kbd> elegir · <kbd>Enter</kbd> confirmar
+      <kbd>←</kbd> <kbd>→</kbd> elegir · <kbd>Enter</kbd> confirmar ·
+      <kbd>Backspace</kbd> volver
     </p>
   </section>
 {:else if pantalla === "intencion"}
@@ -787,267 +534,119 @@
             reintentar.
           </p>
         {:else}
-          <p class="error-sub">
-            <kbd>Enter</kbd> para reintentar.
-          </p>
+          <p class="error-sub"><kbd>Enter</kbd> para reintentar.</p>
         {/if}
       </div>
     {:else}
       <p class="atajo">
         <kbd>←</kbd> <kbd>→</kbd> elegir · <kbd>Enter</kbd> confirmar ·
-        <kbd>↓</kbd> sorpresa
+        <kbd>Backspace</kbd> volver
       </p>
     {/if}
   </section>
-{:else if pantalla === "mazo"}
-  <section class="pantalla mazo" bind:this={refMazo} tabindex="-1">
-    <p class="contador">Carta {indiceMazo + 1} / {mazo.length}</p>
+{:else if pantalla === "lista"}
+  <section class="pantalla lista" bind:this={refLista} tabindex="-1">
+    {#if ranking.length === 0}
+      <p class="vacio">No hay películas para ofrecer.</p>
+    {:else}
+      {@const activa = ranking[idxActiva]}
+      {@const reac = obtenerReaccion(activa.pelicula.id)}
+      {@const visto = reac.juicio !== null}
+      {@const valor = visto ? (reac.juicio ?? 0) : reac.interes}
 
-    {#if mazo[indiceMazo]}
-      {@const p = mazo[indiceMazo]}
-      {#key p.id}
-        <div class="ficha-mazo" in:fly={{ y: 16, duration: 280 }}>
+      <!-- Backdrop -->
+      {#if activa.pelicula.backdropPath}
+        {#key activa.pelicula.id}
           <div
-            class="carta-poster"
-            style="background-color:{p.poster}; background-image:url('{posterUrl(p, 'w342')}')"
-          >
-            <div class="poster-overlay"></div>
-          </div>
+            class="backdrop-lista"
+            style="background-image:url('{backdropUrl(activa.pelicula, 'w1280')}')"
+            aria-hidden="true"
+          ></div>
+        {/key}
+      {/if}
 
-          <div class="carta-info">
-            <h2 class="info-titulo">{p.titulo}</h2>
-            <p class="info-meta">
-              {p.anio} · {p.director}
-              {#if p.runtime} · {p.runtime} min{/if}
-              {#if p.rating}
-                <span class="tmdb-rating">★ {p.rating.toFixed(1)} TMDb</span>
+      <!-- Activa: ficha completa -->
+      {#key activa.pelicula.id}
+        <div class="ficha-activa" in:fade={{ duration: 240 }}>
+          <div
+            class="poster-activa"
+            style="background-color:{activa.pelicula.poster}; background-image:url('{posterUrl(activa.pelicula, 'w500')}')"
+          ></div>
+          <div class="info-activa">
+            <h2 class="titulo">
+              <span class="rango">#1</span>
+              {activa.pelicula.titulo}
+              {#if visto}<span class="badge-visto" title="Ya vista">✓</span>{/if}
+            </h2>
+            <p class="meta">
+              {activa.pelicula.anio} · {activa.pelicula.director}
+              {#if activa.pelicula.runtime} · {activa.pelicula.runtime} min{/if}
+              {#if activa.pelicula.rating}
+                <span class="tmdb-rating">★ {activa.pelicula.rating.toFixed(1)} TMDb</span>
               {/if}
             </p>
-            <p class="info-generos">{p.generos.join(" · ")}</p>
-            <p class="info-descripcion">{p.descripcion || p.gancho}</p>
-            {#if p.actores.length}
-              <p class="info-actores">
+            <p class="generos">{activa.pelicula.generos.join(" · ")}</p>
+            <p class="descripcion">{activa.pelicula.descripcion}</p>
+            {#if activa.pelicula.actores.length}
+              <p class="actores">
                 <span class="etiqueta">Con</span>
-                {p.actores.slice(0, 4).join(", ")}
+                {activa.pelicula.actores.slice(0, 4).join(", ")}
               </p>
             {/if}
-            {#if p.trivia}
-              <p class="info-trivia">
-                <span>💡</span>
-                {p.trivia}
-              </p>
+            {#if activa.pelicula.trivia}
+              <p class="trivia">💡 {activa.pelicula.trivia}</p>
             {/if}
+
+            <div class="control-interes">
+              <p class="control-etiqueta">
+                {visto ? "Tu juicio" : "Tu interés"}: <strong>{valor > 0 ? `+${valor}` : valor}</strong>
+              </p>
+              <div class="escala">
+                {#each [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5] as v}
+                  <span class="celda" class:activa={v === valor} class:visto class:negativa={v < 0} class:positiva={v > 0}>{v > 0 ? `+${v}` : v}</span>
+                {/each}
+              </div>
+            </div>
+
+            <button
+              bind:this={refDescubrir}
+              class="btn-grande naranja"
+              onclick={descubrir}
+            >
+              ▶ Descubrir
+            </button>
           </div>
         </div>
       {/key}
-    {/if}
 
-    {#if ratingPendiente}
-      <div class="prompt-rating" in:fade={{ duration: 220 }}>
-        <p class="prompt-titulo">¿Cómo la calificas?</p>
-        <div class="estrellas-elegir">
-          {#each [1, 2, 3, 4, 5] as n}
-            <span class="estrella" class:activa={n <= ratingSel}>★</span>
-          {/each}
-          <span class="rating-num">{ratingSel}/5</span>
+      <!-- Resto del ranking -->
+      {#if ranking.length > 1}
+        <div class="resto">
+          <p class="resto-titulo">El resto del ranking</p>
+          <ul class="resto-lista">
+            {#each ranking as r, i (r.pelicula.id)}
+              {#if i !== idxActiva}
+                {@const recR = obtenerReaccion(r.pelicula.id)}
+                <li class:visto={recR.juicio !== null}>
+                  <span class="posicion">#{i + 1}</span>
+                  <span class="resto-titulo-peli">{r.pelicula.titulo}</span>
+                  <span class="resto-anio">{r.pelicula.anio}</span>
+                  <span class="resto-rating">★ {r.pelicula.rating.toFixed(1)}</span>
+                  {#if recR.juicio !== null}<span class="resto-badge">✓</span>{/if}
+                </li>
+              {/if}
+            {/each}
+          </ul>
         </div>
-        <p class="prompt-ayuda">
-          <kbd>←</kbd> <kbd>→</kbd> mover · <kbd>Enter</kbd> confirmar ·
-          <kbd>↓</kbd> saltar
-        </p>
-      </div>
-    {:else if comentarioVivo}
-      <p class="comentario" in:fade={{ duration: 200 }}>
-        Vera: {comentarioVivo}
-      </p>
-    {:else}
-      <p class="ayuda">Reacciona con las flechas</p>
-    {/if}
-
-    <div class="atajos-mazo">
-      <div class="atajo-box">
-        <kbd>←</kbd>
-        <span>pasar</span>
-      </div>
-      <div class="atajo-box">
-        <kbd>↑</kbd>
-        <span>ya la vi</span>
-      </div>
-      <div class="atajo-box">
-        <kbd>→</kbd>
-        <span>me llama</span>
-      </div>
-    </div>
-  </section>
-{:else if pantalla === "tadan" && peliTadan}
-  <section class="pantalla tadan" in:fade={{ duration: 400 }}>
-    {#if peliTadan.backdropPath}
-      {#key peliTadan.id}
-        <div
-          class="backdrop-tadan"
-          style="background-image:url('{backdropUrl(peliTadan, 'w1280')}')"
-          aria-hidden="true"
-        ></div>
-      {/key}
-    {/if}
-
-    {#if textoNoConvence}
-      <p class="vera-line dura" in:fade={{ duration: 200 }}>
-        Vera: {textoNoConvence}
-      </p>
-    {/if}
-    <p class="vera-line">{textoTadan}</p>
-
-    {#key peliTadan.id}
-      <div class="ficha-tadan" in:scale={{ start: 0.94, duration: 360, easing: cubicOut }}>
-        <div
-          class="poster-tadan"
-          style="background-color:{peliTadan.poster}; background-image:url('{posterUrl(peliTadan, 'w500')}')"
-        ></div>
-        <div class="info-tadan">
-          <h2 class="tadan-titulo">{peliTadan.titulo}</h2>
-          <p class="info-meta">
-            {peliTadan.anio} · {peliTadan.director}
-            {#if peliTadan.runtime} · {peliTadan.runtime} min{/if}
-            {#if peliTadan.rating}
-              <span class="tmdb-rating">★ {peliTadan.rating.toFixed(1)} TMDb</span>
-            {/if}
-          </p>
-          <p class="info-generos">{peliTadan.generos.join(" · ")}</p>
-          <p class="info-descripcion">{peliTadan.descripcion}</p>
-          {#if peliTadan.actores.length}
-            <p class="info-actores">
-              <span class="etiqueta">Con</span>
-              {peliTadan.actores.slice(0, 4).join(", ")}
-            </p>
-          {/if}
-          {#if peliTadan.trivia}
-            <p class="info-trivia">
-              <span>💡</span>
-              {peliTadan.trivia}
-            </p>
-          {/if}
-        </div>
-      </div>
-    {/key}
-
-    <p class="gancho">{peliTadan.gancho}</p>
-
-    <button
-      bind:this={refTadan}
-      class="btn-grande naranja"
-      onclick={reproducir}
-    >
-      ▶ Play
-    </button>
-
-    <p class="cierre">{cierre}</p>
-
-    <p class="atajo">
-      <kbd>Enter</kbd> play · <kbd>↓</kbd> no me convence
-    </p>
-  </section>
-{:else if pantalla === "noMatch"}
-  <section class="pantalla no-match" in:fade={{ duration: 400 }}>
-    <p class="vera-line grande">{fraseNoMatch()}</p>
-    <button
-      bind:this={refNoMatch}
-      class="btn-grande naranja"
-      onclick={reiniciar}
-    >
-      Volver a empezar
-    </button>
-    <p class="atajo"><kbd>Enter</kbd> para volver a empezar</p>
-  </section>
-{:else if pantalla === "reproduciendo" && peliTadan}
-  <section class="pantalla reproduciendo">
-    <div
-      class="player"
-      style="background-color:{peliTadan.poster}; background-image:url('{backdropUrl(peliTadan, 'w1280') || posterUrl(peliTadan, 'w780')}')"
-    >
-      <div class="player-overlay"></div>
-      <div class="player-titulo">▶ {peliTadan.titulo}</div>
-    </div>
-    <div class="player-controles">
-      <button bind:this={refPlayer} class="btn-control" onclick={pausar}>
-        ⏸ Pausar
-      </button>
-      <button class="btn-control" onclick={terminar}>⏹ Terminar</button>
-    </div>
-    <p class="atajo">
-      <kbd>Enter</kbd> pausar · <kbd>↓</kbd> terminar
-    </p>
-  </section>
-{:else if pantalla === "pausa" && peliTadan}
-  <section class="pantalla pausa">
-    <div
-      class="player en-pausa"
-      style="background-color:{peliTadan.poster}; background-image:url('{backdropUrl(peliTadan, 'w1280') || posterUrl(peliTadan, 'w780')}')"
-    >
-      <div class="player-overlay"></div>
-      <div class="player-titulo">⏸ {peliTadan.titulo}</div>
-      <div class="badge-pausa">En pausa</div>
-    </div>
-    <div class="player-controles">
-      <button bind:this={refPlayer} class="btn-control" onclick={reanudar}>
-        ▶ Reanudar
-      </button>
-      <button class="btn-control" onclick={terminar}>⏹ Terminar</button>
-    </div>
-    <p class="atajo">
-      <kbd>Enter</kbd> reanudar · <kbd>↓</kbd> terminar
-    </p>
-  </section>
-{:else if pantalla === "fin"}
-  <section class="pantalla fin" in:fade={{ duration: 380 }}>
-    {#if !ratingFinalDecidido}
-      <p class="vera-line grande">¿Cómo te dejó?</p>
-      {#if peliTadan}
-        <p class="fin-peli">{peliTadan.titulo}</p>
       {/if}
-      <div class="estrellas-elegir big">
-        {#each [1, 2, 3, 4, 5] as n}
-          <span class="estrella" class:activa={n <= ratingSelFinal}>★</span>
-        {/each}
-        <span class="rating-num">{ratingSelFinal}/5</span>
-      </div>
-      <p class="atajo">
-        <kbd>←</kbd> <kbd>→</kbd> mover · <kbd>Enter</kbd> confirmar ·
-        <kbd>↓</kbd> saltar
+
+      <p class="atajo lista-atajo">
+        <kbd>↑</kbd> <kbd>↓</kbd> navegar · <kbd>←</kbd> <kbd>→</kbd> interés ·
+        <kbd>Backspace</kbd> {visto ? "desmarcar visto" : "marcar vista"} ·
+        <kbd>Enter</kbd> descubrir
       </p>
-    {:else}
-      <p class="vera-line grande">
-        {#if ratingFinal != null}
-          {ratingFinal} {ratingFinal === 1 ? "estrella" : "estrellas"}. Gracias.
-        {:else}
-          Listo.
-        {/if}
-      </p>
-      <button
-        bind:this={refFin}
-        class="btn-grande naranja"
-        onclick={reiniciar}
-      >
-        Otra vuelta
-      </button>
-      <p class="atajo"><kbd>Enter</kbd> para otra vuelta</p>
     {/if}
   </section>
-{/if}
-
-<!--
-  Hint global y overlay de ayuda viven en +layout.svelte (Ayuda.svelte).
-  Acá solo registramos los atajos por pantalla vía $effect → ayuda.set().
--->
-
-{#if estado.contexto}
-  <Habla
-    contexto={estado.contexto}
-    momento={hablaMomento}
-    visible={hablaVisible}
-    joya={hablaJoya}
-    onCerrar={() => (hablaVisible = false)}
-  />
 {/if}
 
 <style>
@@ -1068,10 +667,11 @@
     outline: 3px solid #ffae5c;
     outline-offset: 4px;
   }
-  :global(.mazo:focus-visible) {
+  :global(.lista:focus-visible) {
     outline: none;
   }
 
+  /* --- Fondo drift --- */
   .fondo {
     position: fixed;
     inset: 0;
@@ -1085,7 +685,7 @@
     height: 240px;
     border-radius: 12px;
     top: -40px;
-    opacity: 0.18;
+    opacity: 0.16;
     filter: blur(3px);
     background-size: cover;
     background-position: center;
@@ -1101,18 +701,14 @@
     );
   }
   @keyframes drift {
-    0% {
-      transform: translateY(-20%);
-    }
-    100% {
-      transform: translateY(120vh);
-    }
+    0% { transform: translateY(-20%); }
+    100% { transform: translateY(120vh); }
   }
 
   .pantalla {
     position: relative;
     z-index: 1;
-    min-height: 100%;
+    min-height: 100vh;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -1120,24 +716,37 @@
     padding: 36px 20px;
     text-align: center;
   }
-  .pantalla:focus {
-    outline: none;
-  }
+  .pantalla:focus { outline: none; }
 
-  /* --- Entrada --- */
+  /* --- Entrada (marca arcoíris en "Vera") --- */
   .marca {
     font-size: 64px;
     margin: 0 0 8px;
-    color: #ffd6a8;
-    text-shadow:
-      0 0 24px rgba(255, 140, 60, 0.55),
-      0 0 56px rgba(255, 100, 40, 0.35);
     letter-spacing: -1px;
+    line-height: 1.1;
+  }
+  .marca-vera {
+    background: linear-gradient(
+      90deg,
+      #e40303,
+      #ff8c00,
+      #ffed00,
+      #008026,
+      #004dff,
+      #750787
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+    font-weight: 700;
   }
   .marca em {
     color: #ffae5c;
+    -webkit-text-fill-color: #ffae5c;
     font-style: italic;
     font-weight: 300;
+    text-shadow: 0 0 24px rgba(255, 140, 60, 0.4);
   }
   .slogan {
     color: #ffd6a8;
@@ -1151,25 +760,6 @@
     margin: 0 0 36px;
     font-size: 16px;
   }
-  .estado {
-    margin-top: 16px;
-    color: #d9c0a4;
-    font-size: 17px;
-  }
-  .estado.error {
-    color: #ffae5c;
-    max-width: 520px;
-  }
-  .error-sub {
-    color: #d9c0a4;
-    font-size: 14px;
-    margin-top: 8px;
-  }
-  .error-sub code {
-    background: rgba(255, 140, 60, 0.18);
-    padding: 1px 6px;
-    border-radius: 4px;
-  }
 
   /* --- Botones grandes --- */
   .btn-grande {
@@ -1179,9 +769,7 @@
     border: none;
     cursor: pointer;
     font-weight: 600;
-    transition:
-      transform 0.15s,
-      box-shadow 0.15s;
+    transition: transform 0.15s, box-shadow 0.15s;
   }
   .btn-grande.naranja {
     background: linear-gradient(135deg, #ff7a2e, #ff4a1c);
@@ -1251,9 +839,8 @@
     cursor: wait;
     transform: none;
   }
-  .icono {
-    font-size: 38px;
-  }
+  .icono { font-size: 38px; }
+
   .overlay-cargando {
     margin-top: 24px;
     color: #ffd6a8;
@@ -1275,7 +862,274 @@
     to { transform: rotate(360deg); }
   }
 
-  /* --- Atajos --- */
+  .estado {
+    margin-top: 16px;
+    color: #d9c0a4;
+    font-size: 17px;
+  }
+  .estado.error {
+    color: #ffae5c;
+    max-width: 520px;
+  }
+  .error-sub {
+    color: #d9c0a4;
+    font-size: 14px;
+    margin-top: 8px;
+  }
+  .error-sub code {
+    background: rgba(255, 140, 60, 0.18);
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
+
+  /* --- Lista (B5): activa arriba grande, resto navegable abajo --- */
+  .lista {
+    justify-content: flex-start;
+    padding: 28px 20px 60px;
+  }
+  .vacio {
+    color: #ffd6a8;
+    font-size: 18px;
+    margin-top: 60px;
+  }
+
+  .backdrop-lista {
+    position: absolute;
+    inset: 0;
+    background-size: cover;
+    background-position: center top;
+    opacity: 0.28;
+    filter: blur(2px);
+    z-index: 0;
+    pointer-events: none;
+  }
+  .backdrop-lista::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(
+      ellipse at center,
+      transparent 20%,
+      rgba(10, 6, 8, 0.85) 75%
+    );
+    pointer-events: none;
+  }
+
+  .ficha-activa {
+    display: flex;
+    gap: 28px;
+    max-width: 900px;
+    width: 100%;
+    margin: 0 0 24px;
+    text-align: left;
+    position: relative;
+    z-index: 2;
+  }
+  .poster-activa {
+    width: 240px;
+    min-width: 240px;
+    height: 360px;
+    border-radius: 16px;
+    background-size: cover;
+    background-position: center;
+    box-shadow:
+      0 24px 56px rgba(0, 0, 0, 0.7),
+      0 0 64px rgba(255, 100, 40, 0.25);
+  }
+  .info-activa {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    color: #ffe6c8;
+  }
+  .titulo {
+    font-size: 28px;
+    margin: 0;
+    color: #ffe6c8;
+    line-height: 1.1;
+  }
+  .rango {
+    color: #ff7a2e;
+    font-weight: 700;
+    margin-right: 8px;
+  }
+  .badge-visto {
+    color: #8ab87a;
+    margin-left: 8px;
+    font-size: 22px;
+  }
+  .meta {
+    font-size: 14px;
+    color: #d9c0a4;
+    margin: 0;
+    letter-spacing: 0.3px;
+  }
+  .tmdb-rating {
+    background: rgba(255, 170, 80, 0.18);
+    border: 1px solid rgba(255, 170, 80, 0.55);
+    color: #ffd66a;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-weight: 600;
+    margin-left: 8px;
+    font-size: 13px;
+  }
+  .generos {
+    font-size: 12px;
+    color: #ffae5c;
+    margin: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+  }
+  .descripcion {
+    font-size: 14px;
+    line-height: 1.5;
+    color: #e6d4bd;
+    margin: 4px 0 0;
+    max-height: 7em;
+    overflow: hidden;
+  }
+  .actores {
+    font-size: 13px;
+    color: #d9c0a4;
+    margin: 0;
+  }
+  .etiqueta {
+    color: #998878;
+    margin-right: 4px;
+  }
+  .trivia {
+    font-size: 13px;
+    color: #ffd6a8;
+    background: rgba(255, 140, 60, 0.12);
+    padding: 8px 12px;
+    border-radius: 10px;
+    border-left: 3px solid #ff7a2e;
+    margin: 6px 0 0;
+    font-style: italic;
+  }
+
+  /* --- Control de interés --- */
+  .control-interes {
+    margin-top: 14px;
+    padding: 12px 16px;
+    background: rgba(50, 22, 12, 0.6);
+    border-radius: 12px;
+    border: 1px solid rgba(255, 140, 60, 0.3);
+  }
+  .control-etiqueta {
+    font-size: 13px;
+    color: #d9c0a4;
+    margin: 0 0 8px;
+    letter-spacing: 0.3px;
+  }
+  .control-etiqueta strong {
+    color: #ffe6c8;
+    font-size: 18px;
+    margin-left: 4px;
+  }
+  .escala {
+    display: flex;
+    gap: 4px;
+    justify-content: space-between;
+  }
+  .celda {
+    flex: 1;
+    text-align: center;
+    padding: 6px 0;
+    border-radius: 6px;
+    font-size: 12px;
+    color: #998878;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid transparent;
+    font-variant-numeric: tabular-nums;
+    transition: all 0.12s;
+  }
+  .celda.negativa { color: rgba(255, 120, 120, 0.55); }
+  .celda.positiva { color: rgba(180, 220, 140, 0.65); }
+  .celda.activa {
+    background: rgba(255, 140, 60, 0.25);
+    border-color: #ff7a2e;
+    color: #ffe6c8;
+    font-weight: 700;
+    transform: translateY(-1px);
+  }
+  .celda.activa.visto {
+    background: rgba(138, 184, 122, 0.25);
+    border-color: #8ab87a;
+  }
+
+  /* --- Resto del ranking --- */
+  .resto {
+    max-width: 900px;
+    width: 100%;
+    margin: 8px 0 16px;
+    position: relative;
+    z-index: 2;
+  }
+  .resto-titulo {
+    color: #998878;
+    font-size: 13px;
+    margin: 0 0 8px;
+    text-align: left;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .resto-lista {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .resto-lista li {
+    display: grid;
+    grid-template-columns: 36px 1fr 80px 80px 24px;
+    gap: 12px;
+    align-items: center;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: rgba(50, 22, 12, 0.4);
+    border: 1px solid rgba(255, 140, 60, 0.1);
+    color: #d9c0a4;
+    font-size: 14px;
+    text-align: left;
+  }
+  .resto-lista li.visto {
+    opacity: 0.65;
+  }
+  .posicion {
+    color: #ffae5c;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  .resto-titulo-peli {
+    color: #ffe6c8;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .resto-anio,
+  .resto-rating {
+    color: #998878;
+    font-size: 12px;
+    text-align: right;
+  }
+  .resto-badge {
+    color: #8ab87a;
+    font-size: 16px;
+    text-align: center;
+  }
+
+  .lista-atajo {
+    position: relative;
+    z-index: 2;
+    margin-top: 16px;
+  }
+
+  /* --- Atajos hint --- */
   .atajo {
     color: #998878;
     font-size: 13px;
@@ -1291,381 +1145,5 @@
     font-size: 13px;
     color: #ffe6c8;
     margin: 0 2px;
-  }
-
-  /* --- Mazo: ficha con poster + info al lado --- */
-  .contador {
-    color: #d9c0a4;
-    font-size: 13px;
-    margin: 0 0 14px;
-    letter-spacing: 1px;
-  }
-  .ficha-mazo {
-    display: flex;
-    gap: 24px;
-    align-items: stretch;
-    max-width: 820px;
-    width: 100%;
-    margin: 0 auto 16px;
-    text-align: left;
-  }
-  .carta-poster {
-    width: 220px;
-    min-width: 220px;
-    height: 330px;
-    border-radius: 14px;
-    background-size: cover;
-    background-position: center;
-    box-shadow:
-      0 16px 48px rgba(0, 0, 0, 0.6),
-      0 0 32px rgba(255, 140, 60, 0.18);
-    position: relative;
-    overflow: hidden;
-  }
-  .poster-overlay {
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(
-      180deg,
-      transparent 60%,
-      rgba(0, 0, 0, 0.5) 100%
-    );
-    pointer-events: none;
-  }
-  .carta-info {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    color: #ffe6c8;
-  }
-  .info-titulo {
-    font-size: 26px;
-    margin: 0;
-    color: #ffe6c8;
-    line-height: 1.15;
-  }
-  .info-meta {
-    font-size: 13px;
-    color: #d9c0a4;
-    margin: 0;
-    letter-spacing: 0.3px;
-  }
-  .info-generos {
-    font-size: 12px;
-    color: #ffae5c;
-    margin: 0;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-  }
-  .info-descripcion {
-    font-size: 14px;
-    line-height: 1.5;
-    color: #e6d4bd;
-    margin: 4px 0 0;
-    max-height: 7em;
-    overflow: hidden;
-  }
-  .info-actores {
-    font-size: 13px;
-    color: #d9c0a4;
-    margin: 0;
-  }
-  .etiqueta {
-    color: #998878;
-    margin-right: 4px;
-  }
-  .info-trivia {
-    font-size: 13px;
-    color: #ffd6a8;
-    background: rgba(255, 140, 60, 0.12);
-    padding: 8px 12px;
-    border-radius: 10px;
-    border-left: 3px solid #ff7a2e;
-    margin: 6px 0 0;
-    font-style: italic;
-  }
-  .info-trivia span {
-    margin-right: 4px;
-    font-style: normal;
-  }
-  .comentario {
-    color: #ffd6a8;
-    font-size: 18px;
-    font-style: italic;
-    min-height: 26px;
-    margin: 4px 0 10px;
-  }
-  .ayuda {
-    color: #998878;
-    font-size: 13px;
-    min-height: 26px;
-    margin: 4px 0 10px;
-  }
-  /* --- Prompt de rating (en mazo cuando "ya la vi") --- */
-  .prompt-rating {
-    background: rgba(80, 32, 14, 0.75);
-    border: 1.5px solid rgba(255, 140, 60, 0.55);
-    border-radius: 16px;
-    padding: 14px 22px;
-    margin: 4px 0 12px;
-  }
-  .prompt-titulo {
-    color: #ffe6c8;
-    font-size: 17px;
-    margin: 0 0 8px;
-  }
-  .prompt-ayuda {
-    color: #998878;
-    font-size: 12px;
-    margin: 8px 0 0;
-  }
-  /* Estrellas seleccionables: las activas brillan, las inactivas son tenues. */
-  .estrellas-elegir {
-    display: flex;
-    gap: 8px;
-    justify-content: center;
-    align-items: center;
-    margin: 6px 0;
-  }
-  .estrellas-elegir.big {
-    gap: 14px;
-    margin: 18px 0;
-  }
-  .estrellas-elegir .estrella {
-    color: rgba(255, 174, 92, 0.25);
-    font-size: 32px;
-    transition:
-      color 0.15s,
-      text-shadow 0.15s,
-      transform 0.15s;
-  }
-  .estrellas-elegir.big .estrella {
-    font-size: 48px;
-  }
-  .estrellas-elegir .estrella.activa {
-    color: #ffd66a;
-    text-shadow: 0 0 14px rgba(255, 200, 80, 0.65);
-    transform: translateY(-1px);
-  }
-  .estrellas-elegir .rating-num {
-    margin-left: 14px;
-    color: #ffd6a8;
-    font-size: 16px;
-    font-weight: 600;
-    min-width: 36px;
-    text-align: left;
-  }
-  .estrellas-elegir.big .rating-num {
-    font-size: 22px;
-  }
-  /* --- Rating TMDb destacado --- */
-  .tmdb-rating {
-    background: rgba(255, 170, 80, 0.18);
-    border: 1px solid rgba(255, 170, 80, 0.55);
-    color: #ffd66a;
-    padding: 2px 10px;
-    border-radius: 999px;
-    font-weight: 600;
-    margin-left: 8px;
-    font-size: 13px;
-    letter-spacing: 0.3px;
-  }
-  .fin-peli {
-    color: #ffd6a8;
-    font-size: 20px;
-    font-style: italic;
-    margin: 0 0 6px;
-  }
-  .atajos-mazo {
-    display: flex;
-    gap: 14px;
-  }
-  .atajo-box {
-    background: rgba(50, 22, 12, 0.6);
-    border: 1.5px solid rgba(255, 140, 60, 0.3);
-    border-radius: 12px;
-    padding: 10px 16px;
-    color: #ffe6c8;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
-    min-width: 92px;
-  }
-  .atajo-box kbd {
-    font-size: 20px;
-    padding: 4px 12px;
-  }
-  .atajo-box span {
-    font-size: 12px;
-    color: #d9c0a4;
-  }
-
-  /* --- Tadán --- */
-  .vera-line {
-    color: #ffe6c8;
-    font-size: 22px;
-    max-width: 720px;
-    margin: 0 0 14px;
-    line-height: 1.35;
-    position: relative;
-    z-index: 2;
-  }
-  .vera-line.dura {
-    color: #ffae5c;
-    font-style: italic;
-  }
-  .vera-line.grande {
-    font-size: 28px;
-    margin-bottom: 30px;
-  }
-  .backdrop-tadan {
-    position: absolute;
-    inset: 0;
-    background-size: cover;
-    background-position: center top;
-    opacity: 0.35;
-    filter: blur(2px);
-    z-index: 0;
-    /* Crítico: si no es transparente a clicks, tapa los botones del tadán. */
-    pointer-events: none;
-  }
-  .backdrop-tadan::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: radial-gradient(
-      ellipse at center,
-      transparent 20%,
-      rgba(10, 6, 8, 0.85) 75%
-    );
-    pointer-events: none;
-  }
-  /* Garantiza que el botón Play y links queden encima del backdrop. */
-  .tadan .btn-grande,
-  .tadan .atajo,
-  .tadan .cierre {
-    position: relative;
-    z-index: 2;
-  }
-  .ficha-tadan {
-    display: flex;
-    gap: 24px;
-    max-width: 880px;
-    width: 100%;
-    margin: 8px 0 16px;
-    text-align: left;
-    position: relative;
-    z-index: 2;
-  }
-  .poster-tadan {
-    width: 240px;
-    min-width: 240px;
-    height: 360px;
-    border-radius: 16px;
-    background-size: cover;
-    background-position: center;
-    box-shadow:
-      0 24px 56px rgba(0, 0, 0, 0.7),
-      0 0 64px rgba(255, 100, 40, 0.25);
-  }
-  .info-tadan {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    color: #ffe6c8;
-  }
-  .tadan-titulo {
-    font-size: 30px;
-    margin: 0;
-    color: #ffe6c8;
-    line-height: 1.1;
-  }
-  .gancho {
-    color: #ffd6a8;
-    font-size: 19px;
-    max-width: 600px;
-    margin: 6px 0 16px;
-    font-style: italic;
-    position: relative;
-    z-index: 2;
-  }
-  .cierre {
-    color: #998878;
-    font-size: 14px;
-    margin: 18px 0 0;
-    position: relative;
-    z-index: 2;
-  }
-
-  /* --- Player mock --- */
-  .player {
-    width: min(80vw, 720px);
-    height: min(50vw, 420px);
-    border-radius: 18px;
-    box-shadow: 0 24px 56px rgba(0, 0, 0, 0.7);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    position: relative;
-    margin-bottom: 24px;
-    overflow: hidden;
-    background-size: cover;
-    background-position: center;
-  }
-  .player-overlay {
-    position: absolute;
-    inset: 0;
-    background: radial-gradient(
-      ellipse at center,
-      rgba(0, 0, 0, 0.25) 30%,
-      rgba(0, 0, 0, 0.7) 100%
-    );
-    pointer-events: none;
-  }
-  .player.en-pausa::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.45);
-    border-radius: 18px;
-  }
-  .player-titulo {
-    font-size: 32px;
-    color: #fff;
-    z-index: 1;
-    text-shadow: 0 4px 12px rgba(0, 0, 0, 0.9);
-  }
-  .badge-pausa {
-    position: absolute;
-    top: 16px;
-    left: 16px;
-    background: rgba(255, 170, 80, 0.85);
-    color: #1a0a04;
-    padding: 4px 12px;
-    border-radius: 12px;
-    font-size: 12px;
-    font-weight: 700;
-    z-index: 2;
-  }
-  .player-controles {
-    display: flex;
-    gap: 14px;
-  }
-  .btn-control {
-    padding: 12px 22px;
-    border-radius: 999px;
-    border: 1.5px solid rgba(255, 140, 60, 0.4);
-    background: rgba(50, 22, 12, 0.7);
-    color: #ffe6c8;
-    font-size: 16px;
-    cursor: pointer;
-  }
-  .btn-control:hover,
-  .btn-control:focus-visible {
-    border-color: #ff7a2e;
-    background: rgba(80, 32, 14, 0.9);
   }
 </style>
