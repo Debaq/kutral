@@ -3,7 +3,7 @@
   import { check, type Update } from "@tauri-apps/plugin-updater";
   import { relaunch } from "@tauri-apps/plugin-process";
   import { isKutralOs } from "$lib/os";
-  import { notify } from "$lib/notifications.svelte";
+  import { notify } from "$lib/notifStore.svelte";
 
   type Stage = "idle" | "available" | "downloading" | "installing" | "ready" | "error" | "uptodate";
 

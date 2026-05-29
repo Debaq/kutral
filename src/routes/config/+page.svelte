@@ -13,7 +13,7 @@
     LANGS,
     type ModeOverride,
   } from "$lib/config.svelte";
-  import { notify } from "$lib/notifications.svelte";
+  import { notify } from "$lib/notifStore.svelte";
 
   type RdDeviceStart = {
     device_code: string;

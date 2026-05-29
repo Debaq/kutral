@@ -44,7 +44,7 @@ jobs:
       - name: Install npm deps
         run: npm ci
 
-      - name: Build & sign Tauri (Linux .AppImage + .deb + latest.json)
+      - name: Build & sign Tauri (Linux .AppImage + latest.json)
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -56,11 +56,21 @@ jobs:
           releaseBody: |
             Build automático multi-plataforma.
 
-            - **Linux**: descargá `.AppImage` (portable) o `.deb`. El updater usa el `.AppImage` firmado.
-            - **Windows**: descargá `.msi` (instalador) o `.exe` (NSIS).
+            - **Linux**: descarga el `.AppImage` (portable, recomendado) o el binario `.bin` (ejecutable suelto). El updater usa el `.AppImage` firmado.
+            - **Windows**: descarga el `.msi` (instalador) o el `.exe` (NSIS).
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
+
+      - name: Upload raw Linux binary (.bin con versión)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ github.ref_name }}"
+          SRC="src-tauri/target/release/kutral"
+          OUT="kutral-${VERSION}-linux-x86_64.bin"
+          cp "$SRC" "$OUT"
+          gh release upload "$VERSION" "$OUT" --clobber
 
   build-windows:
     runs-on: windows-latest

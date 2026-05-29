@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { notifs, markAllRead, clearAll } from "$lib/notifications.svelte";
+  import { notifs, markAllRead, clearAll } from "$lib/notifStore.svelte";
 
   let { open = $bindable(false) } = $props<{ open?: boolean }>();
 

@@ -7,10 +7,11 @@
   import WifiManager from "$lib/WifiManager.svelte";
   import VolumeControl from "$lib/VolumeControl.svelte";
   import BrightnessControl from "$lib/BrightnessControl.svelte";
+  import WebServerControl from "$lib/WebServerControl.svelte";
   import Notifications from "$lib/Notifications.svelte";
   import { player } from "$lib/playerState.svelte";
   import { config, isKioskActive } from "$lib/config.svelte";
-  import { notify, unreadCount } from "$lib/notifications.svelte";
+  import { notify, unreadCount } from "$lib/notifStore.svelte";
 
   type WifiState = { online: boolean; connected_ssid: string | null };
 
@@ -29,14 +30,18 @@
   let volOpen = $state(false);
   let brOpen = $state(false);
   let notifOpen = $state(false);
+  let webOpen = $state(false);
+  let webRunning = $state(false);
+  let webUrl = $state<string | null>(null);
   let prevOnline = true;
   const hidden = $derived(player.playing);
   const unread = $derived(unreadCount());
 
-  function only<T extends "vol" | "br" | "notif">(which: T) {
+  function only<T extends "vol" | "br" | "notif" | "web">(which: T) {
     volOpen = which === "vol" ? !volOpen : false;
     brOpen = which === "br" ? !brOpen : false;
     notifOpen = which === "notif" ? !notifOpen : false;
+    webOpen = which === "web" ? !webOpen : false;
   }
 
   function fmtTime(d: Date): string {
@@ -154,6 +159,21 @@
       </span>
     {/if}
     <span class="clock" data-tauri-drag-region>{now}</span>
+
+    <div class="pop-host web-host">
+      <button class="ic-btn web-btn" onclick={() => only("web")} title="Servidor web" aria-label="Servidor web">
+        🌐
+        {#if webRunning}<span class="web-dot"></span>{/if}
+      </button>
+      {#if webRunning && webUrl}
+        <button
+          class="web-url-pill"
+          onclick={() => only("web")}
+          title="Servidor web activo"
+        >{webUrl.replace(/^https?:\/\//, "")}</button>
+      {/if}
+      <WebServerControl bind:open={webOpen} bind:running={webRunning} bind:url={webUrl} />
+    </div>
 
     <div class="pop-host">
       <button class="ic-btn" onclick={() => only("br")} title="Brillo" aria-label="Brillo">
@@ -351,6 +371,32 @@
   }
   .ic-btn:hover { background: #1c1c26; color: #fff; }
   .ic-btn:focus { outline: 2px solid #f3a951; outline-offset: 1px; }
+  .web-host { display: flex; align-items: center; gap: 4px; }
+  .web-btn { position: relative; }
+  .web-url-pill {
+    background: #102018;
+    border: 1px solid #2a4a36;
+    color: #6cd37a;
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    cursor: pointer;
+    line-height: 1.2;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .web-url-pill:hover { background: #14281d; border-color: #3a6a4a; color: #8fe09c; }
+  .web-dot {
+    position: absolute;
+    top: 4px; right: 4px;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #6cd37a;
+    box-shadow: 0 0 6px #6cd37a;
+  }
   .nt-badge {
     position: absolute;
     top: 0; right: 0;
