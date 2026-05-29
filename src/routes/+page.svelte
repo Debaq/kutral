@@ -8,6 +8,11 @@
   import { afterNavigate } from "$app/navigation";
   import { ayuda } from "$lib/atajos/store.svelte";
   import { setPlaying } from "$lib/playerState.svelte";
+  import {
+    cargarNoDisponiblesIniciales,
+    encolarScreening,
+    suscribirScreening,
+  } from "$lib/screening.svelte";
 
   type Progress = {
     imdb_id: string;
@@ -456,12 +461,22 @@
   }
 
   async function loadUnavailableSet() {
-    if (!db) return;
+    // Fuente de verdad: Rust screening (lee unavailable_items y emite events
+    // a medida que detecta más). Suscribimos antes de cargar para no perder
+    // resultados que lleguen mientras carga.
     try {
-      const rows = await db.select<{ imdb_id: string }[]>("SELECT imdb_id FROM unavailable_items");
-      unavailableSet = new Set(rows.map((r) => r.imdb_id));
+      await suscribirScreening((ev) => {
+        if (ev.disponible) return;
+        const s = new Set(unavailableSet);
+        s.add(ev.imdbId);
+        unavailableSet = s;
+      });
+      const ids = await cargarNoDisponiblesIniciales();
+      const s = new Set(unavailableSet);
+      for (const id of ids) s.add(id);
+      unavailableSet = s;
     } catch (e) {
-      console.warn("[db] loadUnavailable error", e);
+      console.warn("[screening] init fail", e);
     }
   }
 
@@ -655,6 +670,9 @@
         const im = new Map(imdbIdMap);
         im.set(id, s.imdb_id);
         imdbIdMap = im;
+        // Disparar screening de fondo: si la peli no tiene player real,
+        // queda marcada y la UI esconde el botón Descubrir.
+        void encolarScreening([s.imdb_id]);
       }
     } catch (e) {
       console.warn("[item_status] error", id, e);
@@ -1238,7 +1256,7 @@
             {#each selected.genres as g}<span class="genre">{g}</span>{/each}
           </div>
           <p class="overview">{selected.overview || "(sin sinopsis)"}</p>
-          {#if selected.imdb_id}
+          {#if selected.imdb_id && !unavailableSet.has(selected.imdb_id)}
             {@const prog = progressForSelected}
             {@const pct = prog && prog.runtime_seconds && prog.runtime_seconds > 0
               ? Math.min(100, Math.round((prog.progress_real ?? prog.watched_seconds / prog.runtime_seconds) * 100))
@@ -1459,7 +1477,7 @@
                     <span class="card-badge badge-trailer">TRAILER</span>
                   {/if}
                   {#if unavail}
-                    <span class="card-stamp">NO SE ENCUENTRA</span>
+                    <span class="card-stamp">NO DISPONIBLE</span>
                   {/if}
                   <div class="card-meta">
                     <span class="card-title">{title}</span>

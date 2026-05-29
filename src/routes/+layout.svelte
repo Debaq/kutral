@@ -10,13 +10,17 @@
   onMount(() => {
     loadConfig();
     initDetection();
-    // Apagar el splash de app.html una vez que el layout monta:
-    // .ready dispara el fadeout CSS (0.5s); después removemos el nodo
-    // del DOM para que no quede ocupando memoria ni capturando algo.
+    // Apagar el splash de app.html. Mantenemos un piso mínimo de tiempo
+    // (1800 ms) para que se aprecie el banner aunque Svelte monte rápido.
+    // .ready dispara el fadeout CSS (700 ms); después removemos el nodo.
     const splash = document.getElementById("kutral-splash");
     if (splash) {
-      splash.classList.add("ready");
-      setTimeout(() => splash.remove(), 600);
+      const SPLASH_MIN_MS = 1800;
+      const SPLASH_FADE_MS = 700;
+      setTimeout(() => {
+        splash.classList.add("ready");
+        setTimeout(() => splash.remove(), SPLASH_FADE_MS);
+      }, SPLASH_MIN_MS);
     }
   });
 

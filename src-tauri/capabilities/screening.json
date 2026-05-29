@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "screening",
+  "description": "Ventana oculta de screening: solo puede reportar resultados de sniff a Rust.",
+  "windows": ["screening"],
+  "permissions": [
+    "core:default"
+  ]
+}

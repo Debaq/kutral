@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+mod screening;
 mod webserver;
 
 const TMDB_BASE: &str = "https://api.themoviedb.org/3";
@@ -468,7 +469,16 @@ async fn item_status(media_type: String, id: u64, api_key: String) -> Result<Ite
 #[tauri::command]
 async fn check_url(url: String) -> Result<UrlStatus, String> {
     let initial = url.clone();
-    let resp = match client()?.get(&url).send().await {
+    // Limita la descarga a 64 KB con header Range. Suficiente para:
+    // - confirmar que el body es grande (si llega al cap, hay más → real).
+    // - leer entero un fake (cabe en mucho menos que 64 KB).
+    // Evita bajar megas de player real durante el check_url.
+    let resp = match client()?
+        .get(&url)
+        .header("Range", "bytes=0-65535")
+        .send()
+        .await
+    {
         Ok(r) => r,
         Err(e) => {
             // Error de red: NO bloqueamos. Que el user pruebe en el iframe.
@@ -478,7 +488,24 @@ async fn check_url(url: String) -> Result<UrlStatus, String> {
     };
     let status = resp.status().as_u16();
     let final_url = resp.url().to_string();
+    // TODO REMOVE [check-diag] — investigar fake-404 de playimdb
+    let content_length_hdr = resp
+        .headers()
+        .get("content-length")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("(sin header)")
+        .to_string();
+    let content_type_hdr = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("(sin header)")
+        .to_string();
     eprintln!("[check_url] {} → {} (final: {})", initial, status, final_url);
+    eprintln!(
+        "[check-diag] Content-Length: {}  Content-Type: {}",
+        content_length_hdr, content_type_hdr
+    );
 
     // Solo bloqueamos con evidencia clara de "no existe"
     // - 404 Not Found
@@ -496,23 +523,41 @@ async fn check_url(url: String) -> Result<UrlStatus, String> {
         return Ok(UrlStatus { status, available: true, reason: format!("bot block {}", status) });
     }
 
-    // Redirect: solo cuenta si pierde el imdb_id (típico redirect a home / página genérica)
+    // Redirect: si pierde el imdb_id (típico redirect a home/página genérica),
+    // ya sabemos que no existe.
+    // Si lo preserva, NO retornamos available — el provider (streamimdb.ru
+    // u otro) puede preservar el tt-id en la URL pero servir una imagen
+    // placeholder. Hay que llegar al body check para distinguir.
     let initial_path = url::Url::parse(&initial).ok().map(|u| u.path().to_string()).unwrap_or_default();
     let final_path = url::Url::parse(&final_url).ok().map(|u| u.path().to_string()).unwrap_or_default();
     let orig_imdb = extract_imdb_id(&initial_path);
     let final_imdb = extract_imdb_id(&final_path);
-    if let (Some(o), Some(f)) = (&orig_imdb, &final_imdb) {
-        if o == f {
-            // Misma peli en URL final aunque cambie la ruta (ej: /title/tt → /embed/movie/tt)
-            return Ok(UrlStatus { status, available: true, reason: format!("redirect preserva {}", o) });
-        }
-    }
     if orig_imdb.is_some() && final_imdb.is_none() {
         return Ok(UrlStatus { status, available: false, reason: format!("redirect pierde imdb → {}", final_path) });
     }
 
     // Body / title (limitado a primeros 8KB para evitar grandes downloads)
     let body = resp.text().await.unwrap_or_default();
+    // TODO REMOVE [check-diag] — buscar patrón distintivo real vs fake.
+    let lower_full = body.to_lowercase();
+    let count = |needle: &str| lower_full.matches(needle).count();
+    eprintln!(
+        "[check-diag] body.len()={}",
+        body.len()
+    );
+    eprintln!(
+        "[check-diag] tags: <video>={}  <source={}  <iframe={}  m3u8={}  .mp4={}",
+        count("<video"), count("<source"), count("<iframe"), count("m3u8"), count(".mp4")
+    );
+    eprintln!(
+        "[check-diag] errores: 'not found'={}  'no encontrad'={}  '404'={}  'no disponible'={}  'unavailable'={}",
+        count("not found"), count("no encontrad"), count("404"),
+        count("no disponible"), count("unavailable")
+    );
+    // Sample del MEDIO del body (más informativo que el head).
+    let mid = body.len() / 2;
+    let mid_sample: String = body.chars().skip(mid.saturating_sub(150)).take(300).collect();
+    eprintln!("[check-diag] middle(300ch): {:?}", mid_sample);
     let sample: String = body.chars().take(8000).collect();
     let lower = sample.to_lowercase();
     let title = lower
@@ -534,6 +579,11 @@ async fn check_url(url: String) -> Result<UrlStatus, String> {
     if title_bad {
         return Ok(UrlStatus { status, available: false, reason: format!("title: {}", title) });
     }
+
+    // El size check no sirve: streamimdb sirve la misma página shell para
+    // existentes y para fakes (mismo tamaño exacto). El distintivo está
+    // en el contenido HTML — los diags de arriba muestran qué buscar.
+    // Por ahora dejamos pasar como available y vemos qué patrón aparece.
     Ok(UrlStatus { status, available: true, reason: "ok".into() })
 }
 
@@ -2178,6 +2228,7 @@ pub fn run() {
     ];
 
     tauri::Builder::default()
+        .manage(screening::ScreeningState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -2222,7 +2273,10 @@ pub fn run() {
             brightness_set,
             webserver::web_server_start,
             webserver::web_server_stop,
-            webserver::web_server_status
+            webserver::web_server_status,
+            screening::screening_enqueue,
+            screening::screening_get_unavailable,
+            screening::screening_report
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -10,33 +10,79 @@
          antes de que Svelte tome control. */
       html, body { background: #0a0608; margin: 0; padding: 0; }
 
-      /* Splash arriba de todo al inicio. Cuando Svelte monta, +layout.svelte
-         le agrega .ready → fadeout, y al terminar lo elimina del DOM.
-         No queda de fondo. */
+      /* Splash arriba de todo al inicio. +layout.svelte le agrega .ready
+         tras un tiempo mínimo → fadeout, después se elimina del DOM. */
       #kutral-splash {
         position: fixed;
         inset: 0;
         background: #0a0608;
-        display: flex;
-        align-items: center;
-        justify-content: center;
         z-index: 9999;
         pointer-events: none;
-        transition: opacity 0.5s ease-out;
+        transition: opacity 0.7s ease-out;
         opacity: 1;
+        overflow: hidden;
       }
       #kutral-splash.ready { opacity: 0; }
-      #kutral-splash img {
-        max-width: 70vw;
-        max-height: 70vh;
+
+      /* Capa de bleed: el mismo banner agrandado y muy blureado se
+         proyecta como fondo, "capturando" los colores predominantes y
+         tiñiendo el negro circundante. Sin bordes duros entre banner
+         y fondo. La URL del background se pasa inline en el div para
+         esquivar PostCSS (no entiende %sveltekit.assets% dentro de url()). */
+      #kutral-splash .splash-bg {
+        position: absolute;
+        inset: -15vh -15vw;
+        background-size: cover;
+        background-position: center;
+        background-repeat: no-repeat;
+        filter: blur(80px) saturate(1.4);
+        opacity: 0.55;
+        z-index: 0;
+      }
+
+      /* Contenido centrado: banner crisp + nombre debajo. */
+      #kutral-splash .splash-stage {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 32px;
+        z-index: 1;
+      }
+      #kutral-splash .splash-stage img {
+        max-width: 62vw;
+        max-height: 55vh;
         object-fit: contain;
+        /* Difumina los bordes del banner para que se funda con el bleed
+           del fondo en vez de tener un rectángulo nítido. */
+        -webkit-mask-image: radial-gradient(ellipse at center, black 60%, transparent 100%);
+                mask-image: radial-gradient(ellipse at center, black 60%, transparent 100%);
+      }
+      #kutral-splash .splash-title {
+        font-family: "Inter", system-ui, -apple-system, sans-serif;
+        font-size: 64px;
+        font-weight: 700;
+        letter-spacing: -1.5px;
+        background: linear-gradient(135deg, #ffae5c 0%, #ff7a2e 50%, #ff4a1c 100%);
+        -webkit-background-clip: text;
+                background-clip: text;
+        -webkit-text-fill-color: transparent;
+                color: transparent;
+        text-shadow: 0 0 50px rgba(255, 122, 46, 0.35);
+        margin: 0;
       }
     </style>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">
     <div id="kutral-splash" aria-hidden="true">
-      <img src="%sveltekit.assets%/banner.webp" alt="" />
+      <div class="splash-bg" style="background-image: url('%sveltekit.assets%/banner.webp');"></div>
+      <div class="splash-stage">
+        <img src="%sveltekit.assets%/banner.webp" alt="" />
+        <h1 class="splash-title">Kütral</h1>
+      </div>
     </div>
     <div style="display: contents">%sveltekit.body%</div>
   </body>
