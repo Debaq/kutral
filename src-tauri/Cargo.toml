@@ -1,6 +1,6 @@
 [package]
 name = "kutral"
-version = "26.5.0"
+version = "26.5.1"
 description = "Kütral"
 authors = ["you"]
 edition = "2021"
