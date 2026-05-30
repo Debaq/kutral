@@ -44,6 +44,10 @@ export const config = $state({
 	// Tamaño del subtítulo en el player. 50–200% (100 = base). El valor se
 	// inyecta al iframe via postMessage STORAGE_INIT como playerSubStyle.
 	subSize: 100,
+	// Servidor web (control remoto). Si webAutoStart=true se levanta al iniciar
+	// la app sobre webPort. Permite usar el celular como mando sin abrir el panel.
+	webAutoStart: false,
+	webPort: 8080,
 	loaded: false,
 	detectedKutral: false,
 });
@@ -65,6 +69,9 @@ export function loadConfig() {
 	config.subSize = Number.isFinite(ss)
 		? Math.min(200, Math.max(50, ss))
 		: 100;
+	config.webAutoStart = localStorage.getItem("web_autostart") === "1";
+	const wp = parseInt(localStorage.getItem("web_port") || "", 10);
+	config.webPort = Number.isFinite(wp) && wp >= 1024 && wp <= 65535 ? wp : 8080;
 	config.loaded = true;
 }
 
@@ -81,6 +88,8 @@ export function saveConfig() {
 	localStorage.setItem("subs_lang", config.subsLang);
 	localStorage.setItem("wyzie_key", config.wyzieKey.trim());
 	localStorage.setItem("sub_size", String(config.subSize));
+	localStorage.setItem("web_autostart", config.webAutoStart ? "1" : "0");
+	localStorage.setItem("web_port", String(config.webPort));
 }
 
 export async function initDetection() {

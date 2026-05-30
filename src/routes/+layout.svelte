@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { invoke } from "@tauri-apps/api/core";
   import Header from "$lib/Header.svelte";
   import Ayuda from "$lib/atajos/Ayuda.svelte";
   import Updater from "$lib/Updater.svelte";
@@ -13,6 +14,13 @@
     initDetection();
     // Propagar concurrencia configurada al worker Rust.
     void setConcurrenciaScreening(config.screeningConcurrency);
+    // Auto-arranque del servidor web si el user lo activó en config.
+    // Falla silencioso (ej. puerto ocupado) — no rompe la app.
+    if (config.webAutoStart) {
+      void invoke("web_server_start", { port: config.webPort }).catch((e) => {
+        console.warn("[web autostart]", e);
+      });
+    }
     // Apagar el splash de app.html. Mantenemos un piso mínimo de tiempo
     // (1800 ms) para que se aprecie el banner aunque Svelte monte rápido.
     // .ready dispara el fadeout CSS (700 ms); después removemos el nodo.

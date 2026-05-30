@@ -43,6 +43,8 @@
   let wyzieKey = $state(config.wyzieKey);
   let showWyzie = $state(false);
   let subSize = $state(config.subSize);
+  let webAuto = $state(config.webAutoStart);
+  let webPortInput = $state(config.webPort);
   let saved = $state(false);
   let showTmdb = $state(false);
   let showRdAdvanced = $state(false);
@@ -78,6 +80,8 @@
     subsLang = config.subsLang;
     wyzieKey = config.wyzieKey;
     subSize = config.subSize;
+    webAuto = config.webAutoStart;
+    webPortInput = config.webPort;
     try { currentVer = await getVersion(); } catch {}
   });
 
@@ -93,7 +97,9 @@
     screeningConc !== config.screeningConcurrency ||
     subsLang !== config.subsLang ||
     wyzieKey !== config.wyzieKey ||
-    subSize !== config.subSize
+    subSize !== config.subSize ||
+    webAuto !== config.webAutoStart ||
+    webPortInput !== config.webPort
   );
 
   function applyAndSave() {
@@ -106,6 +112,9 @@
     config.subsLang = subsLang;
     config.wyzieKey = wyzieKey.trim();
     config.subSize = Math.min(200, Math.max(50, Math.round(subSize)));
+    config.webAutoStart = webAuto;
+    config.webPort = Math.min(65535, Math.max(1024, Math.round(webPortInput) || 8080));
+    webPortInput = config.webPort;
     saveConfig();
     void setConcurrenciaScreening(conc);
     saved = true;
@@ -114,6 +123,25 @@
 
   function back() {
     goto("/");
+  }
+
+  // Esc/Backspace en /config: si hay flow RD activo, Esc lo cancela; si no,
+  // ambas vuelven al home. Backspace en inputs queda intocable (borra texto).
+  function onGlobalKey(e: KeyboardEvent) {
+    if (e.key !== "Escape" && e.key !== "Backspace") return;
+    const t = e.target as HTMLElement | null;
+    const tag = t?.tagName;
+    const inText =
+      tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" ||
+      (t?.isContentEditable ?? false);
+    if (e.key === "Escape" && rdLink) {
+      e.preventDefault();
+      cancelRd();
+      return;
+    }
+    if (e.key === "Backspace" && inText) return;
+    e.preventDefault();
+    back();
   }
 
   async function startRd() {
@@ -337,6 +365,8 @@
   <title>Configuración · Kütral</title>
 </svelte:head>
 
+<svelte:window onkeydown={onGlobalKey} />
+
 <div class="cfg-root">
   <div class="cfg-wrap">
     <header class="cfg-head">
@@ -404,6 +434,27 @@
               </label>
             {/each}
           </div>
+        </section>
+
+        <section class="block">
+          <h2>Servidor web (mando remoto)</h2>
+          <p class="hint">
+            Levanta un servidor HTTP en la red local para usar el celular como
+            mando. Aplica al próximo inicio de Kütral.
+          </p>
+          <label class="toggle-row">
+            <input type="checkbox" bind:checked={webAuto} />
+            <span>Activar al iniciar la app</span>
+          </label>
+          <label class="field">
+            <span class="field-label">Puerto</span>
+            <input
+              type="number"
+              min="1024"
+              max="65535"
+              bind:value={webPortInput}
+            />
+          </label>
         </section>
 
         <section class="block">
@@ -893,6 +944,34 @@
     margin-top: 8px;
   }
   .test-btns .btn-sec { flex: 1; }
+
+  .field { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+  .field-label { font-size: 12px; color: #a0a0aa; }
+  .field input[type="number"],
+  .field input[type="text"],
+  .field input[type="password"],
+  .field select {
+    background: #0b0b0f;
+    border: 1px solid #2a2a36;
+    border-radius: 6px;
+    padding: 6px 8px;
+    color: #e6e6ec;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  .field input[type="range"] { accent-color: #f3a951; }
+  .field input:focus, .field select:focus { border-color: #f3a951; outline: none; }
+
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    color: #e6e6ec;
+  }
+  .toggle-row input { accent-color: #f3a951; width: 16px; height: 16px; }
 
   .test-log {
     background: #0d0d12;

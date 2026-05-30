@@ -9,6 +9,8 @@
   import { ayuda } from "$lib/atajos/store.svelte";
   import { setPlaying } from "$lib/playerState.svelte";
   import { config } from "$lib/config.svelte";
+  import SourcePicker from "$lib/SourcePicker.svelte";
+  import PlayMenu from "$lib/PlayMenu.svelte";
   import {
     cargarNoDisponiblesIniciales,
     encolarScreening,
@@ -236,7 +238,7 @@
   });
 
   $effect(() => {
-    const reproduciendo = mode === "discover" || mode === "trailer";
+    const reproduciendo = mode === "discover" || mode === "trailer" || mode === "sources";
     setPlaying(reproduciendo);
     // Pausamos el screening mientras hay video: evita que el worker robe
     // red al stream del iframe y cause cortes/saltitos.
@@ -257,7 +259,7 @@
   let selected = $state<Detail | null>(null);
   let detailLoading = $state(false);
 
-  let mode = $state<"browse" | "discover" | "trailer" | "unavailable">("browse");
+  let mode = $state<"browse" | "discover" | "trailer" | "unavailable" | "sources" | "playmenu">("browse");
   let checkingDiscover = $state(false);
   let trailerKey = $state<string>("");
   let unavailable = $state<{ open: boolean; reason: "404" | "no_imdb"; checking: boolean }>({
@@ -926,6 +928,13 @@
   let currentSubUrl = $state<string | null>(null);
   let currentSubLang = $state<string>("");
 
+  // Src del iframe congelado al entrar a discover. Si pusiéramos
+  // discoverUrl(...) directo en el atributo `src`, cada saveProgress
+  // mutaría progressForSelected → Svelte re-evalúa → src nuevo → iframe
+  // RECARGA → player corta y arranca de nuevo en resumeAt actualizado.
+  // Solo se setea en startDiscover y se limpia en stopDiscover.
+  let discoverSrc = $state<string>("");
+
   function discoverUrl(imdb_id: string, resumeAt?: number) {
     // VidAPI endpoint canónico (docs: vidapi.ru/api). Acepta resumeAt en
     // segundos para seek inicial y emite PLAYER_EVENT postMessage con el
@@ -989,11 +998,57 @@
     // Precargar subtítulo desde Wyzie (si hay key) ANTES de mode=discover
     // para que el iframe se renderice con el sub_url ya en src.
     await precargarSubtitulo(selected.imdb_id);
+    // Snapshot del src ANTES de cambiar a mode=discover. progressForSelected
+    // puede mutar varias veces durante la sesión (cada PLAYER_EVENT), pero
+    // discoverSrc queda fijo hasta stopDiscover.
+    discoverSrc = discoverUrl(selected.imdb_id, progressForSelected?.watched_seconds);
     discoverStartTs = Date.now();
     mode = "discover";
     setFs(true);
     registerBackShortcuts(false);
     setTimeout(() => document.querySelector<HTMLElement>(".back-btn")?.focus(), 50);
+  }
+
+  // Si la lista de fuentes debe auto-reproducir la mejor (⚡ Ver con RealDebrid)
+  // o mostrar la lista para elegir (🔄 Rebuscar fuentes).
+  let sourcesAutoplay = $state(false);
+
+  // Etiqueta de progreso para el menú ("45%" / "12m 3s" / null si no hay).
+  function progressLabelFor(): string | null {
+    const p = progressForSelected;
+    if (!p || p.watched_seconds <= 5) return null;
+    if (p.runtime_seconds && p.runtime_seconds > 0) {
+      return Math.round((p.watched_seconds / p.runtime_seconds) * 100) + "%";
+    }
+    const m = Math.floor(p.watched_seconds / 60);
+    const s = p.watched_seconds % 60;
+    return `${m}m ${s}s`;
+  }
+
+  // "Descubrir" abre el menú contextual de reproducción.
+  function goDescubrir() {
+    if (!selected?.imdb_id) {
+      void startDiscover();
+      return;
+    }
+    mode = "playmenu";
+    setFs(true);
+  }
+
+  // --- Acciones del menú ---
+  function menuContinue() { void startDiscover(); }      // web con resume
+  function menuRestart() { void restartDiscover(); }     // web desde 0
+  function menuRealDebrid() { sourcesAutoplay = true; mode = "sources"; }  // auto mejor
+  function menuResearch() { sourcesAutoplay = false; mode = "sources"; }   // elegir
+  function menuWeb() { void startDiscover(true); }       // iframe playimdb
+
+  // Cierra menú/lista y vuelve al catálogo.
+  function closeSources() {
+    mode = "browse";
+    setFs(false);
+    setTimeout(() => {
+      document.querySelector<HTMLElement>('[data-section="info"] [data-nav]')?.focus();
+    }, 50);
   }
 
   async function reportUnavailableFromDiscover() {
@@ -1045,6 +1100,7 @@
     }
     mode = "browse";
     trailerKey = "";
+    discoverSrc = "";
     setFs(false);
     unregisterBackShortcuts();
   }
@@ -1275,6 +1331,29 @@
       </div>
     </div>
   </div>
+{:else if mode === "playmenu" && selected?.imdb_id}
+  <PlayMenu
+    title={selected.title}
+    progressLabel={progressLabelFor()}
+    hasRd={!!(config.rdKey || "").trim()}
+    isMovie={selected.media_type === "movie"}
+    onContinue={menuContinue}
+    onRestart={menuRestart}
+    onRealDebrid={menuRealDebrid}
+    onResearch={menuResearch}
+    onWeb={menuWeb}
+    onClose={closeSources}
+  />
+{:else if mode === "sources" && selected?.imdb_id}
+  <SourcePicker
+    imdbId={selected.imdb_id}
+    mediaType={selected.media_type === "tv" ? "tv" : "movie"}
+    title={selected.title}
+    token={(config.rdKey || "").trim()}
+    autoplay={sourcesAutoplay}
+    onClose={closeSources}
+    onWeb={menuWeb}
+  />
 {:else if mode === "discover" && selected?.imdb_id}
   <div class="discover-mode">
     <button data-nav class="back-btn" onclick={stopDiscover} title="Volver (Esc / Backspace)">
@@ -1284,7 +1363,7 @@
       ⚠ No funciona
     </button>
     <iframe
-      src={discoverUrl(selected.imdb_id, progressForSelected?.watched_seconds)}
+      src={discoverSrc}
       title="discover"
       referrerpolicy="no-referrer"
       sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"
@@ -1380,16 +1459,16 @@
             {/if}
             <div class="action-row">
               {#if prog && prog.completed}
-                <button data-nav class="discover-btn discover-btn-row" onclick={() => startDiscover()}>▶ Descubrir de nuevo</button>
+                <button data-nav class="discover-btn discover-btn-row" onclick={goDescubrir}>▶ Descubrir de nuevo</button>
               {:else if prog && prog.watched_seconds > 5}
                 <button data-nav class="discover-btn discover-btn-row" onclick={restartDiscover} title="Borra el progreso guardado y arranca en 0">
                   ↻ Desde el inicio
                 </button>
-                <button data-nav class="discover-btn discover-btn-row" onclick={() => startDiscover()}>
+                <button data-nav class="discover-btn discover-btn-row" onclick={goDescubrir}>
                   ▶ Continuar {pct != null ? `(${pct}%)` : `(${watchedMin}m ${watchedSec}s)`}
                 </button>
               {:else}
-                <button data-nav class="discover-btn discover-btn-row" onclick={() => startDiscover()}>▶ Descubrir</button>
+                <button data-nav class="discover-btn discover-btn-row" onclick={goDescubrir}>▶ Descubrir</button>
               {/if}
               <button data-nav class="trailer-btn trailer-btn-row" onclick={watchTrailer}>🎬 Trailer</button>
             </div>
@@ -1563,13 +1642,36 @@
           <div class="grid" data-section="gallery">
             <a class="card vera-card" data-nav href="/vera" title="Pregúntale a Vera">
               <div class="vera-poster">
-                <div class="vera-icon">✦</div>
+                <div class="vera-title-poster">
+                  <span class="vera-marca">Vera</span>
+                  <em>and Chill</em>
+                </div>
               </div>
               <div class="card-meta">
-                <span class="card-title">Vera</span>
+                <span class="card-title vera-icon-title">✦</span>
                 <span class="card-sub">¿Qué ver hoy?</span>
               </div>
             </a>
+
+            <div
+              class="card sepa-card"
+              role="presentation"
+              aria-label="Sepá — próximamente"
+              title="Sepá — próximamente"
+            >
+              <span class="card-badge badge-coming">Próximamente</span>
+              <div class="sepa-poster">
+                <div class="vera-title-poster">
+                  <span class="sepa-marca">Sepá</span>
+                  <em class="sepa-em">trivia</em>
+                </div>
+              </div>
+              <div class="card-meta">
+                <span class="card-title sepa-icon-title">✧</span>
+                <span class="card-sub">Compite. El que gana elige peli.</span>
+              </div>
+            </div>
+
             {#each items as it, i (it.id)}
               {@const title = it.title || it.name || ""}
               {@const date = it.release_date || it.first_air_date || ""}
@@ -2223,21 +2325,107 @@
   .vera-card { text-decoration: none; }
   .vera-poster {
     aspect-ratio: 2 / 3;
-    background: linear-gradient(160deg, #ff5722 0%, #c0392b 60%, #6a1b1b 100%);
+    background:
+      radial-gradient(ellipse at 50% 35%, #1a1326 0%, #0c0810 65%, #050307 100%);
     position: relative; overflow: hidden;
     display: flex; align-items: center; justify-content: center;
   }
   .vera-poster::before {
     content: ""; position: absolute; inset: 0;
-    background: radial-gradient(circle at 30% 20%, rgba(255,255,255,0.18), transparent 50%);
+    background:
+      radial-gradient(circle at 30% 20%, rgba(255, 174, 92, 0.08), transparent 55%),
+      radial-gradient(circle at 70% 80%, rgba(117, 7, 135, 0.10), transparent 55%);
     pointer-events: none;
   }
-  .vera-icon {
-    font-size: 64px; line-height: 1; color: #fff;
-    text-shadow: 0 2px 12px rgba(0,0,0,0.4);
-    z-index: 1;
-  }
   .vera-card:hover { box-shadow: 0 12px 32px rgba(255,87,34,0.4); }
+
+  .vera-title-poster {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 0 10px;
+    line-height: 1.05;
+    letter-spacing: -0.5px;
+  }
+  .vera-title-poster .vera-marca {
+    font-size: clamp(28px, 4.2vw, 44px);
+    font-weight: 700;
+    background: linear-gradient(
+      90deg,
+      #e40303,
+      #ff8c00,
+      #ffed00,
+      #008026,
+      #004dff,
+      #750787
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+  }
+  .vera-title-poster em {
+    font-size: clamp(16px, 2.4vw, 22px);
+    color: #ffae5c;
+    font-style: italic;
+    font-weight: 300;
+    text-shadow: 0 0 14px rgba(255, 140, 60, 0.45);
+    margin-top: 4px;
+  }
+  .vera-icon-title {
+    color: #ffae5c;
+    text-shadow: 0 0 10px rgba(255, 140, 60, 0.5);
+    font-size: 18px;
+  }
+
+  /* Sepá: misma fila que Vera, esquina derecha. Placeholder "Próximamente". */
+  .sepa-card {
+    grid-row: 1;
+    grid-column-end: -1;
+    cursor: default;
+    text-decoration: none;
+  }
+  .sepa-poster {
+    aspect-ratio: 2 / 3;
+    background:
+      radial-gradient(ellipse at 50% 35%, #0d1530 0%, #060916 65%, #03030a 100%);
+    position: relative; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .sepa-poster::before {
+    content: ""; position: absolute; inset: 0;
+    background:
+      radial-gradient(circle at 30% 20%, rgba(110, 193, 255, 0.10), transparent 55%),
+      radial-gradient(circle at 70% 80%, rgba(74, 142, 216, 0.10), transparent 55%);
+    pointer-events: none;
+  }
+  .sepa-marca {
+    font-size: clamp(28px, 4.2vw, 44px);
+    font-weight: 700;
+    background: linear-gradient(90deg, #4a8ed8, #6ec1ff, #b3d9ff, #6ec1ff, #4a8ed8);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+  }
+  .sepa-em {
+    color: #9cc8ff !important;
+    -webkit-text-fill-color: #9cc8ff !important;
+    text-shadow: 0 0 14px rgba(110, 193, 255, 0.45) !important;
+  }
+  .sepa-icon-title {
+    color: #6ec1ff;
+    text-shadow: 0 0 10px rgba(110, 193, 255, 0.5);
+    font-size: 18px;
+  }
+  .badge-coming {
+    background: #4a8ed8;
+    color: #04101e;
+  }
   .card:focus, .card:focus-visible {
     outline: 4px solid #f5c518;
     outline-offset: 3px;
