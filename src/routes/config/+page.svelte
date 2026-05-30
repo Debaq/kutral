@@ -11,8 +11,12 @@
     loadConfig,
     saveConfig,
     LANGS,
+    SUB_LANGS,
+    SCREENING_MIN,
+    SCREENING_MAX,
     type ModeOverride,
   } from "$lib/config.svelte";
+  import { setConcurrenciaScreening } from "$lib/screening.svelte";
   import { notify } from "$lib/notifStore.svelte";
 
   type RdDeviceStart = {
@@ -34,6 +38,11 @@
   let rd = $state("");
   let lang = $state(config.lang);
   let mode = $state<ModeOverride>(config.modeOverride);
+  let screeningConc = $state(config.screeningConcurrency);
+  let subsLang = $state(config.subsLang);
+  let wyzieKey = $state(config.wyzieKey);
+  let showWyzie = $state(false);
+  let subSize = $state(config.subSize);
   let saved = $state(false);
   let showTmdb = $state(false);
   let showRdAdvanced = $state(false);
@@ -65,6 +74,10 @@
     rd = config.rdKey;
     lang = config.lang;
     mode = config.modeOverride;
+    screeningConc = config.screeningConcurrency;
+    subsLang = config.subsLang;
+    wyzieKey = config.wyzieKey;
+    subSize = config.subSize;
     try { currentVer = await getVersion(); } catch {}
   });
 
@@ -76,7 +89,11 @@
     tmdb !== config.tmdbKey ||
     rd !== config.rdKey ||
     lang !== config.lang ||
-    mode !== config.modeOverride
+    mode !== config.modeOverride ||
+    screeningConc !== config.screeningConcurrency ||
+    subsLang !== config.subsLang ||
+    wyzieKey !== config.wyzieKey ||
+    subSize !== config.subSize
   );
 
   function applyAndSave() {
@@ -84,7 +101,13 @@
     config.rdKey = rd.trim();
     config.lang = lang;
     config.modeOverride = mode;
+    const conc = Math.min(SCREENING_MAX, Math.max(SCREENING_MIN, Math.round(screeningConc)));
+    config.screeningConcurrency = conc;
+    config.subsLang = subsLang;
+    config.wyzieKey = wyzieKey.trim();
+    config.subSize = Math.min(200, Math.max(50, Math.round(subSize)));
     saveConfig();
+    void setConcurrenciaScreening(conc);
     saved = true;
     setTimeout(() => { saved = false; }, 1800);
   }
@@ -94,6 +117,10 @@
   }
 
   async function startRd() {
+    // Limpiar cualquier flow previo (doble click rápido o reintento) antes
+    // de arrancar uno nuevo. Sin esto, varios timers corren en paralelo y
+    // el secondsLeft baja al doble.
+    cancelRd();
     rdErr = "";
     rdOk = false;
     rdStarting = true;
@@ -170,6 +197,91 @@
     const m = Math.floor(s / 60);
     const r = (s % 60).toString().padStart(2, "0");
     return `${m}:${r}`;
+  }
+
+  // --- Panel de prueba torrent + RD + mpv ---
+  let testImdb = $state("tt0816692");
+  let testRunning = $state(false);
+  let testLog = $state<string[]>([]);
+  let testSrcs = $state<any[]>([]);
+  let testUrl = $state("");
+
+  function testLogPush(s: string) { testLog = [...testLog, s]; }
+
+  async function runRdTest() {
+    testRunning = true;
+    testLog = [];
+    testUrl = "";
+    testSrcs = [];
+    const log = testLogPush;
+    try {
+      const tok = (rd || config.rdKey || "").trim();
+      log(`token: ${tok ? tok.slice(0, 8) + "…" : "NINGUNO"}`);
+      log("buscando fuentes…");
+      const srcs = await invoke<any[]>("kodios_search", {
+        imdbId: testImdb.trim(),
+        kind: "movie",
+      });
+      testSrcs = srcs;
+      log(`fuentes: ${srcs.length}`);
+      if (!srcs.length) { log("sin fuentes, fin"); return; }
+      const s0 = srcs[0];
+      log(`1ª: ${s0.quality} · ${s0.seeders ?? "?"} seeders · ${(s0.title || "").slice(0, 60)}`);
+      log(`hash: ${s0.info_hash || "?"}`);
+      if (!tok) { log("sin token RD → no resuelvo"); return; }
+      if (!s0.magnet) { log("1ª sin magnet"); return; }
+      log("resolviendo en RD (puede tardar ~10s)…");
+      const url = await invoke<string>("rd_resolve", { magnet: s0.magnet, token: tok });
+      testUrl = url;
+      log(`✓ URL directa: ${url}`);
+    } catch (e) {
+      log(`✗ error: ${String(e)}`);
+    } finally {
+      testRunning = false;
+    }
+  }
+
+  // ⚡ Cuántas de las fuentes ya están cacheadas en RD (reproducción instantánea)
+  async function runCacheTest() {
+    const log = testLogPush;
+    const tok = (rd || config.rdKey || "").trim();
+    if (!tok) { log("sin token RD"); return; }
+    if (!testSrcs.length) { log("primero pulsa Probar (no hay fuentes)"); return; }
+    const hashes = testSrcs.map((s) => s.info_hash).filter(Boolean);
+    log(`checando cache de ${hashes.length} hashes…`);
+    try {
+      const cached = await invoke<string[]>("rd_instant_available", { hashes, token: tok });
+      const set = new Set(cached.map((h) => h.toLowerCase()));
+      log(`⚡ cacheadas en RD: ${set.size} / ${hashes.length}`);
+      const top = testSrcs
+        .filter((s) => s.info_hash && set.has(s.info_hash.toLowerCase()))
+        .slice(0, 3)
+        .map((s) => `  • ${s.quality} ${(s.title || "").slice(0, 50)}`);
+      if (top.length) log(top.join("\n"));
+    } catch (e) {
+      log(`✗ cache error: ${String(e)}`);
+    }
+  }
+
+  // ▶ Reproduce la URL resuelta en mpv
+  async function runMpvTest() {
+    const log = testLogPush;
+    if (!testUrl) { log("primero resuelve una URL (Probar)"); return; }
+    try {
+      await invoke("mpv_play", { url: testUrl, title: "Prueba Kütral" });
+      log("▶ mpv lanzado");
+    } catch (e) {
+      log(`✗ mpv error: ${String(e)}`);
+    }
+  }
+
+  async function runMpvStop() {
+    try {
+      await invoke("mpv_stop");
+      testLogPush("⏹ mpv detenido");
+    } catch (e) {
+      testLogPush(`✗ stop error: ${String(e)}`);
+    }
   }
 
   async function checkUpdate() {
@@ -270,6 +382,31 @@
         </section>
 
         <section class="block">
+          <h2>Verificación de disponibilidad</h2>
+          <p class="hint">
+            Verificaciones simultáneas al detectar si una película se puede
+            reproducir. Más alto = los badges "no disponible" aparecen
+            más rápido, pero puede saturar la red y cortar el video.
+          </p>
+          <div class="mode-group">
+            {#each Array.from({ length: SCREENING_MAX - SCREENING_MIN + 1 }, (_, i) => i + SCREENING_MIN) as n}
+              <label class="mode-card" class:sel={screeningConc === n}>
+                <input type="radio" name="screeningConc" value={n} bind:group={screeningConc} />
+                <div>
+                  <strong>{n}</strong>
+                  <span>
+                    {#if n === 1}Recomendado. No interrumpe el video.
+                    {:else if n === SCREENING_MAX}Máximo. Solo si tu red es buena.
+                    {:else}Intermedio.
+                    {/if}
+                  </span>
+                </div>
+              </label>
+            {/each}
+          </div>
+        </section>
+
+        <section class="block">
           <h2>Actualizaciones</h2>
           <p class="hint">
             Versión actual: <em>{currentVer || "?"}</em>
@@ -303,6 +440,46 @@
             <p class="err">{updErr}</p>
             <button class="link-tiny" onclick={checkUpdate}>Reintentar</button>
           {/if}
+        </section>
+
+        <section class="block">
+          <h2>Subtítulos</h2>
+          <p class="hint">
+            Idioma preferido. Si pones API key de Wyzie, Kütral busca
+            subtítulos ahí (más cuotas que OpenSubtitles).
+            <a href="https://store.wyzie.io/redeem" target="_blank" rel="noopener">Generar key gratis →</a>
+          </p>
+          <label class="field">
+            <span class="field-label">Idioma</span>
+            <select bind:value={subsLang}>
+              {#each SUB_LANGS as sl}
+                <option value={sl.id}>{sl.label}</option>
+              {/each}
+            </select>
+          </label>
+          <label class="field">
+            <span class="field-label">Wyzie API key (opcional)</span>
+            <div class="key-row">
+              <input
+                type={showWyzie ? "text" : "password"}
+                bind:value={wyzieKey}
+                placeholder="Sin key: el player usa OpenSubtitles"
+              />
+              <button type="button" class="btn-ghost" onclick={() => (showWyzie = !showWyzie)}>
+                {showWyzie ? "Ocultar" : "Mostrar"}
+              </button>
+            </div>
+          </label>
+          <label class="field">
+            <span class="field-label">Tamaño de letra ({subSize}%)</span>
+            <input
+              type="range"
+              min="50"
+              max="200"
+              step="10"
+              bind:value={subSize}
+            />
+          </label>
         </section>
       </div>
 
@@ -369,6 +546,37 @@
 
           {#if rdErr}<p class="err">{rdErr}</p>{/if}
           {#if rdOk}<p class="ok">¡Vinculado!</p>{/if}
+
+          <div class="rd-test">
+            <p class="hint" style="margin: 14px 0 8px;">
+              Prueba: busca fuentes torrent y resuelve la 1ª vía RD.
+            </p>
+            <div class="key-row">
+              <input
+                bind:value={testImdb}
+                placeholder="tt0816692"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <button class="btn-sec" onclick={runRdTest} disabled={testRunning}>
+                {testRunning ? "Probando…" : "Probar"}
+              </button>
+            </div>
+            <div class="test-btns">
+              <button class="btn-sec" onclick={runCacheTest} disabled={testRunning || !testSrcs.length}>
+                ⚡ Cache
+              </button>
+              <button class="btn-sec" onclick={runMpvTest} disabled={!testUrl}>
+                ▶ mpv
+              </button>
+              <button class="btn-sec" onclick={runMpvStop}>
+                ⏹ Detener
+              </button>
+            </div>
+            {#if testLog.length}
+              <pre class="test-log">{testLog.join("\n")}</pre>
+            {/if}
+          </div>
         </section>
       </div>
     </div>
@@ -677,5 +885,28 @@
     color: #888892;
     font-size: 12px;
     font-variant-numeric: tabular-nums;
+  }
+
+  .test-btns {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .test-btns .btn-sec { flex: 1; }
+
+  .test-log {
+    background: #0d0d12;
+    border: 1px solid #1f1f28;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin: 10px 0 0;
+    max-height: 200px;
+    overflow: auto;
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: #c8c8d0;
+    white-space: pre-wrap;
+    word-break: break-all;
+    font-family: ui-monospace, monospace;
   }
 </style>

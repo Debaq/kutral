@@ -4,15 +4,19 @@
   import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import Database from "@tauri-apps/plugin-sql";
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { afterNavigate } from "$app/navigation";
   import { ayuda } from "$lib/atajos/store.svelte";
   import { setPlaying } from "$lib/playerState.svelte";
+  import { config } from "$lib/config.svelte";
   import {
     cargarNoDisponiblesIniciales,
     encolarScreening,
+    pausarScreening,
     suscribirScreening,
   } from "$lib/screening.svelte";
+
+  type WyzieSubtitle = { url: string; label: string; lang: string };
 
   type Progress = {
     imdb_id: string;
@@ -232,7 +236,11 @@
   });
 
   $effect(() => {
-    setPlaying(mode === "discover" || mode === "trailer");
+    const reproduciendo = mode === "discover" || mode === "trailer";
+    setPlaying(reproduciendo);
+    // Pausamos el screening mientras hay video: evita que el worker robe
+    // red al stream del iframe y cause cortes/saltitos.
+    void pausarScreening(reproduciendo);
   });
 
   // Cache de status por id: undefined=no chequeado, "checking", "ok"=video disponible,
@@ -307,6 +315,13 @@
     // abajo, que sí corre en cada navegación.
   });
 
+  // Cleanup separado en onDestroy: onMount es async y no acepta return
+  // de cleanup en ese caso. El listener postMessage del iframe player
+  // tiene que limpiarse cuando home desmonta.
+  onDestroy(() => {
+    window.removeEventListener("message", onIframeMessage);
+  });
+
   // Handoff de Vera (B5): se dispara en CADA navegación cliente, incluyendo
   // el load inicial. SvelteKit no remonta este +page.svelte al hacer goto()
   // desde /vera, así que onMount no veía la URL nueva. afterNavigate sí.
@@ -319,16 +334,6 @@
     const url = new URL(window.location.href);
     const playId = url.searchParams.get("play");
     const playType = url.searchParams.get("type");
-    // TODO REMOVE [handoff-diag] log 2: confirma que el parser ve la URL nueva.
-    console.log(
-      "[handoff-diag] afterNavigate parser, url=" +
-        url.pathname +
-        url.search +
-        " playId=" +
-        playId +
-        " playType=" +
-        playType,
-    );
     if (playId && playType) {
       // CRÍTICO: limpiar ?play= ANTES de invocar tmdb_detail. Sin esto,
       // un refresh durante o tras el handoff re-dispara el play solo.
@@ -342,13 +347,19 @@
   // Handoff Vera → home: resuelve un tmdb_id en Detail y entra al modo
   // discover (el flujo real de Descubrir). Reusa la misma maquinaria que
   // usa la home cuando se clickea una card (tmdb_detail → selected →
-  // startDiscover). Si algo falla, el usuario queda en "browse" (default
-  // de Kütral), nunca en pantalla rota ni mode a medias.
+  // startDiscover). Si cualquier paso falla, el user queda en browse
+  // SIN peli seleccionada — nunca con un selected viejo simulando ser la
+  // peli pedida.
   async function handoffPlay(idStr: string, typeStr: string) {
-    // TODO REMOVE [handoff-diag] log 3: confirma que la llamada entró.
-    console.log("[handoff-diag] handoffPlay() invocada con", idStr, typeStr);
+    // Limpiar de entrada: si algo de abajo falla, no queremos mostrar
+    // la peli que estaba seleccionada antes (de un click previo) como si
+    // fuera la del handoff.
+    selected = null;
+    progressForSelected = null;
+    mode = "browse";
+
     if (!apiKey) {
-      console.warn("[handoff] sin api key — abortando, mode queda en browse");
+      console.warn("[handoff] sin api key — abortando");
       return;
     }
     const id = parseInt(idStr, 10);
@@ -368,24 +379,79 @@
       });
       selected = d;
       await loadProgressForSelected();
-      // Mismo flujo que el botón "Descubrir" de la card.
       await startDiscover();
     } catch (e) {
-      console.warn("[handoff] falló, fallback a browse:", e);
+      console.warn("[handoff] falló:", e);
       selected = null;
+      progressForSelected = null;
       mode = "browse";
     }
   }
 
+  // Throttle escrituras a SQLite: el player emite player_status='playing'
+  // varias veces por segundo. Guardamos como máximo cada 5s.
+  let lastSaveAt = 0;
+
   function onIframeMessage(e: MessageEvent) {
-    // Log todo para diagnóstico
-    console.log("[postMessage]", e.origin, e.data);
     if (typeof e.data !== "object" || !e.data) return;
-    // Aceptamos { type: 'progress'|'time', t: number, d?: number }
+
+    // El player (VidAPI) usa parentStorage proxy. Cuando inicia pide al padre
+    // STORAGE_GET_ALL. Si respondemos con STORAGE_INIT incluyendo
+    // playerSubStyle, aplica nuestras preferencias (tamaño, color, fuente)
+    // antes de mostrar el primer subtítulo.
+    if (e.data.type === "STORAGE_GET_ALL") {
+      const subStyle = JSON.stringify({
+        color: "#ffffff",
+        bg: "#000000",
+        bgAlpha: "80",
+        size: String(config.subSize),
+        font: "system-ui",
+      });
+      try {
+        (e.source as Window)?.postMessage(
+          {
+            type: "STORAGE_INIT",
+            data: { playerSubStyle: subStyle },
+          },
+          "*",
+        );
+      } catch (err) {
+        console.warn("[storage-init] no se pudo responder:", err);
+      }
+      return;
+    }
+
+    if (!selected?.imdb_id) return;
+
+    // VidAPI PLAYER_EVENT (docs vidapi.ru/api). Emite info real del <video>:
+    // player_progress = currentTime en segundos, player_duration = duration.
+    // player_status: 'playing' | 'paused' | 'seeked' | 'completed' | ...
+    if (e.data.type === "PLAYER_EVENT" && e.data.data) {
+      const { player_status, player_progress, player_duration } = e.data.data;
+      const t = Number(player_progress);
+      const d = Number(player_duration);
+      if (!isFinite(t) || t <= 0) return;
+      const now = Date.now();
+      // Guarda inmediato en eventos importantes; throttle a 5s en playing.
+      const importante =
+        player_status === "paused" ||
+        player_status === "seeked" ||
+        player_status === "completed" ||
+        player_status === "ended";
+      if (!importante && now - lastSaveAt < 5000) return;
+      lastSaveAt = now;
+      saveProgress({
+        watched_seconds: Math.floor(t),
+        runtime_seconds: isFinite(d) && d > 0 ? Math.floor(d) : null,
+        progress_real: isFinite(d) && d > 0 ? t / d : null,
+      });
+      return;
+    }
+
+    // Compatibilidad con otros providers que emitan {t, d} simples.
     const t = Number(e.data.t ?? e.data.currentTime ?? e.data.position);
     const d = Number(e.data.d ?? e.data.duration);
     if (!isFinite(t) || t <= 0) return;
-    if (!selected?.imdb_id) return;
     saveProgress({
       watched_seconds: Math.floor(t),
       runtime_seconds: isFinite(d) && d > 0 ? Math.floor(d) : null,
@@ -722,7 +788,7 @@
     try {
       const d = await invoke<Detail>("tmdb_detail", { mediaType, id, apiKey });
       selected = d;
-      loadProgressForSelected();
+      await loadProgressForSelected();
     } catch (e) {
       console.warn("[tmdb_detail filmography] error", e);
     }
@@ -842,8 +908,8 @@
     } catch { /* error ya seteado en pick */ }
   }
 
-  function pickOrTrailer(it: ListItem, st: CardStatus | undefined) {
-    pick(it);
+  function pickOrTrailer(it: ListItem, _st: CardStatus | undefined) {
+    void pick(it).catch((e) => console.warn("[pick]", e));
   }
 
   async function pickAndDiscoverOrTrailer(it: ListItem, st: CardStatus | undefined) {
@@ -855,42 +921,74 @@
     await pickAndDiscover(it);
   }
 
-  function discoverUrl(imdb_id: string) {
-    return `https://www.playimdb.com/es/title/${imdb_id}/?ref_=${REF}`;
+  // URL de subtítulo precargada por startDiscover antes de cambiar a mode=discover.
+  // Se inyecta como sub_url en discoverUrl. Limpio al volver a browse.
+  let currentSubUrl = $state<string | null>(null);
+  let currentSubLang = $state<string>("");
+
+  function discoverUrl(imdb_id: string, resumeAt?: number) {
+    // VidAPI endpoint canónico (docs: vidapi.ru/api). Acepta resumeAt en
+    // segundos para seek inicial y emite PLAYER_EVENT postMessage con el
+    // progreso real del <video>. Reemplaza el chain playimdb→streamimdb.
+    let url = `https://vaplayer.ru/embed/movie/${imdb_id}?autoplay=1`;
+    if (resumeAt && resumeAt > 5) {
+      url += `&resumeAt=${Math.floor(resumeAt)}`;
+    }
+    if (currentSubUrl && currentSubLang) {
+      url +=
+        `&sub_url=${encodeURIComponent(currentSubUrl)}` +
+        `&sub_lang=${encodeURIComponent(currentSubLang)}` +
+        `&sub_label=${encodeURIComponent(currentSubLang.toUpperCase())}` +
+        `&sub_default=true`;
+    } else if (config.subsLang && config.subsLang !== "off") {
+      // Sin wyzie disponible: dejar que el player auto-busque vía ds_lang.
+      url += `&ds_lang=${encodeURIComponent(config.subsLang)}`;
+    }
+    return url;
   }
 
-  async function startDiscover() {
+  async function precargarSubtitulo(imdbId: string): Promise<void> {
+    currentSubUrl = null;
+    currentSubLang = "";
+    if (!config.wyzieKey || !config.subsLang || config.subsLang === "off") return;
+    try {
+      const subs = await invoke<WyzieSubtitle[]>("wyzie_search", {
+        imdbId,
+        language: config.subsLang,
+        apiKey: config.wyzieKey,
+      });
+      if (subs.length > 0) {
+        currentSubUrl = subs[0].url;
+        currentSubLang = subs[0].lang || config.subsLang;
+        console.log("[wyzie] sub cargado:", subs[0].label, subs[0].url);
+      } else {
+        console.log("[wyzie] sin resultados para", imdbId, config.subsLang);
+      }
+    } catch (e) {
+      console.warn("[wyzie] búsqueda fall:", e);
+    }
+  }
+
+  async function startDiscover(force = false) {
     if (!selected) return;
     if (!selected.imdb_id) {
       unavailable = { open: true, reason: "no_imdb", checking: false };
       return;
     }
-    // Si ya está marcada como no disponible → vista directo
-    if (unavailableSet.has(selected.imdb_id)) {
+    // Si está marcada como no disponible y no se forzó → vista directo
+    if (!force && unavailableSet.has(selected.imdb_id)) {
       mode = "unavailable";
       setTimeout(() => document.querySelector<HTMLElement>(".unavail-back")?.focus(), 50);
       return;
     }
-    // Pre-check rápido: solo bloquea con evidencia clara (404/410 server-side)
-    checkingDiscover = true;
-    let blocked = false;
-    try {
-      const s: { status: number; available: boolean; reason: string } =
-        await invoke("check_url", { url: discoverUrl(selected.imdb_id) });
-      console.log("[check_url pre-discover]", s);
-      if (!s.available) {
-        blocked = true;
-        if (selected.imdb_id) markUnavailable(selected.imdb_id);
-      }
-    } catch (e) {
-      console.warn("[check_url pre-discover] error", e);
-    }
-    checkingDiscover = false;
-    if (blocked) {
-      mode = "unavailable";
-      setTimeout(() => document.querySelector<HTMLElement>(".unavail-back")?.focus(), 50);
-      return;
-    }
+    // Pre-check rápido: solo bloquea con evidencia clara (404/410 server-side).
+    // Si force=true, saltamos también esta verificación (user pidió intentar).
+    // Sin pre-check: el screening worker ya marca no disponibles vía la
+    // API real del provider (streamdata.vaplayer.ru). Si llegó hasta acá,
+    // o la peli es disponible o el user forzó "Intentar de todas formas".
+    // Precargar subtítulo desde Wyzie (si hay key) ANTES de mode=discover
+    // para que el iframe se renderice con el sub_url ya en src.
+    await precargarSubtitulo(selected.imdb_id);
     discoverStartTs = Date.now();
     mode = "discover";
     setFs(true);
@@ -898,21 +996,31 @@
     setTimeout(() => document.querySelector<HTMLElement>(".back-btn")?.focus(), 50);
   }
 
-  function reportUnavailableFromDiscover() {
+  async function reportUnavailableFromDiscover() {
     if (!selected?.imdb_id) return;
-    markUnavailable(selected.imdb_id).then(() => {
-      mode = "unavailable";
-      setFs(false);
-      unregisterBackShortcuts();
-      setTimeout(() => document.querySelector<HTMLElement>(".unavail-back")?.focus(), 50);
-    });
+    try {
+      await markUnavailable(selected.imdb_id);
+    } catch (e) {
+      console.warn("[markUnavailable]", e);
+    }
+    // UI se actualiza igual: si la marca falló, el user puede reintentar,
+    // pero la pantalla siempre debe pasar a "unavailable" cuando él la apretó.
+    mode = "unavailable";
+    setFs(false);
+    unregisterBackShortcuts();
+    setTimeout(() => document.querySelector<HTMLElement>(".unavail-back")?.focus(), 50);
   }
 
-  function restartDiscover() {
-    // "Volver a empezar": resetea progreso wall-clock y abre. No salta a 0 en el iframe
-    // (no podemos cross-origin) pero el contador vuelve a 0
+  async function restartDiscover() {
+    // "Desde el inicio": resetea progreso wall-clock y abre. El iframe arranca
+    // sin resumeAt → player comienza en 0.
     if (!selected?.imdb_id) return;
-    clearProgressFor(selected.imdb_id).then(() => startDiscover());
+    try {
+      await clearProgressFor(selected.imdb_id);
+    } catch (e) {
+      console.warn("[clearProgressFor]", e);
+    }
+    void startDiscover();
   }
 
   async function stopDiscover() {
@@ -1105,7 +1213,9 @@
           focusedIdx = ci;
           const it = items[ci];
           const st = statusMap.get(it.id);
-          pickAndDiscoverOrTrailer(it, st);
+          void pickAndDiscoverOrTrailer(it, st).catch((err) =>
+            console.warn("[pickAndDiscoverOrTrailer]", err),
+          );
         }
         // En otros botones, Enter/Space disparan onclick por default
         break;
@@ -1121,7 +1231,7 @@
   onkeydown={(e) => {
     // Si la ayuda global está abierta, no procesar otras teclas.
     if (ayuda.visible) return;
-    if (mode === "discover") {
+    if (mode === "discover" || mode === "unavailable") {
       if (e.key === "Escape" || e.key === "Backspace") {
         e.preventDefault();
         stopDiscover();
@@ -1174,7 +1284,7 @@
       ⚠ No funciona
     </button>
     <iframe
-      src={discoverUrl(selected.imdb_id)}
+      src={discoverUrl(selected.imdb_id, progressForSelected?.watched_seconds)}
       title="discover"
       referrerpolicy="no-referrer"
       sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"
@@ -1270,26 +1380,38 @@
             {/if}
             <div class="action-row">
               {#if prog && prog.completed}
-                <button data-nav class="discover-btn discover-btn-row" onclick={startDiscover}>▶ Descubrir de nuevo</button>
+                <button data-nav class="discover-btn discover-btn-row" onclick={() => startDiscover()}>▶ Descubrir de nuevo</button>
               {:else if prog && prog.watched_seconds > 5}
-                <button data-nav class="discover-btn discover-btn-row" onclick={startDiscover}>
+                <button data-nav class="discover-btn discover-btn-row" onclick={restartDiscover} title="Borra el progreso guardado y arranca en 0">
+                  ↻ Desde el inicio
+                </button>
+                <button data-nav class="discover-btn discover-btn-row" onclick={() => startDiscover()}>
                   ▶ Continuar {pct != null ? `(${pct}%)` : `(${watchedMin}m ${watchedSec}s)`}
                 </button>
               {:else}
-                <button data-nav class="discover-btn discover-btn-row" onclick={startDiscover}>▶ Descubrir</button>
+                <button data-nav class="discover-btn discover-btn-row" onclick={() => startDiscover()}>▶ Descubrir</button>
               {/if}
               <button data-nav class="trailer-btn trailer-btn-row" onclick={watchTrailer}>🎬 Trailer</button>
             </div>
-            {#if prog && prog.watched_seconds > 5}
-              <button data-nav class="link-btn" onclick={restartDiscover}>↻ Volver a empezar</button>
-            {/if}
           {:else}
             <div class="unavail-note">
               Este título no está disponible para reproducir.
             </div>
-            <button data-nav class="discover-btn" onclick={watchTrailer}>
-              🎬 Ver trailer
-            </button>
+            <div class="action-row">
+              <button data-nav class="discover-btn" onclick={watchTrailer}>
+                🎬 Ver trailer
+              </button>
+              {#if selected.imdb_id}
+                <button
+                  data-nav
+                  class="trailer-btn"
+                  onclick={() => startDiscover(true)}
+                  title="Intentar abrir aunque esté marcada como no disponible"
+                >
+                  ⚠ Intentar de todas formas
+                </button>
+              {/if}
+            </div>
           {/if}
           {#if selected.directors.length}
             <div class="people-row">
@@ -1465,7 +1587,7 @@
                   bind:this={cardEls[i]}
                   use:attachCardObserver={it.id}
                   onclick={() => { focusedIdx = i; pickOrTrailer(it, st); }}
-                  ondblclick={() => { focusedIdx = i; pickAndDiscoverOrTrailer(it, st); }}
+                  ondblclick={() => { focusedIdx = i; void pickAndDiscoverOrTrailer(it, st).catch((e) => console.warn("[pickAndDiscoverOrTrailer]", e)); }}
                   onfocus={() => { focusedIdx = i; triggerAutoPick(i); }}
                 >
                   {#if it.poster_path}
@@ -1586,12 +1708,13 @@
     <div class="carousel-bg" onclick={closeCarousel} onkeydown={(e) => { if (e.key === "Escape" || e.key === "Backspace") closeCarousel(); }} role="presentation">
       <button data-nav class="modal-close carousel-close" onclick={closeCarousel} title="Cerrar (Esc)">✕</button>
       <button class="carousel-arrow left" onclick={(e) => { e.stopPropagation(); carouselGo(-1); }} aria-label="Anterior">‹</button>
-      <img
-        class="carousel-img"
-        src={img(`${IMG}/original${carousel.images[carousel.idx]}`, 1280)}
-        alt={`Escena ${carousel.idx + 1}`}
-        onclick={(e) => e.stopPropagation()}
-      />
+      <div class="carousel-img-wrap" role="presentation" onclick={(e) => e.stopPropagation()}>
+        <img
+          class="carousel-img"
+          src={img(`${IMG}/original${carousel.images[carousel.idx]}`, 1280)}
+          alt={`Escena ${carousel.idx + 1}`}
+        />
+      </div>
       <button class="carousel-arrow right" onclick={(e) => { e.stopPropagation(); carouselGo(1); }} aria-label="Siguiente">›</button>
       <div class="carousel-counter">{carousel.idx + 1} / {carousel.images.length}</div>
     </div>
@@ -1758,15 +1881,6 @@
   .action-row { display: flex; gap: 8px; position: relative; z-index: 1; margin-top: 12px; }
   .discover-btn-row { flex: 1; padding: 12px 16px; font-size: 15px; }
   .trailer-btn-row { width: auto; padding: 12px 18px; margin-top: 0 !important; font-size: 14px; }
-  .link-btn {
-    position: relative; z-index: 1;
-    background: transparent; color: #888;
-    border: 0; padding: 6px; font-size: 12px;
-    cursor: pointer; text-decoration: underline;
-    margin: 4px 0;
-  }
-  .link-btn:hover { color: #f5c518; }
-
   .people-row { position: relative; z-index: 1; margin-top: 18px; }
   .people-title {
     margin: 0 0 8px; font-size: 12px; font-weight: 700;

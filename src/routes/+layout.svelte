@@ -5,11 +5,14 @@
   import Ayuda from "$lib/atajos/Ayuda.svelte";
   import Updater from "$lib/Updater.svelte";
   import { config, loadConfig, initDetection } from "$lib/config.svelte";
+  import { setConcurrenciaScreening } from "$lib/screening.svelte";
   let { children } = $props();
 
   onMount(() => {
     loadConfig();
     initDetection();
+    // Propagar concurrencia configurada al worker Rust.
+    void setConcurrenciaScreening(config.screeningConcurrency);
     // Apagar el splash de app.html. Mantenemos un piso mínimo de tiempo
     // (1800 ms) para que se aprecie el banner aunque Svelte monte rápido.
     // .ready dispara el fadeout CSS (700 ms); después removemos el nodo.

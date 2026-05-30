@@ -1,36 +1,53 @@
-// Screening worker — detección automática de pelis no disponibles en el
-// provider de iframe (playimdb → streamimdb). El HTML inicial es idéntico
-// para reales y fakes, así que sniffeamos qué hace el JS de la página:
-// - una ventana oculta off-screen carga la URL del provider,
-// - un init_script override-ea fetch + XHR y reporta status code,
-// - a los 3500ms hace probe del DOM buscando <video> / <source>,
-// - si tras PROBE_MS no hubo señal de video → marcamos no disponible.
+// Screening worker — detección de pelis no disponibles.
+//
+// Vía: API interna del proveedor (descubierta por análisis estático del
+// player.min.js, no por sniff de network).
+//
+//   GET https://streamdata.vaplayer.ru/api.php?imdb={imdb_id}&type=movie
+//
+// Respuesta:
+//   - peli existe → `{"status_code":"200","data":{"stream_urls":[...]}}`
+//   - peli NO existe → `{"status_code":404}`
+//
+// Sin webview, sin CORS, sin JS. Solo HTTP desde Rust con reqwest.
+// Concurrencia limitada para no martillar el provider.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::HashSet;
 use std::sync::Mutex;
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager};
 
-const REF: &str = "hm_tpks_i_2_pd_tp1_pbr_ic";
-const PROBE_MS: u64 = 6000;
-const WIN_LABEL: &str = "screening";
+const API_URL: &str = "https://streamdata.vaplayer.ru/api.php";
+const REFERER: &str = "https://brightpathsignals.com/";
+const UA: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 \
+                  (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+const DEFAULT_MAX_INFLIGHT: usize = 1;
+const MIN_INFLIGHT: usize = 1;
+const MAX_INFLIGHT_CAP: usize = 4;
+const REQ_TIMEOUT_S: u64 = 8;
+// Pausa entre batches: evita martillar el provider y deja ancho de banda
+// libre para el iframe del player que está reproduciendo en paralelo.
+const BATCH_GAP_MS: u64 = 800;
+// Cuando el user está viendo una peli (mode=discover), el worker espera
+// para no robarle red ni CPU al stream.
+const PAUSED_POLL_MS: u64 = 1000;
 
 pub struct ScreeningState {
     pub queue: Mutex<Vec<String>>,
+    pub inflight: Mutex<HashSet<String>>,
     pub started: Mutex<bool>,
-    pub current_id: Mutex<Option<String>>,
-    pub current_bad: Mutex<bool>,
-    pub current_has_video: Mutex<bool>,
+    pub paused: Mutex<bool>,
+    pub max_inflight: Mutex<usize>,
 }
 
 impl Default for ScreeningState {
     fn default() -> Self {
         Self {
             queue: Mutex::new(Vec::new()),
+            inflight: Mutex::new(HashSet::new()),
             started: Mutex::new(false),
-            current_id: Mutex::new(None),
-            current_bad: Mutex::new(false),
-            current_has_video: Mutex::new(false),
+            paused: Mutex::new(false),
+            max_inflight: Mutex::new(DEFAULT_MAX_INFLIGHT),
         }
     }
 }
@@ -81,6 +98,27 @@ pub async fn screening_get_unavailable(app: AppHandle) -> Result<Vec<String>, St
 }
 
 #[tauri::command]
+pub async fn screening_set_paused(
+    state: tauri::State<'_, ScreeningState>,
+    paused: bool,
+) -> Result<(), String> {
+    *state.paused.lock().unwrap() = paused;
+    eprintln!("[screening] paused={}", paused);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn screening_set_concurrency(
+    state: tauri::State<'_, ScreeningState>,
+    n: usize,
+) -> Result<(), String> {
+    let clamped = n.clamp(MIN_INFLIGHT, MAX_INFLIGHT_CAP);
+    *state.max_inflight.lock().unwrap() = clamped;
+    eprintln!("[screening] concurrency={}", clamped);
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn screening_enqueue(
     app: AppHandle,
     state: tauri::State<'_, ScreeningState>,
@@ -88,9 +126,15 @@ pub async fn screening_enqueue(
 ) -> Result<(), String> {
     let already = already_marked(&app);
     {
+        let inflight = state.inflight.lock().unwrap();
         let mut q = state.queue.lock().unwrap();
         for id in ids {
-            if id.is_empty() || already.contains(&id) || q.contains(&id) {
+            if id.is_empty()
+                || !id.starts_with("tt")
+                || already.contains(&id)
+                || q.contains(&id)
+                || inflight.contains(&id)
+            {
                 continue;
             }
             q.push(id);
@@ -109,173 +153,106 @@ pub async fn screening_enqueue(
     Ok(())
 }
 
-#[derive(Deserialize)]
-pub struct ScreeningReport {
-    pub kind: String,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub url: String,
-    #[serde(default)]
-    pub status: u16,
-    #[serde(rename = "contentType", default)]
-    pub content_type: String,
-}
-
-#[tauri::command]
-pub async fn screening_report(
-    state: tauri::State<'_, ScreeningState>,
-    payload: ScreeningReport,
-) -> Result<(), String> {
-    eprintln!(
-        "[screening-report] kind={} status={} ct={}",
-        payload.kind, payload.status, payload.content_type
-    );
-    let ct = payload.content_type.to_lowercase();
-    if payload.status == 404 || payload.status == 410 {
-        *state.current_bad.lock().unwrap() = true;
-    }
-    if ct.starts_with("video/")
-        || ct.contains("mpegurl")
-        || ct.contains("m3u8")
-        || ct.contains("octet-stream")
-    {
-        *state.current_has_video.lock().unwrap() = true;
-    }
-    if payload.kind == "dom" && payload.status == 1 {
-        *state.current_has_video.lock().unwrap() = true;
-    }
-    Ok(())
-}
-
-const INIT_SCRIPT: &str = r#"
-(() => {
-    if (window.__SCREENING_INSTALLED) return;
-    window.__SCREENING_INSTALLED = true;
-    const invoke = (cmd, args) => {
-        try {
-            const ti = window.__TAURI_INTERNALS__;
-            if (ti && ti.invoke) return ti.invoke(cmd, args);
-        } catch (e) {}
-        return Promise.resolve();
-    };
-    const report = (kind, url, status, ct) => {
-        invoke('screening_report', {
-            payload: {
-                kind: String(kind || ''),
-                url: String(url || ''),
-                status: (status | 0),
-                contentType: String(ct || '')
-            }
-        });
-    };
-    const origFetch = window.fetch;
-    if (origFetch) {
-        window.fetch = async (...args) => {
-            try {
-                const r = await origFetch(...args);
-                report('fetch', args[0], r.status, r.headers.get('content-type'));
-                return r;
-            } catch (e) {
-                report('fetch', args[0], 0, '');
-                throw e;
-            }
-        };
-    }
-    const origOpen = XMLHttpRequest.prototype.open;
-    XMLHttpRequest.prototype.open = function (method, url, ...rest) {
-        this.addEventListener('loadend', () => {
-            try {
-                report('xhr', url, this.status, this.getResponseHeader('content-type') || '');
-            } catch (e) {}
-        });
-        return origOpen.call(this, method, url, ...rest);
-    };
-    setTimeout(() => {
-        try {
-            const has = !!document.querySelector(
-                'video, source, [src*=".m3u8"], [src*=".mp4"]'
-            );
-            report('dom', location.href, has ? 1 : 0, '');
-        } catch (e) {}
-    }, 3500);
-})();
-"#;
-
-async fn ensure_window(app: &AppHandle) -> Result<tauri::WebviewWindow, String> {
-    if let Some(w) = app.get_webview_window(WIN_LABEL) {
-        return Ok(w);
-    }
-    let win = WebviewWindowBuilder::new(
-        app,
-        WIN_LABEL,
-        WebviewUrl::External("about:blank".parse().unwrap()),
-    )
-    .visible(false)
-    .decorations(false)
-    .skip_taskbar(true)
-    .inner_size(800.0, 600.0)
-    .position(-9999.0, -9999.0)
-    .initialization_script(INIT_SCRIPT)
-    .build()
-    .map_err(|e| format!("ventana screening: {}", e))?;
-    Ok(win)
-}
-
 async fn worker_loop(app: AppHandle) {
+    let client = match reqwest::Client::builder()
+        .user_agent(UA)
+        .timeout(std::time::Duration::from_secs(REQ_TIMEOUT_S))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[screening] reqwest build fail: {}", e);
+            let state = app.state::<ScreeningState>();
+            *state.started.lock().unwrap() = false;
+            return;
+        }
+    };
+
     loop {
-        let id = {
+        // Si el user está viendo una peli, no robamos red/CPU. Espera y reintenta.
+        let is_paused = *app.state::<ScreeningState>().paused.lock().unwrap();
+        if is_paused {
+            tokio::time::sleep(std::time::Duration::from_millis(PAUSED_POLL_MS)).await;
+            continue;
+        }
+
+        // Tomar hasta max_inflight items de la cola (config dinámica)
+        let batch: Vec<String> = {
             let state = app.state::<ScreeningState>();
             let mut q = state.queue.lock().unwrap();
+            let mut inflight = state.inflight.lock().unwrap();
             if q.is_empty() {
                 let mut s = state.started.lock().unwrap();
                 *s = false;
                 eprintln!("[screening] cola vacía, worker termina");
                 return;
             }
-            q.remove(0)
+            let cur_max = *state.max_inflight.lock().unwrap();
+            let n = q.len().min(cur_max);
+            let drained: Vec<String> = q.drain(..n).collect();
+            for id in &drained {
+                inflight.insert(id.clone());
+            }
+            drained
         };
-        process_one(&app, &id).await;
+
+        // Procesar batch en paralelo
+        let mut tasks = Vec::with_capacity(batch.len());
+        for id in batch {
+            let app_c = app.clone();
+            let cli = client.clone();
+            tasks.push(tauri::async_runtime::spawn(async move {
+                process_one(&app_c, &cli, &id).await;
+                let st = app_c.state::<ScreeningState>();
+                st.inflight.lock().unwrap().remove(&id);
+            }));
+        }
+        for t in tasks {
+            let _ = t.await;
+        }
+
+        // Throttle entre batches para no martillar al provider.
+        tokio::time::sleep(std::time::Duration::from_millis(BATCH_GAP_MS)).await;
     }
 }
 
-async fn process_one(app: &AppHandle, imdb_id: &str) {
-    eprintln!("[screening] start {}", imdb_id);
-    let state = app.state::<ScreeningState>();
-    *state.current_id.lock().unwrap() = Some(imdb_id.to_string());
-    *state.current_bad.lock().unwrap() = false;
-    *state.current_has_video.lock().unwrap() = false;
+async fn process_one(app: &AppHandle, cli: &reqwest::Client, imdb_id: &str) {
+    let url = format!("{}?imdb={}&type=movie", API_URL, imdb_id);
+    let res = cli
+        .get(&url)
+        .header("Referer", REFERER)
+        .header("Accept", "application/json, text/plain, */*")
+        .send()
+        .await;
 
-    let url = format!(
-        "https://www.playimdb.com/es/title/{}/?ref_={}",
-        imdb_id, REF
-    );
-
-    let win = match ensure_window(app).await {
-        Ok(w) => w,
+    let (disponible, reason) = match res {
+        Ok(r) => {
+            let status = r.status();
+            let body = r.text().await.unwrap_or_default();
+            // Parseamos lazy: status_code puede venir como "200" (string) o 200 (number).
+            let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+            let sc = &v["status_code"];
+            let ok = sc.as_str() == Some("200") || sc.as_i64() == Some(200);
+            let has_streams = v["data"]["stream_urls"]
+                .as_array()
+                .map(|a| !a.is_empty())
+                .unwrap_or(false);
+            // TV series: data.eps puede traer la cosa, también vale.
+            let has_eps = v["data"]["eps"]
+                .as_array()
+                .map(|a| !a.is_empty())
+                .unwrap_or(false);
+            if ok && (has_streams || has_eps) {
+                (true, format!("api 200 ({} bytes)", body.len()))
+            } else {
+                (false, format!("api {} (sin streams)", status))
+            }
+        }
         Err(e) => {
-            eprintln!("[screening] ensure_window err: {}", e);
+            // Error de red: NO marcamos. No queremos falsos positivos por wifi malo.
+            eprintln!("[screening] {} red error: {}", imdb_id, e);
             return;
         }
-    };
-
-    if let Err(e) = win.eval(&format!("window.location.href = {:?};", url)) {
-        eprintln!("[screening] eval navigate fail: {}", e);
-        return;
-    }
-
-    tokio::time::sleep(std::time::Duration::from_millis(PROBE_MS)).await;
-
-    let bad = *state.current_bad.lock().unwrap();
-    let has_video = *state.current_has_video.lock().unwrap();
-
-    // CONSERVADOR: solo marcamos fake con evidencia clara (404/410 visto).
-    // Si no llegan reportes (porque __TAURI_INTERNALS__ no se inyectó en la
-    // URL externa, por ejemplo), asumimos disponible. Mejor falso positivo
-    // que falso negativo: el user puede explorar y descubrir él si rompe.
-    let (disponible, reason) = if bad {
-        (false, "404/410 detectado".to_string())
-    } else {
-        (true, format!("sin evidencia de fake (video={})", has_video))
     };
 
     if !disponible {
@@ -296,7 +273,6 @@ async fn process_one(app: &AppHandle, imdb_id: &str) {
         },
     );
 
-    *state.current_id.lock().unwrap() = None;
     eprintln!(
         "[screening] {} → disponible={} ({})",
         imdb_id, disponible, reason

@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 
 mod kodios;
 mod rd;
-mod player;
 mod screening;
 mod webserver;
 
@@ -10,16 +9,6 @@ const TMDB_BASE: &str = "https://api.themoviedb.org/3";
 const LANG: &str = "es-ES";
 
 const BROWSER_UA: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-
-fn extract_imdb_id(path: &str) -> Option<String> {
-    path.split('/').find_map(|seg| {
-        if seg.starts_with("tt") && seg.len() >= 8 && seg[2..].chars().all(|c| c.is_ascii_digit()) {
-            Some(seg.to_string())
-        } else {
-            None
-        }
-    })
-}
 
 fn client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
@@ -407,13 +396,6 @@ async fn tmdb_videos(
 }
 
 #[derive(Serialize)]
-pub struct UrlStatus {
-    pub status: u16,
-    pub available: bool,
-    pub reason: String,
-}
-
-#[derive(Serialize)]
 pub struct ItemStatus {
     pub id: u64,
     pub has_imdb: bool,
@@ -467,127 +449,6 @@ async fn item_status(media_type: String, id: u64, api_key: String) -> Result<Ite
             .any(|v| v.site == "YouTube" && (v.kind == "Trailer" || v.kind == "Teaser"))
     };
     Ok(ItemStatus { id, has_imdb, imdb_id, has_trailer })
-}
-
-#[tauri::command]
-async fn check_url(url: String) -> Result<UrlStatus, String> {
-    let initial = url.clone();
-    // Limita la descarga a 64 KB con header Range. Suficiente para:
-    // - confirmar que el body es grande (si llega al cap, hay más → real).
-    // - leer entero un fake (cabe en mucho menos que 64 KB).
-    // Evita bajar megas de player real durante el check_url.
-    let resp = match client()?
-        .get(&url)
-        .header("Range", "bytes=0-65535")
-        .send()
-        .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            // Error de red: NO bloqueamos. Que el user pruebe en el iframe.
-            eprintln!("[check_url] red error → asume disponible: {}", e);
-            return Ok(UrlStatus { status: 0, available: true, reason: format!("red: {}", e) });
-        }
-    };
-    let status = resp.status().as_u16();
-    let final_url = resp.url().to_string();
-    // TODO REMOVE [check-diag] — investigar fake-404 de playimdb
-    let content_length_hdr = resp
-        .headers()
-        .get("content-length")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("(sin header)")
-        .to_string();
-    let content_type_hdr = resp
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("(sin header)")
-        .to_string();
-    eprintln!("[check_url] {} → {} (final: {})", initial, status, final_url);
-    eprintln!(
-        "[check-diag] Content-Length: {}  Content-Type: {}",
-        content_length_hdr, content_type_hdr
-    );
-
-    // Solo bloqueamos con evidencia clara de "no existe"
-    // - 404 Not Found
-    // - 410 Gone
-    // Otros 4xx/5xx pueden ser bloqueos de Cloudflare/anti-bot: asumimos disponible
-    if status == 404 || status == 410 {
-        return Ok(UrlStatus { status, available: false, reason: format!("status {}", status) });
-    }
-    if status >= 500 {
-        // 5xx → server caído / WAF, no concluyente
-        return Ok(UrlStatus { status, available: true, reason: format!("status {}", status) });
-    }
-    if status == 403 || status == 401 {
-        // Bloqueo bot probable → no concluye nada de la peli
-        return Ok(UrlStatus { status, available: true, reason: format!("bot block {}", status) });
-    }
-
-    // Redirect: si pierde el imdb_id (típico redirect a home/página genérica),
-    // ya sabemos que no existe.
-    // Si lo preserva, NO retornamos available — el provider (streamimdb.ru
-    // u otro) puede preservar el tt-id en la URL pero servir una imagen
-    // placeholder. Hay que llegar al body check para distinguir.
-    let initial_path = url::Url::parse(&initial).ok().map(|u| u.path().to_string()).unwrap_or_default();
-    let final_path = url::Url::parse(&final_url).ok().map(|u| u.path().to_string()).unwrap_or_default();
-    let orig_imdb = extract_imdb_id(&initial_path);
-    let final_imdb = extract_imdb_id(&final_path);
-    if orig_imdb.is_some() && final_imdb.is_none() {
-        return Ok(UrlStatus { status, available: false, reason: format!("redirect pierde imdb → {}", final_path) });
-    }
-
-    // Body / title (limitado a primeros 8KB para evitar grandes downloads)
-    let body = resp.text().await.unwrap_or_default();
-    // TODO REMOVE [check-diag] — buscar patrón distintivo real vs fake.
-    let lower_full = body.to_lowercase();
-    let count = |needle: &str| lower_full.matches(needle).count();
-    eprintln!(
-        "[check-diag] body.len()={}",
-        body.len()
-    );
-    eprintln!(
-        "[check-diag] tags: <video>={}  <source={}  <iframe={}  m3u8={}  .mp4={}",
-        count("<video"), count("<source"), count("<iframe"), count("m3u8"), count(".mp4")
-    );
-    eprintln!(
-        "[check-diag] errores: 'not found'={}  'no encontrad'={}  '404'={}  'no disponible'={}  'unavailable'={}",
-        count("not found"), count("no encontrad"), count("404"),
-        count("no disponible"), count("unavailable")
-    );
-    // Sample del MEDIO del body (más informativo que el head).
-    let mid = body.len() / 2;
-    let mid_sample: String = body.chars().skip(mid.saturating_sub(150)).take(300).collect();
-    eprintln!("[check-diag] middle(300ch): {:?}", mid_sample);
-    let sample: String = body.chars().take(8000).collect();
-    let lower = sample.to_lowercase();
-    let title = lower
-        .split("<title")
-        .nth(1)
-        .and_then(|s| s.split('>').nth(1))
-        .and_then(|s| s.split("</title>").next())
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    // Solo marcamos no disponible si el title MISMO contiene 404 (o 'not found' / 'no encontrad')
-    // Y NO contiene un IMDb ID (que sí estaría si fuera la peli buena)
-    let has_tt = sample.contains("tt") && sample.matches("tt").count() > 2;
-    let title_bad = (title.contains("404")
-        || title.contains("not found")
-        || title.contains("no encontrad")
-        || title.contains("page not found"))
-        && !has_tt;
-    if title_bad {
-        return Ok(UrlStatus { status, available: false, reason: format!("title: {}", title) });
-    }
-
-    // El size check no sirve: streamimdb sirve la misma página shell para
-    // existentes y para fakes (mismo tamaño exacto). El distintivo está
-    // en el contenido HTML — los diags de arriba muestran qué buscar.
-    // Por ahora dejamos pasar como available y vemos qué patrón aparece.
-    Ok(UrlStatus { status, available: true, reason: "ok".into() })
 }
 
 #[tauri::command]
@@ -777,145 +638,12 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use tauri::Manager;
 
-async fn scrape_level(
-    cli: &reqwest::Client,
-    url: &str,
-    referer: Option<&str>,
-    level: u32,
-    report: &mut String,
-    visited: &mut std::collections::HashSet<String>,
-    max_level: u32,
-) {
-    if !visited.insert(url.to_string()) {
-        report.push_str(&format!("\n[L{} skip ya visitado] {}\n", level, url));
-        return;
-    }
-    let indent = "  ".repeat(level as usize);
-    report.push_str(&format!("\n{}--- L{} GET {} ---\n", indent, level, url));
-    let mut req = cli.get(url);
-    if let Some(r) = referer {
-        req = req.header("Referer", r);
-    }
-    let resp = match req.send().await {
-        Ok(r) => r,
-        Err(e) => {
-            report.push_str(&format!("{}ERROR red: {}\n", indent, e));
-            return;
-        }
-    };
-    let status = resp.status();
-    let final_url = resp.url().to_string();
-    let body = resp.text().await.unwrap_or_default();
-    report.push_str(&format!("{}status: {}\n", indent, status));
-    report.push_str(&format!("{}final_url: {}\n", indent, final_url));
-    report.push_str(&format!("{}body_size: {} bytes\n", indent, body.len()));
-
-    // Extraer URLs/iframes/patrones
-    let mut found_m3u8: Vec<String> = Vec::new();
-    let mut found_vtt: Vec<String> = Vec::new();
-    let mut found_iframes: Vec<String> = Vec::new();
-    let mut hints: Vec<String> = Vec::new();
-    let limit = body.chars().take(80000).collect::<String>();
-    // Iframes con regex simple: src="..." dentro de <iframe>
-    let lower_full = limit.to_lowercase();
-    for (i, _) in lower_full.match_indices("<iframe") {
-        let chunk_end = (i + 600).min(limit.len());
-        let chunk = &limit[i..chunk_end];
-        if let Some(src_start) = chunk.to_lowercase().find("src=") {
-            let after = &chunk[src_start + 4..];
-            let (quote, after2) = if after.starts_with('"') { ('"', &after[1..]) }
-                else if after.starts_with('\'') { ('\'', &after[1..]) }
-                else { (' ', after) };
-            if let Some(end) = after2.find(quote) {
-                let src = &after2[..end];
-                if src.starts_with("http") && !found_iframes.iter().any(|x| x == src) {
-                    found_iframes.push(src.to_string());
-                }
-            }
-        }
-    }
-    for line in limit.lines() {
-        let l = line.trim();
-        if l.is_empty() { continue; }
-        for token in l.split(|c: char| c == '"' || c == '\'' || c == ' ' || c == '<' || c == '>' || c == ',' || c == ')' || c == '(') {
-            let t = token.trim_end_matches(|c: char| !c.is_alphanumeric() && c != '/' && c != '.' && c != '-' && c != '_' && c != '?' && c != '=' && c != '&' && c != ':' && c != '~' && c != '%');
-            if t.starts_with("http") {
-                if t.contains(".m3u8") && !found_m3u8.iter().any(|x| x == t) {
-                    found_m3u8.push(t.to_string());
-                } else if (t.ends_with(".vtt") || t.contains(".vtt?")) && !found_vtt.iter().any(|x| x == t) {
-                    found_vtt.push(t.to_string());
-                }
-            }
-        }
-        let lower = l.to_lowercase();
-        for k in &[
-            "subtitle", "caption", "track", "hls.", "hlsplayer", "playerinstance",
-            "videojs", "shaka", "jwplayer", "dashjs", "file:", "sources:", "tracks:",
-            "video.js", "playlist", ".m3u8", "subtitlelang", "audio_track", "subtitle_track",
-            "qualityselectorinit", "kind=", "label=", "srclang=",
-        ] {
-            if lower.contains(k) && hints.len() < 30 {
-                hints.push(format!("[{}] {}", k, l.chars().take(260).collect::<String>()));
-            }
-        }
-    }
-
-    if !found_m3u8.is_empty() {
-        report.push_str(&format!("\n{}M3U8 encontrados:\n", indent));
-        for u in &found_m3u8 { report.push_str(&format!("{}  {}\n", indent, u)); }
-    }
-    if !found_vtt.is_empty() {
-        report.push_str(&format!("\n{}VTT (subtitulos) encontrados:\n", indent));
-        for u in &found_vtt { report.push_str(&format!("{}  {}\n", indent, u)); }
-    }
-    if !found_iframes.is_empty() {
-        report.push_str(&format!("\n{}Iframes anidados:\n", indent));
-        for u in &found_iframes { report.push_str(&format!("{}  {}\n", indent, u)); }
-    }
-    if !hints.is_empty() {
-        report.push_str(&format!("\n{}Hints ({}):\n", indent, hints.len()));
-        for h in hints.iter().take(20) { report.push_str(&format!("{}  {}\n", indent, h)); }
-    }
-
-    // M3U8 master: bajar y parsear
-    if let Some(m3u8) = found_m3u8.first() {
-        report.push_str(&format!("\n{}--- M3U8 master ---\n", indent));
-        match cli.get(m3u8).header("Referer", &final_url).send().await {
-            Ok(r) => {
-                let st = r.status();
-                let playlist = r.text().await.unwrap_or_default();
-                report.push_str(&format!("{}m3u8 status: {}\n", indent, st));
-                report.push_str(&format!("{}m3u8 size: {} bytes\n", indent, playlist.len()));
-                for line in playlist.lines().take(120) {
-                    if line.starts_with("#EXT-X-STREAM-INF") || line.starts_with("#EXT-X-MEDIA") || line.starts_with("#EXTINF") {
-                        report.push_str(&format!("{}  {}\n", indent, line));
-                    } else if !line.starts_with('#') && !line.trim().is_empty() {
-                        report.push_str(&format!("{}  url: {}\n", indent, line.trim()));
-                    }
-                }
-            }
-            Err(e) => report.push_str(&format!("{}m3u8 fetch error: {}\n", indent, e)),
-        }
-    }
-
-    // Recurse en iframes hasta max_level
-    if level < max_level {
-        for ifr in &found_iframes {
-            Box::pin(scrape_level(cli, ifr, Some(&final_url), level + 1, report, visited, max_level)).await;
-        }
-    }
-}
-
+// Helper de tecla virtual usado por webserver.rs (HTTP /key remote control).
+// No es comando Tauri por sí mismo: se invoca desde el handler HTTP.
 pub fn press_key(key: &str) -> Result<(), String> {
     use enigo::{Direction, Enigo, Key, Keyboard, Settings};
-    eprintln!("[press_key] intentando '{}'", key);
-    let mut enigo = match Enigo::new(&Settings::default()) {
-        Ok(e) => e,
-        Err(e) => {
-            eprintln!("[press_key] enigo init falló: {}", e);
-            return Err(format!("enigo init: {}", e));
-        }
-    };
+    let mut enigo = Enigo::new(&Settings::default())
+        .map_err(|e| format!("enigo init: {}", e))?;
     let k = match key.to_lowercase().as_str() {
         "space" | " " => Key::Space,
         "escape" | "esc" => Key::Escape,
@@ -929,90 +657,7 @@ pub fn press_key(key: &str) -> Result<(), String> {
         s if s.chars().count() == 1 => Key::Unicode(s.chars().next().unwrap()),
         _ => return Err(format!("tecla desconocida: {}", key)),
     };
-    match enigo.key(k, Direction::Click) {
-        Ok(_) => { eprintln!("[press_key] '{}' OK", key); Ok(()) }
-        Err(e) => { eprintln!("[press_key] '{}' falló: {}", key, e); Err(e.to_string()) }
-    }
-}
-
-#[tauri::command]
-async fn sim_key(key: String) -> Result<(), String> {
-    press_key(&key)
-}
-
-#[tauri::command]
-async fn sim_mouse_move_click(x: i32, y: i32) -> Result<(), String> {
-    use enigo::{Button, Coordinate, Enigo, Mouse, Settings, Direction};
-    eprintln!("[sim_mouse] move+click a ({}, {})", x, y);
-    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| { eprintln!("enigo: {}", e); e.to_string() })?;
-    enigo.move_mouse(x, y, Coordinate::Abs).map_err(|e| e.to_string())?;
-    std::thread::sleep(std::time::Duration::from_millis(80));
-    enigo.button(Button::Left, Direction::Click).map_err(|e| e.to_string())?;
-    eprintln!("[sim_mouse] click OK");
-    Ok(())
-}
-
-#[tauri::command]
-async fn sim_mouse_wake() -> Result<(), String> {
-    use enigo::{Coordinate, Enigo, Mouse, Settings};
-    let mut enigo = match Enigo::new(&Settings::default()) {
-        Ok(e) => e,
-        Err(e) => {
-            eprintln!("[sim_mouse_wake] enigo init falló: {} — probable Wayland sin uinput/AT-SPI", e);
-            return Err(e.to_string());
-        }
-    };
-    // Mover 8px y volver, suficiente para que controles del player aparezcan
-    enigo.move_mouse(8, 0, Coordinate::Rel).map_err(|e| e.to_string())?;
-    std::thread::sleep(std::time::Duration::from_millis(15));
-    enigo.move_mouse(-8, 0, Coordinate::Rel).map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-#[tauri::command]
-async fn sim_diagnostic() -> Result<String, String> {
-    use enigo::{Enigo, Mouse, Settings};
-    let mut report = String::new();
-    report.push_str(&format!("session_type: {}\n", std::env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "?".into())));
-    report.push_str(&format!("wayland_display: {}\n", std::env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "(none)".into())));
-    report.push_str(&format!("display: {}\n", std::env::var("DISPLAY").unwrap_or_else(|_| "(none)".into())));
-    match Enigo::new(&Settings::default()) {
-        Ok(e) => {
-            report.push_str("enigo init: OK\n");
-            match e.location() {
-                Ok((x, y)) => report.push_str(&format!("mouse pos: ({}, {})\n", x, y)),
-                Err(err) => report.push_str(&format!("mouse pos err: {}\n", err)),
-            }
-        }
-        Err(e) => {
-            report.push_str(&format!("enigo init FAIL: {}\n", e));
-        }
-    }
-    eprintln!("[sim_diagnostic]\n{}", report);
-    Ok(report)
-}
-
-#[tauri::command]
-async fn inspect_player(imdb_id: String) -> Result<String, String> {
-    if imdb_id.is_empty() {
-        return Err("imdb_id vacío".into());
-    }
-    let cli = client()?;
-    let mut report = String::new();
-    let mut visited = std::collections::HashSet::new();
-    report.push_str(&format!("\n========== INSPECT {} ==========\n", imdb_id));
-
-    let roots = vec![
-        format!("https://playimdb.com/es/title/{}/", imdb_id),
-        format!("https://playimdb.com/embed/series/{}", imdb_id),
-    ];
-    for url in &roots {
-        scrape_level(&cli, url, None, 0, &mut report, &mut visited, 3).await;
-    }
-
-    report.push_str("\n========== FIN INSPECT ==========\n");
-    eprintln!("{}", report);
-    Ok(report)
+    enigo.key(k, Direction::Click).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1761,7 +1406,15 @@ async fn rd_device_poll(
         }
         tokio::time::sleep(std::time::Duration::from_secs(poll_every)).await;
 
-        let resp = cli.get(&creds_url).send().await.map_err(|e| format!("red: {}", e))?;
+        // Hipo de red transitorio: NO abortar el flujo, reintentar al próximo
+        // poll. Un solo blip no debe tirar abajo todo el login.
+        let resp = match cli.get(&creds_url).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[rd] creds red transitorio, reintento: {}", e);
+                continue;
+            }
+        };
         if !resp.status().is_success() {
             continue;
         }
@@ -1776,12 +1429,18 @@ async fn rd_device_poll(
             ("code", device_code.as_str()),
             ("grant_type", RD_GRANT_DEVICE),
         ];
-        let tok = cli
+        let tok = match cli
             .post("https://api.real-debrid.com/oauth/v2/token")
             .form(&form)
             .send()
             .await
-            .map_err(|e| format!("red token: {}", e))?;
+        {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[rd] token red transitorio, reintento: {}", e);
+                continue;
+            }
+        };
         if !tok.status().is_success() {
             let st = tok.status();
             let body = tok.text().await.unwrap_or_default();
@@ -2114,6 +1773,95 @@ fn os_info() -> OsInfo {
     }
 }
 
+// ============================================================
+// Subtítulos: Wyzie (sub.wyzie.io)
+// ============================================================
+// Endpoint observado: GET https://sub.wyzie.io/search?id={imdb}&language={lang}&key={key}
+// Sin key devuelve 401 con instrucciones para registrar en store.wyzie.io/redeem.
+
+#[derive(Serialize)]
+pub struct WyzieSubtitle {
+    pub url: String,
+    pub label: String,
+    pub lang: String,
+}
+
+#[derive(Deserialize)]
+#[allow(non_snake_case)]
+struct WyzieItem {
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    language: Option<String>,
+    #[serde(default)]
+    display: Option<String>,
+    #[serde(default)]
+    format: Option<String>,
+    #[serde(default)]
+    isHearingImpaired: Option<bool>,
+}
+
+#[tauri::command]
+async fn wyzie_search(
+    imdb_id: String,
+    language: String,
+    api_key: String,
+) -> Result<Vec<WyzieSubtitle>, String> {
+    if api_key.is_empty() {
+        return Err("falta wyzie key".into());
+    }
+    if imdb_id.is_empty() {
+        return Err("imdb_id vacío".into());
+    }
+    let url = format!(
+        "https://sub.wyzie.io/search?id={}&language={}&key={}",
+        urlencoding::encode(&imdb_id),
+        urlencoding::encode(&language),
+        urlencoding::encode(&api_key)
+    );
+    let cli = client()?;
+    let resp = cli
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("red: {}", e))?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("wyzie {}: {}", status, body));
+    }
+    let items: Vec<WyzieItem> =
+        serde_json::from_str(&body).map_err(|e| format!("parse: {} :: {}", e, body))?;
+    let mut out: Vec<WyzieSubtitle> = Vec::new();
+    for it in items {
+        let Some(u) = it.url.filter(|s| !s.is_empty()) else {
+            continue;
+        };
+        // Preferir VTT, también aceptamos SRT (el player los traduce).
+        if let Some(fmt) = it.format.as_deref() {
+            let fmt = fmt.to_lowercase();
+            if fmt != "vtt" && fmt != "srt" {
+                continue;
+            }
+        }
+        if it.isHearingImpaired == Some(true) {
+            continue;
+        }
+        let label = it
+            .display
+            .clone()
+            .or_else(|| it.language.clone())
+            .unwrap_or_else(|| "Subtítulos".into());
+        let lang = it.language.clone().unwrap_or_else(|| language.clone());
+        out.push(WyzieSubtitle {
+            url: u,
+            label,
+            lang,
+        });
+    }
+    Ok(out)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     use tauri_plugin_sql::{Migration, MigrationKind};
@@ -2232,7 +1980,6 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(screening::ScreeningState::default())
-        .manage(player::PlayerState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -2249,15 +1996,9 @@ pub fn run() {
             tmdb_recommendations,
             tmdb_genres,
             tmdb_videos,
-            check_url,
             item_status,
             tmdb_person,
             cache_image,
-            inspect_player,
-            sim_key,
-            sim_mouse_move_click,
-            sim_mouse_wake,
-            sim_diagnostic,
             vera_intent_options,
             vera_genre_list,
             vera_theme_list,
@@ -2282,13 +2023,11 @@ pub fn run() {
             rd::rd_resolve,
             rd::rd_instant_available,
             rd::rd_refresh,
-            player::mpv_play,
-            player::mpv_cmd,
-            player::mpv_stop,
-            player::mpv_running,
             screening::screening_enqueue,
             screening::screening_get_unavailable,
-            screening::screening_report
+            screening::screening_set_paused,
+            screening::screening_set_concurrency,
+            wyzie_search
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

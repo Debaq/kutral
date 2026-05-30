@@ -42,3 +42,22 @@ export async function encolarScreening(ids: string[]): Promise<void> {
     console.warn("[screening] encolar fail:", e);
   }
 }
+
+// Pausar / reanudar el worker. Llamar pause(true) al entrar a discover
+// para que no robe red mientras la peli stream-ea; pause(false) al salir.
+export async function pausarScreening(paused: boolean): Promise<void> {
+  try {
+    await invoke("screening_set_paused", { paused });
+  } catch (e) {
+    console.warn("[screening] pausar fail:", e);
+  }
+}
+
+// Concurrencia 1..=4. Rust clampa al rango por seguridad.
+export async function setConcurrenciaScreening(n: number): Promise<void> {
+  try {
+    await invoke("screening_set_concurrency", { n });
+  } catch (e) {
+    console.warn("[screening] setConcurrencia fail:", e);
+  }
+}
