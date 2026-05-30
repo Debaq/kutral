@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+mod awards;
 mod kodios;
 mod rd;
 mod screening;
@@ -393,6 +394,110 @@ async fn tmdb_videos(
         b.official.cmp(&a.official).then(order(&a.kind).cmp(&order(&b.kind)))
     });
     Ok(filtered)
+}
+
+#[derive(Serialize)]
+pub struct AppleTrailer {
+    pub url: String,
+    pub title: String,
+    pub year: Option<String>,
+}
+
+#[tauri::command]
+async fn apple_trailer(
+    title: String,
+    year: String,
+    media_type: String,
+) -> Result<Option<AppleTrailer>, String> {
+    let t = title.trim();
+    if t.is_empty() {
+        return Ok(None);
+    }
+    let encoded = urlencoding::encode(t);
+    // Sin entity= : Apple bugea y devuelve vacío con entity=movie.
+    let url = format!(
+        "https://itunes.apple.com/search?term={}&country=us&limit=25",
+        encoded
+    );
+
+    #[derive(Deserialize)]
+    struct Resp {
+        results: Vec<Item>,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Item {
+        kind: Option<String>,
+        track_name: Option<String>,
+        preview_url: Option<String>,
+        release_date: Option<String>,
+    }
+
+    let r: Resp = match fetch_json::<Resp>(&url).await {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+
+    let want_kinds: &[&str] = if media_type == "tv" {
+        &["tv-episode", "feature-movie"]
+    } else {
+        &["feature-movie"]
+    };
+
+    let candidates: Vec<&Item> = r
+        .results
+        .iter()
+        .filter(|i| {
+            i.preview_url.as_deref().map_or(false, |u| !u.is_empty())
+                && i.kind.as_deref().map_or(false, |k| want_kinds.contains(&k))
+        })
+        .collect();
+
+    let title_lc = t.to_lowercase();
+    let to_out = |i: &Item| AppleTrailer {
+        url: i.preview_url.clone().unwrap_or_default(),
+        title: i.track_name.clone().unwrap_or_default(),
+        year: i
+            .release_date
+            .as_ref()
+            .and_then(|d| d.get(..4).map(|s| s.to_string())),
+    };
+
+    // 1) match año + título contiene
+    if !year.is_empty() {
+        if let Some(found) = candidates.iter().find(|i| {
+            i.release_date
+                .as_deref()
+                .map_or(false, |d| d.starts_with(&year))
+                && i.track_name
+                    .as_deref()
+                    .map_or(false, |n| n.to_lowercase().contains(&title_lc))
+        }) {
+            return Ok(Some(to_out(found)));
+        }
+        // 2) solo año
+        if let Some(found) = candidates
+            .iter()
+            .find(|i| i.release_date.as_deref().map_or(false, |d| d.starts_with(&year)))
+        {
+            return Ok(Some(to_out(found)));
+        }
+    }
+
+    // 3) título exacto
+    if let Some(found) = candidates
+        .iter()
+        .find(|i| i.track_name.as_deref().map_or(false, |n| n.to_lowercase() == title_lc))
+    {
+        return Ok(Some(to_out(found)));
+    }
+
+    // 4) primer candidato
+    if let Some(found) = candidates.first() {
+        return Ok(Some(to_out(found)));
+    }
+
+    Ok(None)
 }
 
 #[derive(Serialize)]
@@ -1996,6 +2101,7 @@ pub fn run() {
             tmdb_recommendations,
             tmdb_genres,
             tmdb_videos,
+            apple_trailer,
             item_status,
             tmdb_person,
             cache_image,
@@ -2027,6 +2133,7 @@ pub fn run() {
             screening::screening_get_unavailable,
             screening::screening_set_paused,
             screening::screening_set_concurrency,
+            awards::wikidata_awards,
             wyzie_search
         ])
         .run(tauri::generate_context!())

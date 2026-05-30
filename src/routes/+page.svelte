@@ -250,6 +250,44 @@
   type CardStatus = "checking" | "ok" | "trailer" | "none";
   let statusMap = $state<Map<number, CardStatus>>(new Map());
   let imdbIdMap = $state<Map<number, string>>(new Map());
+
+  type AwardsSummary = { wins: number; nominations: number };
+  let awardsMap = $state<Map<string, AwardsSummary | "loading">>(new Map());
+  let awardsQueue: string[] = [];
+  let awardsActive = 0;
+  const AWARDS_CONCURRENCY = 3;
+
+  function enqueueAwards(imdb: string) {
+    if (!imdb || awardsMap.has(imdb)) return;
+    const m = new Map(awardsMap);
+    m.set(imdb, "loading");
+    awardsMap = m;
+    awardsQueue.push(imdb);
+    pumpAwards();
+  }
+
+  async function pumpAwards() {
+    while (awardsActive < AWARDS_CONCURRENCY && awardsQueue.length > 0) {
+      const imdb = awardsQueue.shift()!;
+      awardsActive++;
+      void (async () => {
+        try {
+          const s: AwardsSummary = await invoke("wikidata_awards", { imdbId: imdb });
+          const m = new Map(awardsMap);
+          m.set(imdb, s);
+          awardsMap = m;
+        } catch (e) {
+          console.warn("[awards]", imdb, e);
+          const m = new Map(awardsMap);
+          m.set(imdb, { wins: 0, nominations: 0 });
+          awardsMap = m;
+        } finally {
+          awardsActive--;
+          pumpAwards();
+        }
+      })();
+    }
+  }
   const statusInflight = new Set<number>();
   let statusObserver: IntersectionObserver | null = null;
 
@@ -262,6 +300,7 @@
   let mode = $state<"browse" | "discover" | "trailer" | "unavailable" | "sources" | "playmenu">("browse");
   let checkingDiscover = $state(false);
   let trailerKey = $state<string>("");
+  let appleTrailerUrl = $state<string>("");
   let unavailable = $state<{ open: boolean; reason: "404" | "no_imdb"; checking: boolean }>({
     open: false,
     reason: "404",
@@ -381,7 +420,7 @@
       });
       selected = d;
       await loadProgressForSelected();
-      await startDiscover();
+      goDescubrir();
     } catch (e) {
       console.warn("[handoff] falló:", e);
       selected = null;
@@ -595,9 +634,14 @@
   }
 
   async function openTrailerExternal() {
-    if (!trailerKey) return;
     try {
-      await openUrl(`https://www.youtube.com/watch?v=${trailerKey}`);
+      if (appleTrailerUrl) {
+        await openUrl(appleTrailerUrl);
+        return;
+      }
+      if (trailerKey) {
+        await openUrl(`https://www.youtube.com/watch?v=${trailerKey}`);
+      }
     } catch (e) {
       console.warn("openUrl falló", e);
     }
@@ -741,6 +785,8 @@
         // Disparar screening de fondo: si la peli no tiene player real,
         // queda marcada y la UI esconde el botón Descubrir.
         void encolarScreening([s.imdb_id]);
+        // Premios/nominaciones (Wikidata). Cache + cola con concurrencia.
+        enqueueAwards(s.imdb_id);
       }
     } catch (e) {
       console.warn("[item_status] error", id, e);
@@ -906,7 +952,7 @@
   async function pickAndDiscover(it: ListItem) {
     try {
       const d = await pick(it);
-      if (d?.imdb_id) startDiscover();
+      if (d?.imdb_id) goDescubrir();
     } catch { /* error ya seteado en pick */ }
   }
 
@@ -1100,6 +1146,7 @@
     }
     mode = "browse";
     trailerKey = "";
+    appleTrailerUrl = "";
     discoverSrc = "";
     setFs(false);
     unregisterBackShortcuts();
@@ -1111,6 +1158,33 @@
     if (!selected) return;
     unavailable.open = false;
     trailerMsg = "";
+    appleTrailerUrl = "";
+    trailerKey = "";
+
+    // 1) Apple primero (mp4 directo, sin embed YouTube → no error 153).
+    try {
+      const apple = await invoke<{ url: string; title: string; year: string | null } | null>(
+        "apple_trailer",
+        {
+          title: selected.title,
+          year: selected.year || "",
+          mediaType: selected.media_type,
+        }
+      );
+      console.log("[apple_trailer]", selected.title, "→", apple);
+      if (apple && apple.url) {
+        appleTrailerUrl = apple.url;
+        mode = "trailer";
+        setFs(true);
+        registerBackShortcuts(true);
+        setTimeout(() => document.querySelector<HTMLElement>(".trailer-bar .bar-btn")?.focus(), 50);
+        return;
+      }
+    } catch (e) {
+      console.warn("[apple_trailer] error", e);
+    }
+
+    // 2) Fallback TMDb (YouTube embed — puede fallar con error 153 en Tauri).
     try {
       const vids = await invoke<Video[]>("tmdb_videos", {
         mediaType: selected.media_type,
@@ -1119,7 +1193,7 @@
       });
       console.log("[tmdb_videos]", selected.media_type, selected.id, "→", vids);
       if (!vids.length) {
-        trailerMsg = `Sin trailer disponible para "${selected.title}" en TMDb.`;
+        trailerMsg = `Sin trailer disponible para "${selected.title}".`;
         setTimeout(() => (trailerMsg = ""), 4000);
         return;
       }
@@ -1335,6 +1409,9 @@
   <PlayMenu
     title={selected.title}
     progressLabel={progressLabelFor()}
+    backdrop={selected.backdrop_path ? img(`${IMG}/w1280${selected.backdrop_path}`, 1280) : null}
+    year={selected.year || null}
+    overview={selected.overview || null}
     hasRd={!!(config.rdKey || "").trim()}
     isMovie={selected.media_type === "movie"}
     onContinue={menuContinue}
@@ -1370,41 +1447,54 @@
       allow="autoplay; fullscreen; picture-in-picture"
     ></iframe>
   </div>
-{:else if mode === "trailer" && trailerKey}
+{:else if mode === "trailer" && (appleTrailerUrl || trailerKey)}
   <div class="discover-mode">
     <div class="trailer-bar">
       <button data-nav class="bar-btn" onclick={stopDiscover} title="Volver (Esc / Backspace)">
         ← Volver
       </button>
-      <div class="trailer-badge-inline">TRAILER</div>
-      <div class="dropdown">
-        <button data-nav class="bar-btn" onclick={() => (trailerSourceOpen = !trailerSourceOpen)}>
-          {TRAILER_SOURCES.find(s => s.id === trailerSource)?.label} ▾
-        </button>
-        {#if trailerSourceOpen}
-          <ul class="dropdown-menu menu-up" use:autofocusFirst>
-            {#each TRAILER_SOURCES as s}
-              <li>
-                <button data-nav class:active={s.id === trailerSource} onclick={() => setTrailerSource(s.id)}>
-                  {s.label}
-                </button>
-              </li>
-            {/each}
-          </ul>
-        {/if}
-      </div>
+      <div class="trailer-badge-inline">TRAILER{appleTrailerUrl ? " · Apple" : ""}</div>
+      {#if !appleTrailerUrl}
+        <div class="dropdown">
+          <button data-nav class="bar-btn" onclick={() => (trailerSourceOpen = !trailerSourceOpen)}>
+            {TRAILER_SOURCES.find(s => s.id === trailerSource)?.label} ▾
+          </button>
+          {#if trailerSourceOpen}
+            <ul class="dropdown-menu menu-up" use:autofocusFirst>
+              {#each TRAILER_SOURCES as s}
+                <li>
+                  <button data-nav class:active={s.id === trailerSource} onclick={() => setTrailerSource(s.id)}>
+                    {s.label}
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+      {/if}
       <button data-nav class="bar-btn" onclick={openTrailerExternal} title="Abrir en navegador">
         ↗ Externo
       </button>
     </div>
-    {#key trailerSource}
-      <iframe
-        src={trailerUrl(trailerKey)}
-        title="trailer"
-        referrerpolicy="no-referrer"
-        allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
-      ></iframe>
-    {/key}
+    {#if appleTrailerUrl}
+      <!-- svelte-ignore a11y_media_has_caption -->
+      <video
+        src={appleTrailerUrl}
+        autoplay
+        controls
+        playsinline
+        crossorigin="anonymous"
+      ></video>
+    {:else}
+      {#key trailerSource}
+        <iframe
+          src={trailerUrl(trailerKey)}
+          title="trailer"
+          referrerpolicy="no-referrer"
+          allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
+        ></iframe>
+      {/key}
+    {/if}
   </div>
 {:else}
   <main>
@@ -1461,7 +1551,7 @@
               {#if prog && prog.completed}
                 <button data-nav class="discover-btn discover-btn-row" onclick={goDescubrir}>▶ Descubrir de nuevo</button>
               {:else if prog && prog.watched_seconds > 5}
-                <button data-nav class="discover-btn discover-btn-row" onclick={restartDiscover} title="Borra el progreso guardado y arranca en 0">
+                <button data-nav class="discover-btn discover-btn-row" onclick={goDescubrir} title="Opciones de reproducción">
                   ↻ Desde el inicio
                 </button>
                 <button data-nav class="discover-btn discover-btn-row" onclick={goDescubrir}>
@@ -1484,7 +1574,7 @@
                 <button
                   data-nav
                   class="trailer-btn"
-                  onclick={() => startDiscover(true)}
+                  onclick={goDescubrir}
                   title="Intentar abrir aunque esté marcada como no disponible"
                 >
                   ⚠ Intentar de todas formas
@@ -1702,6 +1792,23 @@
                   {/if}
                   {#if unavail}
                     <span class="card-stamp">NO DISPONIBLE</span>
+                  {/if}
+                  {#if itImdb}
+                    {@const aw = awardsMap.get(itImdb)}
+                    {#if aw && aw !== "loading" && (aw.wins > 0 || aw.nominations > 0)}
+                      <div class="card-awards">
+                        {#if aw.wins > 0}
+                          <span class="award-pill win" title="{aw.wins} premios"
+                            >🏆 {aw.wins}</span
+                          >
+                        {/if}
+                        {#if aw.nominations > 0}
+                          <span class="award-pill nom" title="{aw.nominations} nominaciones"
+                            >🏅 {aw.nominations}</span
+                          >
+                        {/if}
+                      </div>
+                    {/if}
                   {/if}
                   <div class="card-meta">
                     <span class="card-title">{title}</span>
@@ -2461,6 +2568,37 @@
     z-index: 3;
     white-space: nowrap;
   }
+  .card-awards {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    z-index: 2;
+    pointer-events: none;
+  }
+  .award-pill {
+    background: rgba(0, 0, 0, 0.72);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 999px;
+    letter-spacing: 0.4px;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    backdrop-filter: blur(4px);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+  }
+  .award-pill.win {
+    color: #ffd76a;
+    text-shadow: 0 0 6px rgba(255, 215, 0, 0.5);
+  }
+  .award-pill.nom {
+    color: #d8d8d8;
+  }
   .card img, .no-poster { width: 100%; aspect-ratio: 2/3; object-fit: cover; background: #222; }
   .no-poster { display: flex; align-items: center; justify-content: center; color: #555; font-size: 13px; }
   .card-meta { padding: 10px 12px; display: flex; flex-direction: column; gap: 3px; }
@@ -2469,7 +2607,8 @@
 
   /* PLAY mode */
   .discover-mode { position: fixed; inset: 0; background: #000; z-index: 999; }
-  .discover-mode iframe { width: 100%; height: 100%; border: 0; }
+  .discover-mode iframe,
+  .discover-mode video { width: 100%; height: 100%; border: 0; background: #000; object-fit: contain; }
   .back-btn {
     position: absolute; top: 14px; right: 14px; z-index: 1000;
     display: inline-flex; align-items: center; gap: 8px;
