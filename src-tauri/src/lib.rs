@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+mod kodios;
+mod rd;
+mod player;
 mod screening;
 mod webserver;
 
@@ -2229,6 +2232,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(screening::ScreeningState::default())
+        .manage(player::PlayerState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -2274,6 +2278,14 @@ pub fn run() {
             webserver::web_server_start,
             webserver::web_server_stop,
             webserver::web_server_status,
+            kodios::kodios_search,
+            rd::rd_resolve,
+            rd::rd_instant_available,
+            rd::rd_refresh,
+            player::mpv_play,
+            player::mpv_cmd,
+            player::mpv_stop,
+            player::mpv_running,
             screening::screening_enqueue,
             screening::screening_get_unavailable,
             screening::screening_report

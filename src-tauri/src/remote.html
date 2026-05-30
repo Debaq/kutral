@@ -13,13 +13,45 @@
     --border: #2a2a36;
     --text: #e6e6ec;
     --muted: #a0a0aa;
-    --accent: #f3a951;
+    --accent: #e23b3b;
     --a: #c44b4b;
     --b: #f3c544;
     --x: #4a8ed8;
     --y: #5fb86b;
     --shadow-dark: rgba(0, 0, 0, 0.6);
   }
+  /* Pieles */
+  html[data-skin="rojo"] {
+    --bg: #2a0608; --panel: #4a0a0e; --panel-2: #5e0d12;
+    --border: #8a1a22; --text: #ffe8ea; --muted: #d8a0a6;
+    --accent: #ff2d2d; --a: #ff5252; --b: #ffd24a; --x: #4a8ed8; --y: #5fb86b;
+  }
+  html[data-skin="naranja"] {
+    --bg: #0b0b0f; --panel: #15151c; --panel-2: #1c1c26;
+    --border: #2a2a36; --text: #e6e6ec; --muted: #a0a0aa;
+    --accent: #f3a951; --a: #c44b4b; --b: #f3c544; --x: #4a8ed8; --y: #5fb86b;
+  }
+  html[data-skin="azul"] {
+    --bg: #070a10; --panel: #11151f; --panel-2: #161c2a;
+    --border: #232c40; --text: #e6ecf4; --muted: #92a0b8;
+    --accent: #4a8ed8; --a: #c44b4b; --b: #f3c544; --x: #6ec1ff; --y: #5fb86b;
+  }
+  html[data-skin="verde"] {
+    --bg: #060c08; --panel: #101813; --panel-2: #16221c;
+    --border: #1f3328; --text: #e6f1ea; --muted: #92ad9d;
+    --accent: #5fb86b; --a: #c44b4b; --b: #f3c544; --x: #4a8ed8; --y: #7fd58b;
+  }
+  html[data-skin="morado"] {
+    --bg: #0b070f; --panel: #160f1c; --panel-2: #1d1426;
+    --border: #2f1e3c; --text: #ece6f4; --muted: #a698b8;
+    --accent: #a45fd8; --a: #c44b4b; --b: #f3c544; --x: #4a8ed8; --y: #5fb86b;
+  }
+  html[data-skin="mono"] {
+    --bg: #0a0a0a; --panel: #141414; --panel-2: #1c1c1c;
+    --border: #2a2a2a; --text: #ededed; --muted: #9a9a9a;
+    --accent: #ededed; --a: #c44b4b; --b: #f3c544; --x: #4a8ed8; --y: #5fb86b;
+  }
+
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body {
     margin: 0; padding: 0;
@@ -50,6 +82,7 @@
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 12px;
+    position: relative;
   }
   .topbar .logo { color: var(--accent); font-size: 16px; }
   .topbar .name { font-size: 13px; letter-spacing: 0.04em; color: var(--text); }
@@ -59,10 +92,48 @@
     text-transform: uppercase; letter-spacing: 0.08em;
   }
 
+  /* Selector piel */
+  .skin-wrap { position: relative; display: inline-flex; align-items: center; }
+  .skin-btn {
+    appearance: none; border: 1px solid var(--border);
+    background: var(--panel-2); color: var(--text);
+    width: 28px; height: 28px; border-radius: 50%;
+    cursor: pointer; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    box-shadow: inset 0 0 0 2px var(--accent);
+    transition: transform 80ms ease;
+  }
+  .skin-btn:active { transform: scale(0.9); }
+  .skin-btn::after {
+    content: ""; width: 12px; height: 12px; border-radius: 50%;
+    background: var(--accent);
+  }
+  .skin-menu {
+    position: absolute; top: 36px; right: 0;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 8px;
+    display: none; gap: 8px; z-index: 50;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+  }
+  .skin-menu.open { display: flex; }
+  .skin-dot {
+    width: 24px; height: 24px; border-radius: 50%;
+    border: 2px solid transparent; cursor: pointer; padding: 0;
+    transition: transform 80ms ease, border-color 80ms ease;
+  }
+  .skin-dot:active { transform: scale(0.9); }
+  .skin-dot.active { border-color: var(--text); }
+  .skin-dot[data-skin="rojo"]    { background: #e23b3b; }
+  .skin-dot[data-skin="naranja"] { background: #f3a951; }
+  .skin-dot[data-skin="azul"]    { background: #4a8ed8; }
+  .skin-dot[data-skin="verde"]   { background: #5fb86b; }
+  .skin-dot[data-skin="morado"]  { background: #a45fd8; }
+  .skin-dot[data-skin="mono"]    { background: #ededed; }
+
   .gamepad {
     width: 100%;
     max-width: 720px;
-    background: linear-gradient(160deg, #1d1d28, #14141c);
+    background: linear-gradient(160deg, var(--panel-2), var(--panel));
     border: 1px solid var(--border);
     border-radius: 32px;
     padding: 28px 24px;
@@ -78,8 +149,8 @@
     padding: 4px 0;
   }
   .small-btn {
-    background: #2a2a36;
-    border: 0;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
     color: var(--text);
     padding: 8px 18px;
     border-radius: 999px;
@@ -93,6 +164,8 @@
   .small-btn:active, .small-btn.press {
     transform: translateY(2px);
     box-shadow: 0 1px 0 #0a0a10, inset 0 1px 2px rgba(0,0,0,0.5);
+    color: var(--accent);
+    border-color: var(--accent);
   }
 
   .pads {
@@ -103,13 +176,12 @@
     flex-wrap: nowrap;
   }
 
-  /* Disco circular base (lado A y lado B) */
   .disc {
     position: relative;
     width: clamp(180px, 42vw, 280px);
     aspect-ratio: 1 / 1;
     border-radius: 50%;
-    background: radial-gradient(circle at 30% 30%, #232330, #0e0e14 75%);
+    background: radial-gradient(circle at 30% 30%, var(--panel-2), var(--bg) 75%);
     box-shadow:
       inset 0 4px 12px rgba(0,0,0,0.6),
       inset 0 -2px 6px rgba(255,255,255,0.04),
@@ -117,7 +189,6 @@
     flex: 0 0 auto;
   }
 
-  /* D-pad (cruz) en disco izquierdo */
   .dpad {
     position: absolute;
     inset: 0;
@@ -127,8 +198,8 @@
     padding: 22%;
   }
   .dpad button {
-    background: #1a1a22;
-    border: 1px solid #2c2c38;
+    background: var(--panel);
+    border: 1px solid var(--border);
     color: var(--text);
     font-size: 16px;
     font-weight: 600;
@@ -138,16 +209,16 @@
   }
   .dpad button:active, .dpad button.press {
     transform: scale(0.92);
-    background: #2a2a36;
+    background: var(--panel-2);
     color: var(--accent);
+    border-color: var(--accent);
   }
   .dpad .up    { grid-column: 2; grid-row: 1; border-radius: 8px 8px 0 0; }
   .dpad .left  { grid-column: 1; grid-row: 2; border-radius: 8px 0 0 8px; }
-  .dpad .mid   { grid-column: 2; grid-row: 2; background: #14141c; border-color: #20202a; cursor: default; }
+  .dpad .mid   { grid-column: 2; grid-row: 2; background: var(--bg); border-color: var(--border); cursor: default; }
   .dpad .right { grid-column: 3; grid-row: 2; border-radius: 0 8px 8px 0; }
   .dpad .down  { grid-column: 2; grid-row: 3; border-radius: 0 0 8px 8px; }
 
-  /* Botones ABXY en rombo dentro de disco derecho */
   .abxy {
     position: absolute;
     inset: 0;
@@ -201,8 +272,8 @@
     color: var(--muted);
     margin-top: -4px;
   }
-  .status.ok { color: var(--y); }
-  .status.err { color: var(--a); }
+  .status.ok { color: var(--accent); }
+  .status.err { color: #ff5252; }
 
   @media (max-width: 480px) {
     body { gap: 10px; padding: 8px; }
@@ -213,10 +284,9 @@
     .topbar { padding: 8px 12px; border-radius: 10px; }
   }
 
-  /* Solo en celular (puntero coarse) bloqueamos vertical */
   .rotate-lock {
     position: fixed; inset: 0;
-    background: #0b0b0f;
+    background: var(--bg);
     display: none;
     align-items: center; justify-content: center;
     flex-direction: column; gap: 18px;
@@ -259,6 +329,17 @@
     <span class="logo">✦</span>
     <span class="name">Kütral · Mando</span>
     <span class="badge" id="badge">conectado</span>
+    <div class="skin-wrap">
+      <button class="skin-btn" id="skinBtn" aria-label="Cambiar piel" aria-haspopup="true" aria-expanded="false"></button>
+      <div class="skin-menu" id="skinMenu" role="menu">
+        <button class="skin-dot" data-skin="rojo"    aria-label="Rojo"></button>
+        <button class="skin-dot" data-skin="naranja" aria-label="Naranja"></button>
+        <button class="skin-dot" data-skin="azul"    aria-label="Azul"></button>
+        <button class="skin-dot" data-skin="verde"   aria-label="Verde"></button>
+        <button class="skin-dot" data-skin="morado"  aria-label="Morado"></button>
+        <button class="skin-dot" data-skin="mono"    aria-label="Mono"></button>
+      </div>
+    </div>
   </div>
 
   <div class="status" id="status">Tocá un botón.</div>
@@ -302,9 +383,53 @@
   </div>
 
 <script>
+  const SKINS = ["rojo", "naranja", "azul", "verde", "morado", "mono"];
+  const SKIN_KEY = "kutral.remote.skin";
+
+  function applySkin(skin) {
+    if (!SKINS.includes(skin)) skin = "rojo";
+    document.documentElement.setAttribute("data-skin", skin);
+    document.querySelectorAll(".skin-dot").forEach((d) => {
+      d.classList.toggle("active", d.dataset.skin === skin);
+    });
+    try { localStorage.setItem(SKIN_KEY, skin); } catch {}
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) {
+      const bg = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
+      if (bg) meta.setAttribute("content", bg);
+    }
+  }
+
+  (function initSkin() {
+    let saved = "rojo";
+    try { saved = localStorage.getItem(SKIN_KEY) || "rojo"; } catch {}
+    applySkin(saved);
+  })();
+
+  const skinBtn = document.getElementById("skinBtn");
+  const skinMenu = document.getElementById("skinMenu");
+  skinBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const open = skinMenu.classList.toggle("open");
+    skinBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+  document.querySelectorAll(".skin-dot").forEach((dot) => {
+    dot.addEventListener("click", (e) => {
+      e.stopPropagation();
+      applySkin(dot.dataset.skin);
+      skinMenu.classList.remove("open");
+      skinBtn.setAttribute("aria-expanded", "false");
+    });
+  });
+  document.addEventListener("click", () => {
+    if (skinMenu.classList.contains("open")) {
+      skinMenu.classList.remove("open");
+      skinBtn.setAttribute("aria-expanded", "false");
+    }
+  });
+
   const status = document.getElementById("status");
   const badge = document.getElementById("badge");
-  let lastErr = 0;
   let lockTried = false;
 
   async function tryLockLandscape() {
@@ -340,11 +465,10 @@
       badge.textContent = "conectado";
       badge.style.color = "";
     } catch (e) {
-      lastErr = Date.now();
       status.textContent = "Error: " + e.message;
       status.className = "status err";
       badge.textContent = "sin respuesta";
-      badge.style.color = "var(--a)";
+      badge.style.color = "#ff5252";
     }
   }
 
@@ -362,7 +486,6 @@
     });
   });
 
-  // Mapeo teclado físico (útil si abren la web en laptop)
   window.addEventListener("keydown", (e) => {
     const map = {
       "ArrowUp": "ArrowUp", "ArrowDown": "ArrowDown",
