@@ -93,9 +93,10 @@ const ROMS_HTML: &str = r#"<!doctype html>
 </style></head>
 <body>
   <h1><b>Juegos</b> · subir ROMs</h1>
-  <p class="sub">Elige el sistema y suelta los archivos. Quedan listos en Kütral.</p>
+  <p class="sub">Selecciona todos los que quieras. El sistema se detecta por la
+    extensión; los .zip y desconocidos van al sistema de respaldo.</p>
 
-  <label for="sys">Sistema</label>
+  <label for="sys">Sistema de respaldo (para .zip y desconocidos)</label>
   <select id="sys">
     <option value="nes">NES</option>
     <option value="snes">SNES</option>
@@ -104,7 +105,7 @@ const ROMS_HTML: &str = r#"<!doctype html>
     <option value="ds">Nintendo DS</option>
   </select>
 
-  <label for="files">ROMs</label>
+  <label for="files">ROMs (puedes seleccionar varios)</label>
   <input id="files" type="file" multiple>
 
   <button id="go">Subir</button>
@@ -115,6 +116,20 @@ const ROMS_HTML: &str = r#"<!doctype html>
 
 <script>
 const $ = (s) => document.querySelector(s);
+
+// Autodetección de sistema por extensión. .zip/desconocido → respaldo.
+const EXT2SYS = {
+  nes:'nes',
+  sfc:'snes', smc:'snes', fig:'snes', swc:'snes', bs:'snes',
+  gba:'gba',
+  gbc:'gbc', gb:'gbc',
+  nds:'ds',
+};
+function sysFor(filename, fallback) {
+  const ext = filename.split('.').pop().toLowerCase();
+  return EXT2SYS[ext] || fallback;
+}
+
 async function refresh() {
   try {
     const r = await fetch('/roms/list');
@@ -124,28 +139,34 @@ async function refresh() {
       || '<li style="color:#666">— vacío —</li>';
   } catch {}
 }
+
 $('#go').onclick = async () => {
-  const sys = $('#sys').value;
+  const fallback = $('#sys').value;
   const files = $('#files').files;
   if (!files.length) return;
   $('#go').disabled = true;
   $('#log').innerHTML = '';
+  let ok = 0, fail = 0;
   for (const f of files) {
+    const sys = sysFor(f.name, fallback);
     const row = document.createElement('div');
     row.className = 'row';
-    row.innerHTML = `<span>${f.name}</span><span class="wait">subiendo…</span>`;
+    row.innerHTML = `<span>${f.name}</span><span class="wait">${sys} · subiendo…</span>`;
     $('#log').appendChild(row);
     try {
       const res = await fetch(`/roms/${sys}/${encodeURIComponent(f.name)}`,
         { method:'PUT', body: f });
       row.lastChild.className = res.ok ? 'ok' : 'err';
-      row.lastChild.textContent = res.ok ? 'listo ✓' : 'error';
+      row.lastChild.textContent = res.ok ? `${sys} ✓` : 'error';
+      res.ok ? ok++ : fail++;
     } catch {
       row.lastChild.className = 'err';
       row.lastChild.textContent = 'falló';
+      fail++;
     }
   }
   $('#go').disabled = false;
+  $('#go').textContent = `Subir (${ok} listos${fail?`, ${fail} fallaron`:''})`;
   refresh();
 };
 refresh();

@@ -8,7 +8,49 @@
   import Updater from "$lib/Updater.svelte";
   import { config, loadConfig, initDetection } from "$lib/config.svelte";
   import { setConcurrenciaScreening } from "$lib/screening.svelte";
+  import { ACCIONES, loadGamepadMap, type GamepadMap } from "$lib/controls";
   let { children } = $props();
+
+  // --- Mando físico global: dispatcha las mismas teclas que el web/teclado ---
+  let padMap: GamepadMap = loadGamepadMap();
+  let btnToKey: Record<number, string> = {};
+  function recomputeBtnToKey() {
+    btnToKey = {};
+    for (const a of ACCIONES) {
+      const b = padMap[a.id];
+      if (b !== undefined && b >= 0) btnToKey[b] = a.key;
+    }
+  }
+  recomputeBtnToKey();
+  let padRaf = 0;
+  let padPrev: boolean[] = [];
+  let padCooldown = 0;
+  function onGamepadMapChanged() {
+    padMap = loadGamepadMap();
+    recomputeBtnToKey();
+  }
+  function gamepadBridge() {
+    const pads = navigator.getGamepads?.() ?? [];
+    const gp = pads.find((p) => p) ?? null;
+    // No interferir mientras se escribe en un campo.
+    if (gp && document.activeElement?.tagName !== "INPUT") {
+      const b = gp.buttons.map((x) => x.pressed);
+      for (let i = 0; i < b.length; i++) {
+        if (b[i] && !padPrev[i] && btnToKey[i]) dispatchRemoteKey(btnToKey[i]);
+      }
+      padPrev = b;
+      // Stick izquierdo = flechas (con cooldown anti-repetición).
+      const ax = gp.axes[0] ?? 0;
+      const ay = gp.axes[1] ?? 0;
+      if (padCooldown > 0) padCooldown--;
+      else if (Math.abs(ax) > 0.7 || Math.abs(ay) > 0.7) {
+        if (Math.abs(ax) > Math.abs(ay)) dispatchRemoteKey(ax > 0 ? "ArrowRight" : "ArrowLeft");
+        else dispatchRemoteKey(ay > 0 ? "ArrowDown" : "ArrowUp");
+        padCooldown = 12;
+      }
+    }
+    padRaf = requestAnimationFrame(gamepadBridge);
+  }
 
   let unlistenRemoteKey: UnlistenFn | null = null;
 
@@ -58,6 +100,9 @@
     void listen<string>("remote_key", (e) => {
       dispatchRemoteKey(e.payload);
     }).then((un) => { unlistenRemoteKey = un; });
+    // Mando físico global + recarga de mapeo al cambiarlo en /config.
+    window.addEventListener("gamepad-map-changed", onGamepadMapChanged);
+    padRaf = requestAnimationFrame(gamepadBridge);
     // Apagar el splash de app.html. Mantenemos un piso mínimo de tiempo
     // (1800 ms) para que se aprecie el banner aunque Svelte monte rápido.
     // .ready dispara el fadeout CSS (700 ms); después removemos el nodo.
@@ -82,6 +127,8 @@
   onDestroy(() => {
     unlistenRemoteKey?.();
     unlistenRemoteKey = null;
+    cancelAnimationFrame(padRaf);
+    window.removeEventListener("gamepad-map-changed", onGamepadMapChanged);
   });
 
   let lastApplied: boolean | null = null;

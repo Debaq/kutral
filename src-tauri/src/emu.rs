@@ -223,6 +223,116 @@ pub async fn emu_catalog(
     Ok(names)
 }
 
+/// Nombre del set en libretro-database (con espacios).
+fn dat_name(system: &str) -> Result<&'static str, String> {
+    match system {
+        "nes" => Ok("Nintendo - Nintendo Entertainment System"),
+        "snes" => Ok("Nintendo - Super Nintendo Entertainment System"),
+        "gba" => Ok("Nintendo - Game Boy Advance"),
+        "gbc" => Ok("Nintendo - Game Boy Color"),
+        "ds" => Ok("Nintendo - Nintendo DS"),
+        other => Err(format!("sistema desconocido: {other}")),
+    }
+}
+
+/// Extrae el valor de `key "valor"` dentro de un bloque del .dat.
+fn dat_field(block: &str, key: &str) -> Option<String> {
+    let pat = format!("{key} \"");
+    let i = block.find(&pat)? + pat.len();
+    let rest = &block[i..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
+/// Baja un .dat de libretro-database y lo parsea a (comment → valor del campo).
+async fn fetch_dat(
+    name: &str,
+    category: &str,
+    field: &str,
+) -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    let url = format!(
+        "https://raw.githubusercontent.com/libretro/libretro-database/master/metadat/{}/{}.dat",
+        category,
+        urlencoding::encode(name)
+    );
+    let client = match http() {
+        Ok(c) => c,
+        Err(_) => return map,
+    };
+    let body = match client.get(&url).send().await {
+        Ok(r) if r.status().is_success() => r.text().await.unwrap_or_default(),
+        _ => return map,
+    };
+    for block in body.split("game (").skip(1) {
+        if let (Some(name), Some(val)) = (dat_field(block, "comment"), dat_field(block, field)) {
+            map.insert(name, val);
+        }
+    }
+    map
+}
+
+/// Metadata para los pasillos tipo Blockbuster: género, año y franquicia
+/// (señal de "conocido") por juego. Cachea a disco; sin red tras la 1ª vez.
+#[tauri::command]
+pub async fn emu_metadata(
+    app: tauri::AppHandle,
+    system: String,
+) -> Result<serde_json::Value, String> {
+    let name = dat_name(&system)?;
+
+    let cache_dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("cache dir: {e}"))?
+        .join("emu");
+    let _ = std::fs::create_dir_all(&cache_dir);
+    let cache_file = cache_dir.join(format!("meta-{system}.json"));
+
+    if let Ok(txt) = std::fs::read_to_string(&cache_file) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt) {
+            if v.as_object().map(|o| !o.is_empty()).unwrap_or(false) {
+                return Ok(v);
+            }
+        }
+    }
+
+    let genres = fetch_dat(name, "genre", "genre").await;
+    let years = fetch_dat(name, "releaseyear", "releaseyear").await;
+    let franchises = fetch_dat(name, "franchise", "franchise").await;
+    let esrb = fetch_dat(name, "esrb", "esrb_rating").await;
+
+    // Une todas las claves de comment vistas.
+    let mut keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for m in [&genres, &years, &franchises, &esrb] {
+        keys.extend(m.keys().cloned());
+    }
+
+    let mut obj = serde_json::Map::new();
+    for k in keys {
+        let mut e = serde_json::Map::new();
+        if let Some(g) = genres.get(&k) {
+            e.insert("genre".into(), serde_json::Value::String(g.clone()));
+        }
+        if let Some(y) = years.get(&k) {
+            e.insert("year".into(), serde_json::Value::String(y.clone()));
+        }
+        if franchises.contains_key(&k) {
+            e.insert("franchise".into(), serde_json::Value::Bool(true));
+        }
+        if let Some(r) = esrb.get(&k) {
+            e.insert("esrb".into(), serde_json::Value::String(r.clone()));
+        }
+        obj.insert(k, serde_json::Value::Object(e));
+    }
+    let value = serde_json::Value::Object(obj);
+
+    if value.as_object().map(|o| !o.is_empty()).unwrap_or(false) {
+        let _ = std::fs::write(&cache_file, value.to_string());
+    }
+    Ok(value)
+}
+
 /// Qué juegos del sistema ya tengo (nombres sin extensión, de la carpeta de ROMs).
 #[tauri::command]
 pub fn emu_owned(app: tauri::AppHandle, system: String) -> Result<Vec<String>, String> {
@@ -274,8 +384,17 @@ pub async fn emu_download(
         .await
         .map_err(|e| format!("descarga red: {e}"))?;
     if !resp.status().is_success() {
-        // TODO: aquí cae el respaldo RealDebrid (resolver magnet del ROM).
-        return Err(format!("mirror {} — no está en Myrient", resp.status()));
+        return Err(format!("mirror {} — no disponible", resp.status()));
+    }
+    // Mirror caído / catch-all: si responde HTML, NO es el ROM.
+    let ctype = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    if ctype.contains("text/html") {
+        return Err("la descarga automática no está disponible (mirror caído) — sube el ROM tú vía el panel web".into());
     }
 
     let total = resp.content_length().unwrap_or(0);
@@ -307,23 +426,106 @@ pub async fn emu_download(
         }
     }
     drop(file);
+    // Verificar que lo bajado sea un zip real, no una página de error.
+    if let Err(e) = validate_rom(&tmp) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
     std::fs::rename(&tmp, &dest).map_err(|e| format!("rename: {e}"))?;
 
     let _ = app.emit("emu_download_done", serde_json::json!({ "system": system, "name": name }));
     Ok(dest.to_string_lossy().into_owned())
 }
 
-/// Resuelve la ruta de la ROM. Si es relativa, la cuelga de <app_data>/roms/<sys>/.
+/// Clave de emparejamiento: quita grupos (...) y [...], minúsculas y solo
+/// alfanumérico. "Mega Man X (USA) (Rev 1)" → "megamanx". Salva diferencias de
+/// puntuación/caso entre el archivo y el catálogo libretro (& vs _, etc.).
+fn base_title(name: &str) -> String {
+    let mut out = String::new();
+    let mut depth = 0i32;
+    for c in name.chars() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' => {
+                if depth > 0 {
+                    depth -= 1;
+                }
+            }
+            _ if depth == 0 => out.push(c),
+            _ => {}
+        }
+    }
+    out.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+/// Busca el ROM en <app_data>/roms/<sys>/ por nombre, con CUALQUIER extensión
+/// (.zip o rom crudo .nes/.sfc/.gba/.gbc/.nds). Empareja por título base, así
+/// "Mega Man X.zip" calza con el catálogo "Mega Man X (USA)".
 fn resolve_rom(app: &tauri::AppHandle, system: &str, rom: &str) -> Result<PathBuf, String> {
     let p = PathBuf::from(rom);
     if p.is_absolute() {
         return Ok(p);
     }
-    let base = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("app_data_dir: {e}"))?;
-    Ok(base.join("roms").join(system).join(rom))
+    let dir = roms_system_dir(app, system)?;
+    let want = PathBuf::from(rom)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| rom.to_string());
+
+    // 1) Exacto tal cual (rápido).
+    let exact = dir.join(rom);
+    if exact.is_file() {
+        return Ok(exact);
+    }
+    // 2) Por stem exacto, luego por título base.
+    let want_base = base_title(&want);
+    let mut por_base: Option<PathBuf> = None;
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for e in entries.flatten() {
+            let path = e.path();
+            if !path.is_file() {
+                continue;
+            }
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            if stem == want {
+                return Ok(path);
+            }
+            if por_base.is_none() && base_title(stem) == want_base {
+                por_base = Some(path);
+            }
+        }
+    }
+    por_base.ok_or_else(|| format!("\"{want}\" no está en tu biblioteca — súbela primero"))
+}
+
+/// Valida que el archivo sea un ROM de verdad y no basura (HTML, página de
+/// error, etc.). Los .zip deben empezar con "PK"; los demás se aceptan por
+/// extensión conocida.
+fn validate_rom(path: &std::path::Path) -> Result<(), String> {
+    use std::io::Read;
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    let mut f = std::fs::File::open(path).map_err(|e| format!("abrir rom: {e}"))?;
+    let mut magic = [0u8; 4];
+    let n = f.read(&mut magic).unwrap_or(0);
+    if n < 2 {
+        return Err("ROM vacío o corrupto".into());
+    }
+    // HTML disfrazado (mirror caído guardó una página).
+    if magic.starts_with(b"<!DO") || magic.starts_with(b"<htm") || magic.starts_with(b"<HTM") {
+        return Err("el archivo no es un ROM (parece HTML) — vuelve a subirlo".into());
+    }
+    if ext == "zip" && &magic[..2] != b"PK" {
+        return Err("zip inválido — vuelve a subir el ROM".into());
+    }
+    Ok(())
 }
 
 /// Escribe un config temporal que habilita el network command interface.
@@ -354,9 +556,7 @@ pub fn emu_play(
     let bin = retroarch_bin(&app);
     let core = core_path(&app, &system)?;
     let rom_path = resolve_rom(&app, &system, &rom)?;
-    if !rom_path.exists() {
-        return Err(format!("ROM no existe: {}", rom_path.display()));
-    }
+    validate_rom(&rom_path)?;
     let cfg = write_netcmd_config()?;
 
     // Cerrar emulador anterior si quedó vivo.

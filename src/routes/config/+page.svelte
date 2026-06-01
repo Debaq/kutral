@@ -20,6 +20,64 @@
   import { setConcurrenciaScreening } from "$lib/screening.svelte";
   import { notify } from "$lib/notifStore.svelte";
   import { ayuda } from "$lib/atajos/store.svelte";
+  import {
+    ACCIONES,
+    loadGamepadMap,
+    saveGamepadMap,
+    defaultGamepadMap,
+    nombreBoton,
+    type GamepadMap,
+  } from "$lib/controls";
+
+  // --- Controles: mapeo del mando físico (los 3 métodos comparten teclas) ---
+  let gpMap = $state<GamepadMap>(loadGamepadMap());
+  let bindId = $state<string | null>(null); // acción esperando botón
+  let bindRaf = 0;
+  let bindPrev: boolean[] = [];
+
+  function keyLabel(key: string): string {
+    const m: Record<string, string> = {
+      ArrowUp: "↑", ArrowDown: "↓", ArrowLeft: "←", ArrowRight: "→",
+      Enter: "Enter", Backspace: "⌫", Escape: "Esc", " ": "Espacio",
+      i: "I", m: "M", "[": "[", "]": "]",
+    };
+    return m[key] ?? key;
+  }
+
+  function aplicarGpMap() {
+    saveGamepadMap(gpMap);
+    window.dispatchEvent(new Event("gamepad-map-changed"));
+  }
+  function restaurarControles() {
+    gpMap = defaultGamepadMap();
+    aplicarGpMap();
+  }
+  function cancelarBind() {
+    bindId = null;
+    cancelAnimationFrame(bindRaf);
+  }
+  function empezarBind(id: string) {
+    bindId = id;
+    bindPrev = [];
+    cancelAnimationFrame(bindRaf);
+    const loop = () => {
+      const gp = (navigator.getGamepads?.() ?? []).find((p) => p) ?? null;
+      if (gp) {
+        const b = gp.buttons.map((x) => x.pressed);
+        for (let i = 0; i < b.length; i++) {
+          if (b[i] && !bindPrev[i]) {
+            gpMap = { ...gpMap, [id]: i };
+            aplicarGpMap();
+            bindId = null;
+            return;
+          }
+        }
+        bindPrev = b;
+      }
+      bindRaf = requestAnimationFrame(loop);
+    };
+    bindRaf = requestAnimationFrame(loop);
+  }
 
   type RdDeviceStart = {
     device_code: string;
@@ -101,6 +159,7 @@
 
   onDestroy(() => {
     cancelRd();
+    cancelAnimationFrame(bindRaf);
   });
 
   const dirty = $derived(
@@ -673,6 +732,40 @@
         </section>
 
         <section class="block">
+          <h2>Controles</h2>
+          <p class="hint">
+            Los tres mandos comparten las mismas teclas: <strong>teclado</strong>,
+            <strong>mando web</strong> (celular) y <strong>mando físico</strong>.
+            El teclado y el web son fijos; el mando físico lo remapeas aquí.
+          </p>
+          <div class="ctrl-tabla">
+            <div class="ctrl-head">
+              <span>Acción</span><span>Teclado</span><span>Web</span><span>Mando físico</span>
+            </div>
+            {#each ACCIONES as a}
+              <div class="ctrl-fila">
+                <span class="ctrl-acc">
+                  {a.label}
+                  {#if a.hint}<em>{a.hint}</em>{/if}
+                </span>
+                <span><kbd>{keyLabel(a.key)}</kbd></span>
+                <span class="ctrl-web">{a.web ? "✓" : "—"}</span>
+                <span>
+                  {#if bindId === a.id}
+                    <button class="ctrl-btn binding" onclick={cancelarBind}>Pulsa un botón…</button>
+                  {:else}
+                    <button class="ctrl-btn" onclick={() => empezarBind(a.id)}>
+                      {gpMap[a.id] !== undefined ? nombreBoton(gpMap[a.id]) : "— asignar —"}
+                    </button>
+                  {/if}
+                </span>
+              </div>
+            {/each}
+          </div>
+          <button class="ctrl-reset" onclick={restaurarControles}>Restaurar por defecto</button>
+        </section>
+
+        <section class="block">
           <h2>Juegos — Regiones aceptadas</h2>
           <p class="hint">
             Qué versiones de cada juego se muestran en el catálogo, según la
@@ -1102,5 +1195,75 @@
     white-space: pre-wrap;
     word-break: break-all;
     font-family: ui-monospace, monospace;
+  }
+
+  /* --- Controles --- */
+  .ctrl-tabla {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 8px;
+  }
+  .ctrl-head,
+  .ctrl-fila {
+    display: grid;
+    grid-template-columns: 1fr 90px 60px 150px;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+  }
+  .ctrl-head {
+    font-size: 12px;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .ctrl-fila {
+    background: #15151c;
+    border-radius: 8px;
+  }
+  .ctrl-acc {
+    display: flex;
+    flex-direction: column;
+  }
+  .ctrl-acc em {
+    font-style: normal;
+    color: #777;
+    font-size: 12px;
+  }
+  .ctrl-web {
+    color: #4ade80;
+    font-weight: 700;
+  }
+  .ctrl-btn {
+    background: #1a1a22;
+    border: 1px solid #2a2a36;
+    color: #eee;
+    padding: 7px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    width: 100%;
+  }
+  .ctrl-btn.binding {
+    border-color: #f5c518;
+    color: #f5c518;
+    animation: pulso 1s infinite;
+  }
+  @keyframes pulso {
+    50% {
+      opacity: 0.5;
+    }
+  }
+  .ctrl-reset {
+    margin-top: 12px;
+    background: transparent;
+    border: 1px solid #2a2a36;
+    color: #aaa;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
   }
 </style>
