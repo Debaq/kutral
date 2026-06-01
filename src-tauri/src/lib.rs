@@ -2499,6 +2499,7 @@ pub fn run() {
             emu::emu_running,
             emu::emu_catalog,
             emu::emu_metadata,
+            emu::emu_synopsis,
             emu::emu_owned,
             emu::emu_download,
             wyzie_search

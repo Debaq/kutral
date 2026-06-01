@@ -22,6 +22,7 @@ use std::path::PathBuf;
 use std::process::Child;
 use std::sync::Mutex;
 
+use sha2::{Digest, Sha256};
 use tauri::{Emitter, Manager};
 
 /// Estado del emulador: el proceso RetroArch vivo (si hay).
@@ -287,7 +288,8 @@ pub async fn emu_metadata(
         .map_err(|e| format!("cache dir: {e}"))?
         .join("emu");
     let _ = std::fs::create_dir_all(&cache_dir);
-    let cache_file = cache_dir.join(format!("meta-{system}.json"));
+    // meta2: esquema ampliado (dev/editor/jugadores/mes/nota Edge).
+    let cache_file = cache_dir.join(format!("meta2-{system}.json"));
 
     if let Ok(txt) = std::fs::read_to_string(&cache_file) {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt) {
@@ -301,27 +303,36 @@ pub async fn emu_metadata(
     let years = fetch_dat(name, "releaseyear", "releaseyear").await;
     let franchises = fetch_dat(name, "franchise", "franchise").await;
     let esrb = fetch_dat(name, "esrb", "esrb_rating").await;
+    let devs = fetch_dat(name, "developer", "developer").await;
+    let pubs = fetch_dat(name, "publisher", "publisher").await;
+    let users = fetch_dat(name, "maxusers", "users").await;
+    let months = fetch_dat(name, "releasemonth", "releasemonth").await;
+    let edge = fetch_dat(name, "magazine/edge", "edge_rating").await;
 
     // Une todas las claves de comment vistas.
     let mut keys: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for m in [&genres, &years, &franchises, &esrb] {
+    for m in [&genres, &years, &franchises, &esrb, &devs, &pubs, &users, &months, &edge] {
         keys.extend(m.keys().cloned());
     }
 
     let mut obj = serde_json::Map::new();
     for k in keys {
         let mut e = serde_json::Map::new();
-        if let Some(g) = genres.get(&k) {
-            e.insert("genre".into(), serde_json::Value::String(g.clone()));
-        }
-        if let Some(y) = years.get(&k) {
-            e.insert("year".into(), serde_json::Value::String(y.clone()));
-        }
+        let mut put = |field: &str, src: &std::collections::HashMap<String, String>| {
+            if let Some(v) = src.get(&k) {
+                e.insert(field.into(), serde_json::Value::String(v.clone()));
+            }
+        };
+        put("genre", &genres);
+        put("year", &years);
+        put("esrb", &esrb);
+        put("developer", &devs);
+        put("publisher", &pubs);
+        put("players", &users);
+        put("month", &months);
+        put("edge", &edge);
         if franchises.contains_key(&k) {
             e.insert("franchise".into(), serde_json::Value::Bool(true));
-        }
-        if let Some(r) = esrb.get(&k) {
-            e.insert("esrb".into(), serde_json::Value::String(r.clone()));
         }
         obj.insert(k, serde_json::Value::Object(e));
     }
@@ -330,6 +341,123 @@ pub async fn emu_metadata(
     if value.as_object().map(|o| !o.is_empty()).unwrap_or(false) {
         let _ = std::fs::write(&cache_file, value.to_string());
     }
+    Ok(value)
+}
+
+/// Título limpio para buscar en Wikipedia: sin (tags) ni [tags], conserva
+/// mayúsculas y espacios. "Chrono Trigger (USA)" → "Chrono Trigger".
+fn clean_title(name: &str) -> String {
+    let mut out = String::new();
+    let mut depth = 0i32;
+    for c in name.chars() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' => {
+                if depth > 0 {
+                    depth -= 1;
+                }
+            }
+            _ if depth == 0 => out.push(c),
+            _ => {}
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Resumen de Wikipedia por título directo (REST summary). None si no existe o
+/// es una página de desambiguación.
+async fn wiki_summary(lang: &str, title: &str) -> Option<(String, String)> {
+    let url = format!(
+        "https://{lang}.wikipedia.org/api/rest_v1/page/summary/{}",
+        urlencoding::encode(title)
+    );
+    let resp = http().ok()?.get(&url).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let j: serde_json::Value = resp.json().await.ok()?;
+    if j.get("type").and_then(|t| t.as_str()) == Some("disambiguation") {
+        return None;
+    }
+    let extract = j.get("extract").and_then(|e| e.as_str()).unwrap_or("");
+    if extract.trim().is_empty() {
+        return None;
+    }
+    let page = j
+        .get("content_urls")
+        .and_then(|c| c.get("desktop"))
+        .and_then(|d| d.get("page"))
+        .and_then(|p| p.as_str())
+        .unwrap_or("")
+        .to_string();
+    Some((extract.to_string(), page))
+}
+
+/// Busca en Wikipedia y devuelve el título del primer resultado.
+async fn wiki_search(lang: &str, query: &str) -> Option<String> {
+    let url = format!(
+        "https://{lang}.wikipedia.org/w/api.php?action=query&list=search&format=json&srlimit=1&srsearch={}",
+        urlencoding::encode(query)
+    );
+    let j: serde_json::Value = http().ok()?.get(&url).send().await.ok()?.json().await.ok()?;
+    j.get("query")?
+        .get("search")?
+        .get(0)?
+        .get("title")?
+        .as_str()
+        .map(|s| s.to_string())
+}
+
+/// Sinopsis del juego desde Wikipedia (ES → EN; directo → búsqueda). On-demand
+/// al abrir la ficha; cachea aciertos y fallos a disco. Devuelve {extract,url}
+/// o {} si no se encontró.
+#[tauri::command]
+pub async fn emu_synopsis(
+    app: tauri::AppHandle,
+    name: String,
+) -> Result<serde_json::Value, String> {
+    let title = clean_title(&name);
+    if title.is_empty() {
+        return Ok(serde_json::json!({}));
+    }
+
+    // Caché: un archivo por título (hash) en app_cache/emu/synopsis/.
+    let dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("cache dir: {e}"))?
+        .join("emu")
+        .join("synopsis");
+    let _ = std::fs::create_dir_all(&dir);
+    let mut h = Sha256::new();
+    h.update(title.as_bytes());
+    let file = dir.join(format!("{}.json", &hex::encode(h.finalize())[..16]));
+    if let Ok(txt) = std::fs::read_to_string(&file) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt) {
+            return Ok(v);
+        }
+    }
+
+    let mut found: Option<(String, String, String)> = None; // extract, url, lang
+    'outer: for lang in ["es", "en"] {
+        if let Some((ex, url)) = wiki_summary(lang, &title).await {
+            found = Some((ex, url, lang.to_string()));
+            break 'outer;
+        }
+        let q = format!("{title} videojuego");
+        if let Some(t) = wiki_search(lang, &q).await {
+            if let Some((ex, url)) = wiki_summary(lang, &t).await {
+                found = Some((ex, url, lang.to_string()));
+                break 'outer;
+            }
+        }
+    }
+
+    let value = match found {
+        Some((ex, url, lang)) => serde_json::json!({ "extract": ex, "url": url, "lang": lang }),
+        None => serde_json::json!({}),
+    };
+    let _ = std::fs::write(&file, value.to_string());
     Ok(value)
 }
 

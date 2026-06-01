@@ -13,6 +13,9 @@
   import { invoke, convertFileSrc } from "@tauri-apps/api/core";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { config, nameInRegions } from "$lib/config.svelte";
+  import { openUrl } from "@tauri-apps/plugin-opener";
+
+  type Sinopsis = { extract?: string; url?: string; lang?: string };
 
   type System = "nes" | "snes" | "gba" | "gbc" | "ds";
 
@@ -55,7 +58,10 @@
   }
 
   // --- Estado ---
-  type Meta = { genre?: string; year?: string; franchise?: boolean; esrb?: string };
+  type Meta = {
+    genre?: string; year?: string; franchise?: boolean; esrb?: string;
+    developer?: string; publisher?: string; players?: string; month?: string; edge?: string;
+  };
   let filtro = $state<System>("nes");
   let catalogo = $state<Record<string, string[]>>({});
   let meta = $state<Record<string, Meta>>({}); // metadata del sistema actual
@@ -127,6 +133,21 @@
   // Modal de detalle del juego seleccionado.
   let detalle = $state<Juego | null>(null);
   let modalSel = $state(0); // 0 = Descubrir, 1 = Descargar
+  // Sinopsis (Wikipedia) por nombre, on-demand al abrir la ficha.
+  let sinopsis = $state<Record<string, Sinopsis>>({});
+  let cargandoSyn = $state(false);
+  async function loadSinopsis(name: string) {
+    if (sinopsis[name]) return;
+    cargandoSyn = true;
+    try {
+      const s = await invoke<Sinopsis>("emu_synopsis", { name });
+      sinopsis = { ...sinopsis, [name]: s ?? {} };
+    } catch {
+      sinopsis = { ...sinopsis, [name]: {} };
+    } finally {
+      cargandoSyn = false;
+    }
+  }
 
   // Título base: nombre sin los (tags) ni [tags] → "1942 (USA) (Rev 1)" → "1942".
   function baseTitle(name: string): string {
@@ -218,6 +239,21 @@
   function metaDe(name: string): Meta {
     return metaByKey[matchKey(name)] ?? {};
   }
+  function edgeDe(name: string): number {
+    return parseInt(metaDe(name).edge ?? "0", 10) || 0;
+  }
+  // Veredicto geek: ¿clásico o del montón? Combina nota Edge, franquicia y fama.
+  function veredicto(name: string): { txt: string; tier: number } {
+    const e = edgeDe(name);
+    const fr = !!metaDe(name).franchise;
+    const fm = fama(name) !== Infinity;
+    if (e >= 9) return { txt: "Obra maestra", tier: 4 };
+    if (e >= 8 || (fr && fm)) return { txt: "Imprescindible", tier: 3 };
+    if (fr || fm) return { txt: "Clásico conocido", tier: 2 };
+    if (e >= 6) return { txt: "Recomendado", tier: 1 };
+    if (e > 0 && e <= 4) return { txt: "Del montón", tier: 0 };
+    return { txt: "A descubrir", tier: 1 };
+  }
   const ESRB_FAMILIA = ["E", "EC", "E10+", "K-A", "KA"];
   function esFamilia(name: string): boolean {
     const r = (metaDe(name).esrb ?? "").toUpperCase();
@@ -299,13 +335,28 @@
       if (!grupos.has(p)) grupos.set(p, []);
       grupos.get(p)!.push(g);
     }
+    // Categorías con muy pocos juegos se juntan en una fila "Varios".
+    const MIN = 5;
+    const varios: Juego[] = [];
     for (const label of ORDEN_PASILLOS) {
       const gs = grupos.get(label);
       if (!gs || !gs.length) continue;
+      // Familia siempre va sola; el resto chico se junta en Varios.
+      if (label !== "Familia" && (label === "Otros" || gs.length < MIN)) {
+        varios.push(...gs);
+        continue;
+      }
       out.push({
         label,
         kind: "genero",
         items: gs.sort(byDisp).map((j) => ({ juego: j, face: false })),
+      });
+    }
+    if (varios.length) {
+      out.push({
+        label: "Varios",
+        kind: "genero",
+        items: varios.sort(byDisp).map((j) => ({ juego: j, face: false })),
       });
     }
     return out;
@@ -441,6 +492,7 @@
     detalle = g;
     modalSel = tieneJuego(g.name) ? 0 : 1;
     void loadBoxart(g);
+    void loadSinopsis(g.name);
   }
   function cerrarModal() {
     detalle = null;
@@ -535,6 +587,9 @@
     const el = cardRefs[`${fRow}:${fCol}`];
     el?.scrollIntoView({ block: "nearest", inline: "center" });
     el?.focus();
+    // El lomo enfocado se da vuelta y muestra la carátula → bajarla.
+    const g = juegoFocado();
+    if (g) void loadBoxart(g);
   }
   function juegoFocado(): Juego | null {
     return pasillos[fRow]?.items[fCol]?.juego ?? null;
@@ -804,19 +859,31 @@
                 <div class="card-meta"><span class="card-title">{g.display}</span></div>
               </button>
             {:else}
-              <!-- De lomo: spine fino (el resto, apretado en la repisa) -->
+              {@const enf = fRow === r && fCol === c}
+              <!-- De lomo: spine fino; al enfocarlo se da vuelta y muestra la cara -->
               <button
                 data-nav
                 class="spine"
-                class:focused={fRow === r && fCol === c}
+                class:focused={enf}
+                class:girado={enf && !!boxarts[g.name]}
                 class:no-tengo={!tengo}
                 style="--c:{colorDe(g.system)}"
                 bind:this={cardRefs[`${r}:${c}`]}
                 title={g.display}
                 onclick={() => { fRow = r; fCol = c; abrirJuego(g); }}
-                onfocus={() => { fRow = r; fCol = c; }}
+                onfocus={() => { fRow = r; fCol = c; void loadBoxart(g); }}
+                onmouseenter={() => void loadBoxart(g)}
               >
-                <span class="spine-txt">{g.display}</span>
+                {#if enf && boxarts[g.name]}
+                  <img class="spine-art" src={boxarts[g.name]} alt={g.display} />
+                  {#if tengo}
+                    <span class="card-badge tengo" style="background:{colorDe(g.system)}">▶</span>
+                  {:else}
+                    <span class="card-badge falta">No la tienes</span>
+                  {/if}
+                {:else}
+                  <span class="spine-txt">{g.display}</span>
+                {/if}
               </button>
             {/if}
           {/each}
@@ -834,6 +901,9 @@
     {@const d = detalle}
     {@const tengo = tieneJuego(d.name)}
     {@const dl = bajando[d.name]}
+    {@const md = metaDe(d.name)}
+    {@const ver = veredicto(d.name)}
+    {@const syn = sinopsis[d.name]}
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div
       class="modal-bg"
@@ -863,10 +933,43 @@
             <span class="chip" style="background:{colorDe(d.system)}">
               {SISTEMAS.find((s) => s.key === d.system)?.label}
             </span>
+            <span class="chip veredicto" data-tier={ver.tier}>{ver.txt}</span>
             <span class="chip estado" class:ok={tengo}>
               {tengo ? "En tu biblioteca" : "No la tienes"}
             </span>
           </div>
+
+          <!-- Ficha geek: datos reales de libretro-database -->
+          <dl class="ficha">
+            {#if md.developer}<dt>Desarrolla</dt><dd>{md.developer}</dd>{/if}
+            {#if md.publisher}<dt>Edita</dt><dd>{md.publisher}</dd>{/if}
+            {#if md.year}<dt>Año</dt><dd>{md.year}{md.month ? `/${md.month.padStart(2, "0")}` : ""}</dd>{/if}
+            {#if md.genre}<dt>Género</dt><dd>{md.genre}</dd>{/if}
+            {#if md.players}<dt>Jugadores</dt><dd>{md.players}</dd>{/if}
+            {#if md.esrb}<dt>Clasificación</dt><dd>{md.esrb}</dd>{/if}
+            {#if edgeDe(d.name) > 0}
+              <dt>Nota Edge</dt>
+              <dd class="edge"><b>{md.edge}</b>/10 <span class="edge-bar"><i style="width:{edgeDe(d.name) * 10}%"></i></span></dd>
+            {/if}
+          </dl>
+          {#if !md.developer && !md.year && !md.genre}
+            <p class="sin-ficha">Sin ficha en la base de datos.</p>
+          {/if}
+
+          <!-- Sinopsis (Wikipedia) -->
+          {#if syn?.extract}
+            <p class="sinopsis">{syn.extract}</p>
+            {#if syn.url}
+              <button class="wiki-link" onclick={() => syn.url && openUrl(syn.url)}>
+                Leer en Wikipedia ({syn.lang}) ↗
+              </button>
+            {/if}
+          {:else if cargandoSyn && !syn}
+            <p class="sinopsis cargando">Buscando sinopsis…</p>
+          {:else if syn}
+            <p class="sinopsis cargando">Sin sinopsis en Wikipedia.</p>
+          {/if}
+
           <p class="variante">{d.name}</p>
 
           {#if dl}
@@ -1129,6 +1232,75 @@
     margin: 0 0 18px;
     word-break: break-word;
   }
+  .chip.veredicto {
+    background: #333;
+    color: #ddd;
+  }
+  .chip.veredicto[data-tier="4"] { background: #f5c518; color: #1a1a1a; }
+  .chip.veredicto[data-tier="3"] { background: #9c7bff; color: #fff; }
+  .chip.veredicto[data-tier="2"] { background: #2b6cff; color: #fff; }
+  .chip.veredicto[data-tier="0"] { background: #555; color: #bbb; }
+  .ficha {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 14px;
+    margin: 4px 0 14px;
+    font-size: 13px;
+  }
+  .ficha dt {
+    color: #888;
+  }
+  .ficha dd {
+    margin: 0;
+    color: #eee;
+  }
+  .ficha dd.edge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .edge-bar {
+    display: inline-block;
+    width: 90px;
+    height: 6px;
+    background: #2a2a36;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .edge-bar i {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, #7d4fff, #6ec1ff);
+  }
+  .sin-ficha {
+    color: #666;
+    font-size: 12px;
+    margin: 0 0 12px;
+  }
+  .sinopsis {
+    font-size: 13px;
+    line-height: 1.5;
+    color: #ccc;
+    margin: 0 0 8px;
+    max-height: 7.5em;
+    overflow-y: auto;
+  }
+  .sinopsis.cargando {
+    color: #777;
+    font-style: italic;
+  }
+  .wiki-link {
+    background: none;
+    border: none;
+    color: #6ec1ff;
+    font-size: 12px;
+    cursor: pointer;
+    padding: 0;
+    margin: 0 0 14px;
+  }
+  .wiki-link:hover {
+    text-decoration: underline;
+  }
   .modal-dl {
     position: relative;
     height: 26px;
@@ -1325,6 +1497,22 @@
     flex-basis: 44px;
     width: 44px;
     box-shadow: 0 0 0 2px #f5c518;
+  }
+  /* Enfocado con carátula → se da vuelta: se ensancha y muestra la cara. */
+  .spine.girado {
+    position: relative;
+    flex-basis: 150px;
+    width: 150px;
+    padding: 0;
+    overflow: hidden;
+    border-radius: 8px;
+    background: #15151c;
+  }
+  .spine-art {
+    width: 150px;
+    height: 225px;
+    object-fit: cover;
+    display: block;
   }
   .card:hover {
     transform: translateY(-3px);
