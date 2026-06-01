@@ -1,13 +1,21 @@
 use serde::{Deserialize, Serialize};
 
 mod awards;
+mod emu;
 mod kodios;
 mod rd;
+mod player;
 mod screening;
 mod webserver;
 
 const TMDB_BASE: &str = "https://api.themoviedb.org/3";
 const LANG: &str = "es-ES";
+
+/// Log de depuración desde el frontend a la consola de Tauri (stderr).
+#[tauri::command]
+fn ui_log(msg: String) {
+    eprintln!("[ui] {msg}");
+}
 
 const BROWSER_UA: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
@@ -70,6 +78,45 @@ pub struct TmdbDetail {
     pub directors: Vec<PersonMini>,
     pub cast: Vec<PersonMini>,
     pub images: Vec<String>,
+    #[serde(default)]
+    pub number_of_seasons: Option<u32>,
+    #[serde(default)]
+    pub seasons: Vec<SeasonMini>,
+    #[serde(default)]
+    pub tagline: Option<String>,
+    #[serde(default)]
+    pub original_title: Option<String>,
+    #[serde(default)]
+    pub original_language: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub budget: Option<u64>,
+    #[serde(default)]
+    pub revenue: Option<u64>,
+    #[serde(default)]
+    pub vote_count: Option<u32>,
+    #[serde(default)]
+    pub popularity: Option<f32>,
+    #[serde(default)]
+    pub release_date: Option<String>,
+    #[serde(default)]
+    pub production_companies: Vec<String>,
+    #[serde(default)]
+    pub production_countries: Vec<String>,
+    #[serde(default)]
+    pub spoken_languages: Vec<String>,
+    #[serde(default)]
+    pub homepage: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct SeasonMini {
+    pub season_number: u32,
+    pub episode_count: u32,
+    pub name: String,
+    pub air_date: Option<String>,
+    pub poster_path: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -107,6 +154,56 @@ struct DetailRaw {
     created_by: Option<Vec<CreatorRaw>>,
     #[serde(default)]
     images: Option<ImagesRaw>,
+    #[serde(default)]
+    number_of_seasons: Option<u32>,
+    #[serde(default)]
+    seasons: Option<Vec<SeasonRaw>>,
+    #[serde(default)]
+    tagline: Option<String>,
+    #[serde(default)]
+    original_title: Option<String>,
+    #[serde(default)]
+    original_name: Option<String>,
+    #[serde(default)]
+    original_language: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    budget: Option<u64>,
+    #[serde(default)]
+    revenue: Option<u64>,
+    #[serde(default)]
+    vote_count: Option<u32>,
+    #[serde(default)]
+    popularity: Option<f32>,
+    #[serde(default)]
+    production_companies: Vec<NamedRaw>,
+    #[serde(default)]
+    production_countries: Vec<NamedRaw>,
+    #[serde(default)]
+    spoken_languages: Vec<NamedRaw>,
+    #[serde(default)]
+    homepage: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct NamedRaw {
+    #[serde(default)]
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct SeasonRaw {
+    #[serde(default)]
+    season_number: u32,
+    #[serde(default)]
+    episode_count: u32,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    air_date: Option<String>,
+    #[serde(default)]
+    poster_path: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -642,6 +739,43 @@ async fn tmdb_detail(
         }
     }
 
+    // Temporadas (solo TV): oculta especiales (S0) y temporadas vacías.
+    let number_of_seasons = raw.number_of_seasons;
+    let seasons: Vec<SeasonMini> = raw
+        .seasons
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|s| s.season_number > 0 && s.episode_count > 0)
+        .map(|s| SeasonMini {
+            season_number: s.season_number,
+            episode_count: s.episode_count,
+            name: s.name,
+            air_date: s.air_date,
+            poster_path: s.poster_path,
+        })
+        .collect();
+
+    let original_title = raw.original_title.or(raw.original_name);
+    let production_companies = raw
+        .production_companies
+        .into_iter()
+        .map(|n| n.name)
+        .filter(|s| !s.is_empty())
+        .collect();
+    let production_countries = raw
+        .production_countries
+        .into_iter()
+        .map(|n| n.name)
+        .filter(|s| !s.is_empty())
+        .collect();
+    let spoken_languages = raw
+        .spoken_languages
+        .into_iter()
+        .map(|n| n.name)
+        .filter(|s| !s.is_empty())
+        .collect();
+    let release_date = if !date.is_empty() { Some(date) } else { None };
+
     Ok(TmdbDetail {
         id: raw.id,
         media_type,
@@ -657,7 +791,205 @@ async fn tmdb_detail(
         directors,
         cast,
         images,
+        number_of_seasons,
+        seasons,
+        tagline: raw.tagline.filter(|s| !s.is_empty()),
+        original_title: original_title.filter(|s| !s.is_empty()),
+        original_language: raw.original_language.filter(|s| !s.is_empty()),
+        status: raw.status.filter(|s| !s.is_empty()),
+        budget: raw.budget.filter(|&v| v > 0),
+        revenue: raw.revenue.filter(|&v| v > 0),
+        vote_count: raw.vote_count,
+        popularity: raw.popularity,
+        release_date,
+        production_companies,
+        production_countries,
+        spoken_languages,
+        homepage: raw.homepage.filter(|s| !s.is_empty()),
     })
+}
+
+#[derive(Serialize, Default)]
+pub struct OmdbRating {
+    pub source: String,
+    pub value: String,
+}
+
+#[derive(Serialize, Default)]
+pub struct OmdbDetail {
+    pub plot: Option<String>,
+    pub awards: Option<String>,
+    pub rated: Option<String>,
+    pub writer: Option<String>,
+    pub country: Option<String>,
+    pub language: Option<String>,
+    pub released: Option<String>,
+    pub metascore: Option<String>,
+    pub imdb_rating: Option<String>,
+    pub imdb_votes: Option<String>,
+    pub box_office: Option<String>,
+    pub production: Option<String>,
+    pub ratings: Vec<OmdbRating>,
+}
+
+#[derive(Deserialize)]
+struct OmdbRawRating {
+    #[serde(rename = "Source", default)]
+    source: String,
+    #[serde(rename = "Value", default)]
+    value: String,
+}
+
+#[derive(Deserialize)]
+struct OmdbRaw {
+    #[serde(rename = "Response", default)]
+    response: String,
+    #[serde(rename = "Error", default)]
+    error: Option<String>,
+    #[serde(rename = "Plot", default)]
+    plot: Option<String>,
+    #[serde(rename = "Awards", default)]
+    awards: Option<String>,
+    #[serde(rename = "Rated", default)]
+    rated: Option<String>,
+    #[serde(rename = "Writer", default)]
+    writer: Option<String>,
+    #[serde(rename = "Country", default)]
+    country: Option<String>,
+    #[serde(rename = "Language", default)]
+    language: Option<String>,
+    #[serde(rename = "Released", default)]
+    released: Option<String>,
+    #[serde(rename = "Metascore", default)]
+    metascore: Option<String>,
+    #[serde(rename = "imdbRating", default)]
+    imdb_rating: Option<String>,
+    #[serde(rename = "imdbVotes", default)]
+    imdb_votes: Option<String>,
+    #[serde(rename = "BoxOffice", default)]
+    box_office: Option<String>,
+    #[serde(rename = "Production", default)]
+    production: Option<String>,
+    #[serde(rename = "Ratings", default)]
+    ratings: Vec<OmdbRawRating>,
+}
+
+fn clean_na(s: Option<String>) -> Option<String> {
+    s.and_then(|v| {
+        let t = v.trim();
+        if t.is_empty() || t.eq_ignore_ascii_case("N/A") {
+            None
+        } else {
+            Some(t.to_string())
+        }
+    })
+}
+
+/// Datos de OMDb (premios, plot largo, ratings, box office) por imdb_id.
+/// Devuelve Err si key vacía. Devuelve None-equivalente con campos vacíos
+/// si OMDb responde "Movie not found".
+#[tauri::command]
+async fn omdb_detail(imdb_id: String, api_key: String) -> Result<OmdbDetail, String> {
+    let key = api_key.trim();
+    if key.is_empty() {
+        return Err("falta omdb key".into());
+    }
+    let id = imdb_id.trim();
+    if id.is_empty() {
+        return Err("falta imdb id".into());
+    }
+    let url = format!(
+        "https://www.omdbapi.com/?apikey={}&i={}&plot=full",
+        key, id
+    );
+    let raw: OmdbRaw = fetch_json(&url).await.map_err(|e| format!("OMDb: {}", e))?;
+    if raw.response.eq_ignore_ascii_case("False") {
+        return Err(raw.error.unwrap_or_else(|| "OMDb: sin datos".into()));
+    }
+    Ok(OmdbDetail {
+        plot: clean_na(raw.plot),
+        awards: clean_na(raw.awards),
+        rated: clean_na(raw.rated),
+        writer: clean_na(raw.writer),
+        country: clean_na(raw.country),
+        language: clean_na(raw.language),
+        released: clean_na(raw.released),
+        metascore: clean_na(raw.metascore),
+        imdb_rating: clean_na(raw.imdb_rating),
+        imdb_votes: clean_na(raw.imdb_votes),
+        box_office: clean_na(raw.box_office),
+        production: clean_na(raw.production),
+        ratings: raw
+            .ratings
+            .into_iter()
+            .filter(|r| !r.value.is_empty() && !r.value.eq_ignore_ascii_case("N/A"))
+            .map(|r| OmdbRating {
+                source: r.source,
+                value: r.value,
+            })
+            .collect(),
+    })
+}
+
+#[derive(Serialize)]
+pub struct EpisodeMini {
+    pub episode_number: u32,
+    pub name: String,
+    pub overview: String,
+    pub still_path: Option<String>,
+    pub air_date: Option<String>,
+    pub runtime: Option<u32>,
+}
+
+#[derive(Deserialize)]
+struct SeasonDetailRaw {
+    #[serde(default)]
+    episodes: Vec<EpisodeRaw>,
+}
+
+#[derive(Deserialize)]
+struct EpisodeRaw {
+    #[serde(default)]
+    episode_number: u32,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    overview: String,
+    #[serde(default)]
+    still_path: Option<String>,
+    #[serde(default)]
+    air_date: Option<String>,
+    #[serde(default)]
+    runtime: Option<u32>,
+}
+
+/// Episodios de una temporada (TMDb /tv/{id}/season/{n}).
+#[tauri::command]
+async fn tmdb_season(
+    id: u64,
+    season_number: u32,
+    api_key: String,
+) -> Result<Vec<EpisodeMini>, String> {
+    if api_key.is_empty() {
+        return Err("falta api key".into());
+    }
+    let url = format!(
+        "{}/tv/{}/season/{}?api_key={}&language={}",
+        TMDB_BASE, id, season_number, api_key, LANG
+    );
+    let raw: SeasonDetailRaw = fetch_json(&url).await?;
+    Ok(raw
+        .episodes
+        .into_iter()
+        .map(|e| EpisodeMini {
+            episode_number: e.episode_number,
+            name: e.name,
+            overview: e.overview,
+            still_path: e.still_path,
+            air_date: e.air_date,
+            runtime: e.runtime,
+        })
+        .collect())
 }
 
 #[derive(Serialize)]
@@ -2081,10 +2413,28 @@ pub fn run() {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 4,
+            description: "unavailable_kind",
+            // Drop+recreate: las filas previas se generaron con type=movie
+            // hardcodeado y marcaron series como no disponibles. Resetear.
+            sql: "
+                DROP TABLE IF EXISTS unavailable_items;
+                CREATE TABLE unavailable_items (
+                    imdb_id TEXT NOT NULL,
+                    kind TEXT NOT NULL DEFAULT 'movie',
+                    detected_at INTEGER NOT NULL,
+                    PRIMARY KEY (imdb_id, kind)
+                );
+            ",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
         .manage(screening::ScreeningState::default())
+        .manage(emu::EmuState::default())
+        .manage(player::PlayerState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -2098,6 +2448,8 @@ pub fn run() {
             tmdb_discover,
             tmdb_search,
             tmdb_detail,
+            omdb_detail,
+            tmdb_season,
             tmdb_recommendations,
             tmdb_genres,
             tmdb_videos,
@@ -2125,15 +2477,29 @@ pub fn run() {
             webserver::web_server_start,
             webserver::web_server_stop,
             webserver::web_server_status,
+            ui_log,
             kodios::kodios_search,
             rd::rd_resolve,
             rd::rd_instant_available,
             rd::rd_refresh,
+            rd::rd_account,
+            rd::rd_cleanup_torrents,
+            player::mpv_play,
+            player::mpv_cmd,
+            player::mpv_stop,
+            player::mpv_running,
             screening::screening_enqueue,
             screening::screening_get_unavailable,
             screening::screening_set_paused,
             screening::screening_set_concurrency,
             awards::wikidata_awards,
+            emu::emu_play,
+            emu::emu_cmd,
+            emu::emu_stop,
+            emu::emu_running,
+            emu::emu_catalog,
+            emu::emu_owned,
+            emu::emu_download,
             wyzie_search
         ])
         .run(tauri::generate_context!())

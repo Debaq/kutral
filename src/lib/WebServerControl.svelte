@@ -62,6 +62,8 @@
       st = await invoke<WebStatus>("web_server_start", { port: portInput });
       running = st.running;
       url = st.url;
+      // Cierra el popover al iniciar OK — el header refleja estado activo.
+      open = false;
     } catch (e) {
       err = String(e);
     } finally {
@@ -75,6 +77,8 @@
     try {
       await invoke("web_server_stop");
       await refresh();
+      // Cierra el popover al detener OK.
+      open = false;
     } catch (e) {
       err = String(e);
     } finally {
@@ -105,21 +109,27 @@
     onkeydown={onKey}
     tabindex="-1"
   >
-    <div class="head">
-      <span class="dot" class:on={st.running}></span>
-      <span class="title">Servidor web</span>
-      <span class="state">{st.running ? "Activo" : "Detenido"}</span>
-    </div>
-
-    {#if st.running && st.url}
-      <div class="url-row">
-        <code class="url">{st.url}</code>
-        <button class="copy" onclick={copy} title="Copiar">
-          {copied ? "✓" : "⧉"}
-        </button>
+    {#if st.running}
+      <div class="head">
+        <span class="dot on"></span>
+        <span class="title">Servidor web activo</span>
       </div>
-      <p class="hint">Entrar desde otro equipo en la misma red.</p>
+      {#if st.url}
+        <div class="url-row">
+          <code class="url">{st.url}</code>
+          <button class="copy" onclick={copy} title="Copiar">
+            {copied ? "✓" : "⧉"}
+          </button>
+        </div>
+      {/if}
+      <div class="actions">
+        <button class="btn-stop" onclick={stop} disabled={busy}>Detener</button>
+      </div>
     {:else}
+      <div class="head">
+        <span class="dot"></span>
+        <span class="title">Servidor web</span>
+      </div>
       <div class="port-row">
         <label for="ws-port">Puerto</label>
         <input
@@ -130,15 +140,10 @@
           bind:value={portInput}
         />
       </div>
-    {/if}
-
-    <div class="actions">
-      {#if st.running}
-        <button class="btn-stop" onclick={stop} disabled={busy}>Detener</button>
-      {:else}
+      <div class="actions">
         <button class="btn-start" onclick={start} disabled={busy}>Iniciar</button>
-      {/if}
-    </div>
+      </div>
+    {/if}
 
     {#if err}
       <p class="err">{err}</p>

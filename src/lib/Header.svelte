@@ -16,6 +16,7 @@
   type WifiState = { online: boolean; connected_ssid: string | null };
 
   let maximized = $state(true);
+  let fullscreen = $state(false);
 
   const kiosk = $derived(
     config.modeOverride === "kiosk" ||
@@ -77,9 +78,13 @@
         maximized = await win.isMaximized();
       } catch {}
       try {
+        fullscreen = await win.isFullscreen();
+      } catch {}
+      try {
         un = await win.onResized(async () => {
           try {
             maximized = await win.isMaximized();
+            fullscreen = await win.isFullscreen();
           } catch {}
         });
       } catch {}
@@ -114,6 +119,14 @@
   }
   async function toggleMax() {
     try { await getCurrentWindow().toggleMaximize(); } catch (e) { console.warn(e); }
+  }
+  async function toggleFullscreen() {
+    try {
+      const win = getCurrentWindow();
+      const next = !fullscreen;
+      await win.setFullscreen(next);
+      fullscreen = next;
+    } catch (e) { console.warn(e); }
   }
   async function close() {
     try { await getCurrentWindow().close(); } catch (e) { console.warn(e); }
@@ -170,20 +183,23 @@
     {/if}
     <span class="clock" data-tauri-drag-region>{now}</span>
 
+    <span class="sep" aria-hidden="true"></span>
+
     <div class="pop-host web-host">
-      <button class="ic-btn web-btn" onclick={() => only("web")} title="Servidor web" aria-label="Servidor web">
+      <button
+        class="ic-btn web-btn"
+        class:active={webRunning}
+        onclick={() => only("web")}
+        title={webRunning ? `Servidor web activo · ${webUrl ?? ""}` : "Servidor web"}
+        aria-label="Servidor web"
+      >
         🌐
         {#if webRunning}<span class="web-dot"></span>{/if}
       </button>
-      {#if webRunning && webUrl}
-        <button
-          class="web-url-pill"
-          onclick={() => only("web")}
-          title="Servidor web activo"
-        >{webUrl.replace(/^https?:\/\//, "")}</button>
-      {/if}
       <WebServerControl bind:open={webOpen} bind:running={webRunning} bind:url={webUrl} />
     </div>
+
+    <span class="sep" aria-hidden="true"></span>
 
     <div class="pop-host">
       <button class="ic-btn" onclick={() => only("br")} title="Brillo" aria-label="Brillo">
@@ -192,12 +208,16 @@
       <BrightnessControl bind:open={brOpen} />
     </div>
 
+    <span class="sep" aria-hidden="true"></span>
+
     <div class="pop-host">
       <button class="ic-btn" onclick={() => only("vol")} title="Volumen" aria-label="Volumen">
         🔊
       </button>
       <VolumeControl bind:open={volOpen} />
     </div>
+
+    <span class="sep" aria-hidden="true"></span>
 
     <div class="pop-host">
       <button class="ic-btn nt-btn" onclick={() => only("notif")} title="Notificaciones" aria-label="Notificaciones">
@@ -206,6 +226,19 @@
       </button>
       <Notifications bind:open={notifOpen} />
     </div>
+
+    <span class="sep" aria-hidden="true"></span>
+
+    <button
+      class="ic-btn"
+      onclick={toggleFullscreen}
+      title={fullscreen ? "Salir de pantalla completa" : "Pantalla completa"}
+      aria-label="Pantalla completa"
+    >
+      {fullscreen ? "⤡" : "⛶"}
+    </button>
+
+    <span class="sep" aria-hidden="true"></span>
 
     <button
       class="cfg-btn"
@@ -316,10 +349,17 @@
   .status {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 6px;
     padding: 0 12px;
     color: #d8d8e0;
     font-size: 13px;
+  }
+  .sep {
+    width: 1px;
+    height: 18px;
+    background: rgba(255, 255, 255, 0.1);
+    flex: 0 0 1px;
+    align-self: center;
   }
   .clock {
     font-variant-numeric: tabular-nums;
@@ -371,14 +411,20 @@
     border: 0;
     color: #c8c8d0;
     cursor: pointer;
-    font-size: 13px;
+    font-size: 14px;
     padding: 4px 8px;
     border-radius: 6px;
     line-height: 1;
     position: relative;
+    min-width: 36px;
+    height: 26px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
   .ic-btn:hover { background: #1c1c26; color: #fff; }
   .ic-btn:focus { outline: 2px solid #f3a951; outline-offset: 1px; }
+  .ic-btn.active { color: #6cd37a; }
   .web-host { display: flex; align-items: center; gap: 4px; }
   .web-btn { position: relative; }
   .web-url-pill {

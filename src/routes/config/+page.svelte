@@ -12,12 +12,14 @@
     saveConfig,
     LANGS,
     SUB_LANGS,
+    GAME_REGIONS,
     SCREENING_MIN,
     SCREENING_MAX,
     type ModeOverride,
   } from "$lib/config.svelte";
   import { setConcurrenciaScreening } from "$lib/screening.svelte";
   import { notify } from "$lib/notifStore.svelte";
+  import { ayuda } from "$lib/atajos/store.svelte";
 
   type RdDeviceStart = {
     device_code: string;
@@ -45,8 +47,17 @@
   let subSize = $state(config.subSize);
   let webAuto = $state(config.webAutoStart);
   let webPortInput = $state(config.webPort);
+  let gameRegions = $state<string[]>([...config.gameRegions]);
   let saved = $state(false);
+
+  function toggleRegion(id: string) {
+    gameRegions = gameRegions.includes(id)
+      ? gameRegions.filter((x) => x !== id)
+      : [...gameRegions, id];
+  }
   let showTmdb = $state(false);
+  let showOmdb = $state(false);
+  let omdb = $state("");
   let showRdAdvanced = $state(false);
 
   // RD device flow
@@ -71,9 +82,11 @@
   let updTotal = $state(0);
 
   onMount(async () => {
+    ayuda.set("config", []);
     loadConfig();
     tmdb = config.tmdbKey;
     rd = config.rdKey;
+    omdb = config.omdbKey;
     lang = config.lang;
     mode = config.modeOverride;
     screeningConc = config.screeningConcurrency;
@@ -82,6 +95,7 @@
     subSize = config.subSize;
     webAuto = config.webAutoStart;
     webPortInput = config.webPort;
+    gameRegions = [...config.gameRegions];
     try { currentVer = await getVersion(); } catch {}
   });
 
@@ -92,6 +106,7 @@
   const dirty = $derived(
     tmdb !== config.tmdbKey ||
     rd !== config.rdKey ||
+    omdb !== config.omdbKey ||
     lang !== config.lang ||
     mode !== config.modeOverride ||
     screeningConc !== config.screeningConcurrency ||
@@ -99,12 +114,14 @@
     wyzieKey !== config.wyzieKey ||
     subSize !== config.subSize ||
     webAuto !== config.webAutoStart ||
-    webPortInput !== config.webPort
+    webPortInput !== config.webPort ||
+    gameRegions.join(",") !== config.gameRegions.join(",")
   );
 
   function applyAndSave() {
     config.tmdbKey = tmdb.trim();
     config.rdKey = rd.trim();
+    config.omdbKey = omdb.trim();
     config.lang = lang;
     config.modeOverride = mode;
     const conc = Math.min(SCREENING_MAX, Math.max(SCREENING_MIN, Math.round(screeningConc)));
@@ -115,6 +132,7 @@
     config.webAutoStart = webAuto;
     config.webPort = Math.min(65535, Math.max(1024, Math.round(webPortInput) || 8080));
     webPortInput = config.webPort;
+    config.gameRegions = [...gameRegions];
     saveConfig();
     void setConcurrenciaScreening(conc);
     saved = true;
@@ -249,19 +267,34 @@
       const srcs = await invoke<any[]>("kodios_search", {
         imdbId: testImdb.trim(),
         kind: "movie",
+        rdToken: tok || undefined,
       });
       testSrcs = srcs;
-      log(`fuentes: ${srcs.length}`);
+      const conUrl = srcs.filter((s) => s.url).length;
+      log(`fuentes: ${srcs.length} · ${conUrl} pre-resueltas (Torrentio+RD)`);
       if (!srcs.length) { log("sin fuentes, fin"); return; }
-      const s0 = srcs[0];
-      log(`1ª: ${s0.quality} · ${s0.seeders ?? "?"} seeders · ${(s0.title || "").slice(0, 60)}`);
-      log(`hash: ${s0.info_hash || "?"}`);
       if (!tok) { log("sin token RD → no resuelvo"); return; }
-      if (!s0.magnet) { log("1ª sin magnet"); return; }
-      log("resolviendo en RD (puede tardar ~10s)…");
-      const url = await invoke<string>("rd_resolve", { magnet: s0.magnet, token: tok });
-      testUrl = url;
-      log(`✓ URL directa: ${url}`);
+      // Itera: usa url directa si existe, si no resuelve magnet. Salta bloqueadas.
+      let blocked = 0;
+      const max = Math.min(srcs.length, 12);
+      for (let i = 0; i < max; i++) {
+        const s = srcs[i];
+        if (!s.magnet && !s.url) continue;
+        log(`#${i + 1} ${s.quality}${s.url ? " (url)" : ""} ${(s.title || "").slice(0, 40)}…`);
+        try {
+          const url = s.url
+            ? s.url
+            : await invoke<string>("rd_resolve", { magnet: s.magnet, token: tok });
+          testUrl = url;
+          log(`✓ REPRODUCIBLE (#${i + 1}, ${blocked} bloqueadas antes): ${url.slice(0, 70)}…`);
+          return;
+        } catch (e) {
+          const msg = String(e);
+          if (msg.includes("BLOQUEADO_DMCA")) { blocked++; log(`  ⛔ bloqueada (451)`); }
+          else log(`  ✗ ${msg.slice(0, 80)}`);
+        }
+      }
+      log(`Sin reproducibles en ${max} intentos · ${blocked} bloqueadas por DMCA.`);
     } catch (e) {
       log(`✗ error: ${String(e)}`);
     } finally {
@@ -309,6 +342,26 @@
       testLogPush("⏹ mpv detenido");
     } catch (e) {
       testLogPush(`✗ stop error: ${String(e)}`);
+    }
+  }
+
+  // 👤 Estado de la cuenta RD (diagnóstico de 451)
+  async function runAccountTest() {
+    const log = testLogPush;
+    const tok = (rd || config.rdKey || "").trim();
+    if (!tok) { log("sin token RD"); return; }
+    try {
+      const a = await invoke<any>("rd_account", { token: tok });
+      const secs = a.premium ?? 0;
+      const dias = Math.round(secs / 86400);
+      log(`👤 ${a.username} · tipo: ${a.account_type || "?"} · premium: ${dias}d · expira: ${a.expiration || "?"}`);
+      if (secs > 0) {
+        log("✓ Premium ACTIVO → el 451 es la lista DMCA de RD (por-torrent), no la cuenta. El auto-salto debe encontrar una fuente no bloqueada.");
+      } else {
+        log("⚠ Sin premium → RD bloquea torrents. Renueva premium.");
+      }
+    } catch (e) {
+      log(`✗ cuenta error: ${String(e)}`);
     }
   }
 
@@ -377,165 +430,6 @@
     <div class="cfg-grid">
       <div class="col">
         <section class="block">
-          <h2>Idioma</h2>
-          <p class="hint">Para títulos, descripciones e interfaz.</p>
-          <div class="radio-group">
-            {#each LANGS as l}
-              <label class="radio">
-                <input type="radio" name="lang" value={l.id} bind:group={lang} />
-                <span>{l.label}</span>
-              </label>
-            {/each}
-          </div>
-        </section>
-
-        <section class="block">
-          <h2>Modo de interfaz</h2>
-          <p class="hint">
-            Auto = kiosko en Kütral OS, escritorio en el resto.
-            Detectado: <em>{config.detectedKutral ? "Kütral OS" : "Escritorio"}</em>
-          </p>
-          <div class="mode-group">
-            <label class="mode-card" class:sel={mode === "auto"}>
-              <input type="radio" name="mode" value="auto" bind:group={mode} />
-              <div><strong>Auto</strong><span>Detecta y aplica el modo correcto.</span></div>
-            </label>
-            <label class="mode-card" class:sel={mode === "desktop"}>
-              <input type="radio" name="mode" value="desktop" bind:group={mode} />
-              <div><strong>Escritorio</strong><span>Ventana con minimizar / maximizar / cerrar.</span></div>
-            </label>
-            <label class="mode-card" class:sel={mode === "kiosk"}>
-              <input type="radio" name="mode" value="kiosk" bind:group={mode} />
-              <div><strong>Kiosko / embedido</strong><span>Pantalla completa. Solo "Salir" + gestor WiFi.</span></div>
-            </label>
-          </div>
-        </section>
-
-        <section class="block">
-          <h2>Verificación de disponibilidad</h2>
-          <p class="hint">
-            Verificaciones simultáneas al detectar si una película se puede
-            reproducir. Más alto = los badges "no disponible" aparecen
-            más rápido, pero puede saturar la red y cortar el video.
-          </p>
-          <div class="mode-group">
-            {#each Array.from({ length: SCREENING_MAX - SCREENING_MIN + 1 }, (_, i) => i + SCREENING_MIN) as n}
-              <label class="mode-card" class:sel={screeningConc === n}>
-                <input type="radio" name="screeningConc" value={n} bind:group={screeningConc} />
-                <div>
-                  <strong>{n}</strong>
-                  <span>
-                    {#if n === 1}Recomendado. No interrumpe el video.
-                    {:else if n === SCREENING_MAX}Máximo. Solo si tu red es buena.
-                    {:else}Intermedio.
-                    {/if}
-                  </span>
-                </div>
-              </label>
-            {/each}
-          </div>
-        </section>
-
-        <section class="block">
-          <h2>Servidor web (mando remoto)</h2>
-          <p class="hint">
-            Levanta un servidor HTTP en la red local para usar el celular como
-            mando. Aplica al próximo inicio de Kütral.
-          </p>
-          <label class="toggle-row">
-            <input type="checkbox" bind:checked={webAuto} />
-            <span>Activar al iniciar la app</span>
-          </label>
-          <label class="field">
-            <span class="field-label">Puerto</span>
-            <input
-              type="number"
-              min="1024"
-              max="65535"
-              bind:value={webPortInput}
-            />
-          </label>
-        </section>
-
-        <section class="block">
-          <h2>Actualizaciones</h2>
-          <p class="hint">
-            Versión actual: <em>{currentVer || "?"}</em>
-          </p>
-
-          {#if updStage === "idle"}
-            <button class="btn-link" onclick={checkUpdate}>Buscar actualizaciones</button>
-          {:else if updStage === "checking"}
-            <p class="upd-line"><span class="spinner"></span> Buscando…</p>
-          {:else if updStage === "uptodate"}
-            <p class="upd-line upd-ok">Estás al día.</p>
-            <button class="link-tiny" onclick={checkUpdate}>Volver a buscar</button>
-          {:else if updStage === "available"}
-            <p class="upd-line">
-              Disponible: <strong>v{updVersion}</strong>
-            </p>
-            {#if updNotes}<pre class="upd-notes">{updNotes}</pre>{/if}
-            <button class="btn-link" onclick={installUpdate}>Instalar y reiniciar</button>
-            <button class="link-tiny" onclick={() => { updStage = "idle"; }}>Más tarde</button>
-          {:else if updStage === "installing"}
-            <p class="upd-line"><span class="spinner"></span> Descargando…</p>
-            {#if updTotal > 0}
-              <div class="bar"><div class="bar-fill" style="width: {updPct()}%"></div></div>
-              <p class="upd-mb">{updMb(updDownloaded)} / {updMb(updTotal)} MB · {updPct()}%</p>
-            {:else}
-              <p class="upd-mb">{updMb(updDownloaded)} MB</p>
-            {/if}
-          {:else if updStage === "ready"}
-            <p class="upd-line"><span class="spinner"></span> Reiniciando…</p>
-          {:else if updStage === "error"}
-            <p class="err">{updErr}</p>
-            <button class="link-tiny" onclick={checkUpdate}>Reintentar</button>
-          {/if}
-        </section>
-
-        <section class="block">
-          <h2>Subtítulos</h2>
-          <p class="hint">
-            Idioma preferido. Si pones API key de Wyzie, Kütral busca
-            subtítulos ahí (más cuotas que OpenSubtitles).
-            <a href="https://store.wyzie.io/redeem" target="_blank" rel="noopener">Generar key gratis →</a>
-          </p>
-          <label class="field">
-            <span class="field-label">Idioma</span>
-            <select bind:value={subsLang}>
-              {#each SUB_LANGS as sl}
-                <option value={sl.id}>{sl.label}</option>
-              {/each}
-            </select>
-          </label>
-          <label class="field">
-            <span class="field-label">Wyzie API key (opcional)</span>
-            <div class="key-row">
-              <input
-                type={showWyzie ? "text" : "password"}
-                bind:value={wyzieKey}
-                placeholder="Sin key: el player usa OpenSubtitles"
-              />
-              <button type="button" class="btn-ghost" onclick={() => (showWyzie = !showWyzie)}>
-                {showWyzie ? "Ocultar" : "Mostrar"}
-              </button>
-            </div>
-          </label>
-          <label class="field">
-            <span class="field-label">Tamaño de letra ({subSize}%)</span>
-            <input
-              type="range"
-              min="50"
-              max="200"
-              step="10"
-              bind:value={subSize}
-            />
-          </label>
-        </section>
-      </div>
-
-      <div class="col">
-        <section class="block">
           <h2>API key de TMDb</h2>
           <p class="hint">
             Gratis en <code>themoviedb.org/settings/api</code>. Sin esto, no hay catálogo.
@@ -550,6 +444,26 @@
             />
             <button class="reveal" onclick={() => (showTmdb = !showTmdb)} title={showTmdb ? "Ocultar" : "Mostrar"}>
               {showTmdb ? "🙈" : "👁"}
+            </button>
+          </div>
+        </section>
+
+        <section class="block">
+          <h2>API key de OMDb <span class="badge-opt">opcional</span></h2>
+          <p class="hint">
+            Gratis en <code>omdbapi.com/apikey.aspx</code>. Habilita premios, recaudación,
+            ratings (IMDb/RT/Metacritic) y sinopsis extendida al abrir un título.
+          </p>
+          <div class="key-row">
+            <input
+              type={showOmdb ? "text" : "password"}
+              bind:value={omdb}
+              placeholder="xxxxxxxx"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button class="reveal" onclick={() => (showOmdb = !showOmdb)} title={showOmdb ? "Ocultar" : "Mostrar"}>
+              {showOmdb ? "🙈" : "👁"}
             </button>
           </div>
         </section>
@@ -614,6 +528,9 @@
               </button>
             </div>
             <div class="test-btns">
+              <button class="btn-sec" onclick={runAccountTest}>
+                👤 Cuenta RD
+              </button>
               <button class="btn-sec" onclick={runCacheTest} disabled={testRunning || !testSrcs.length}>
                 ⚡ Cache
               </button>
@@ -628,6 +545,187 @@
               <pre class="test-log">{testLog.join("\n")}</pre>
             {/if}
           </div>
+        </section>
+      </div>
+
+      <div class="col">
+        <section class="block">
+          <h2>Idioma</h2>
+          <p class="hint">Para títulos, descripciones e interfaz.</p>
+          <div class="radio-group">
+            {#each LANGS as l}
+              <label class="radio">
+                <input type="radio" name="lang" value={l.id} bind:group={lang} />
+                <span>{l.label}</span>
+              </label>
+            {/each}
+          </div>
+        </section>
+
+        <section class="block">
+          <h2>Modo de interfaz</h2>
+          <p class="hint">
+            Auto = kiosko en Kütral OS, escritorio en el resto.
+            Detectado: <em>{config.detectedKutral ? "Kütral OS" : "Escritorio"}</em>
+          </p>
+          <div class="mode-group">
+            <label class="mode-card" class:sel={mode === "auto"}>
+              <input type="radio" name="mode" value="auto" bind:group={mode} />
+              <div><strong>Auto</strong><span>Detecta y aplica el modo correcto.</span></div>
+            </label>
+            <label class="mode-card" class:sel={mode === "desktop"}>
+              <input type="radio" name="mode" value="desktop" bind:group={mode} />
+              <div><strong>Escritorio</strong><span>Ventana con minimizar / maximizar / cerrar.</span></div>
+            </label>
+            <label class="mode-card" class:sel={mode === "kiosk"}>
+              <input type="radio" name="mode" value="kiosk" bind:group={mode} />
+              <div><strong>Kiosko / embedido</strong><span>Pantalla completa. Solo "Salir" + gestor WiFi.</span></div>
+            </label>
+          </div>
+        </section>
+
+        <section class="block">
+          <h2>Subtítulos</h2>
+          <p class="hint">
+            Idioma preferido. Si pones API key de Wyzie, Kütral busca
+            subtítulos ahí (más cuotas que OpenSubtitles).
+            <a href="https://store.wyzie.io/redeem" target="_blank" rel="noopener">Generar key gratis →</a>
+          </p>
+          <label class="field">
+            <span class="field-label">Idioma</span>
+            <select bind:value={subsLang}>
+              {#each SUB_LANGS as sl}
+                <option value={sl.id}>{sl.label}</option>
+              {/each}
+            </select>
+          </label>
+          <label class="field">
+            <span class="field-label">Wyzie API key (opcional)</span>
+            <div class="key-row">
+              <input
+                type={showWyzie ? "text" : "password"}
+                bind:value={wyzieKey}
+                placeholder="Sin key: el player usa OpenSubtitles"
+              />
+              <button type="button" class="btn-ghost" onclick={() => (showWyzie = !showWyzie)}>
+                {showWyzie ? "Ocultar" : "Mostrar"}
+              </button>
+            </div>
+          </label>
+          <label class="field">
+            <span class="field-label">Tamaño de letra ({subSize}%)</span>
+            <input
+              type="range"
+              min="50"
+              max="200"
+              step="10"
+              bind:value={subSize}
+            />
+          </label>
+        </section>
+      </div>
+
+      <div class="col">
+        <section class="block">
+          <h2>Verificación de disponibilidad</h2>
+          <p class="hint">
+            Verificaciones simultáneas al detectar si una película se puede
+            reproducir. Más alto = los badges "no disponible" aparecen
+            más rápido, pero puede saturar la red y cortar el video.
+          </p>
+          <div class="mode-group">
+            {#each Array.from({ length: SCREENING_MAX - SCREENING_MIN + 1 }, (_, i) => i + SCREENING_MIN) as n}
+              <label class="mode-card" class:sel={screeningConc === n}>
+                <input type="radio" name="screeningConc" value={n} bind:group={screeningConc} />
+                <div>
+                  <strong>{n}</strong>
+                  <span>
+                    {#if n === 1}Recomendado. No interrumpe el video.
+                    {:else if n === SCREENING_MAX}Máximo. Solo si tu red es buena.
+                    {:else}Intermedio.
+                    {/if}
+                  </span>
+                </div>
+              </label>
+            {/each}
+          </div>
+        </section>
+
+        <section class="block">
+          <h2>Servidor web (mando remoto)</h2>
+          <p class="hint">
+            Levanta un servidor HTTP en la red local para usar el celular como
+            mando. Aplica al próximo inicio de Kütral.
+          </p>
+          <label class="toggle-row">
+            <input type="checkbox" bind:checked={webAuto} />
+            <span>Activar al iniciar la app</span>
+          </label>
+          <label class="field">
+            <span class="field-label">Puerto</span>
+            <input
+              type="number"
+              min="1024"
+              max="65535"
+              bind:value={webPortInput}
+            />
+          </label>
+        </section>
+
+        <section class="block">
+          <h2>Juegos — Regiones aceptadas</h2>
+          <p class="hint">
+            Qué versiones de cada juego se muestran en el catálogo, según la
+            región del nombre. Por defecto Europa y USA.
+          </p>
+          <div class="radio-group">
+            {#each GAME_REGIONS as r}
+              <label class="radio">
+                <input
+                  type="checkbox"
+                  checked={gameRegions.includes(r.id)}
+                  onchange={() => toggleRegion(r.id)}
+                />
+                <span>{r.label}</span>
+              </label>
+            {/each}
+          </div>
+        </section>
+
+        <section class="block">
+          <h2>Actualizaciones</h2>
+          <p class="hint">
+            Versión actual: <em>{currentVer || "?"}</em>
+          </p>
+
+          {#if updStage === "idle"}
+            <button class="btn-link" onclick={checkUpdate}>Buscar actualizaciones</button>
+          {:else if updStage === "checking"}
+            <p class="upd-line"><span class="spinner"></span> Buscando…</p>
+          {:else if updStage === "uptodate"}
+            <p class="upd-line upd-ok">Estás al día.</p>
+            <button class="link-tiny" onclick={checkUpdate}>Volver a buscar</button>
+          {:else if updStage === "available"}
+            <p class="upd-line">
+              Disponible: <strong>v{updVersion}</strong>
+            </p>
+            {#if updNotes}<pre class="upd-notes">{updNotes}</pre>{/if}
+            <button class="btn-link" onclick={installUpdate}>Instalar y reiniciar</button>
+            <button class="link-tiny" onclick={() => { updStage = "idle"; }}>Más tarde</button>
+          {:else if updStage === "installing"}
+            <p class="upd-line"><span class="spinner"></span> Descargando…</p>
+            {#if updTotal > 0}
+              <div class="bar"><div class="bar-fill" style="width: {updPct()}%"></div></div>
+              <p class="upd-mb">{updMb(updDownloaded)} / {updMb(updTotal)} MB · {updPct()}%</p>
+            {:else}
+              <p class="upd-mb">{updMb(updDownloaded)} MB</p>
+            {/if}
+          {:else if updStage === "ready"}
+            <p class="upd-line"><span class="spinner"></span> Reiniciando…</p>
+          {:else if updStage === "error"}
+            <p class="err">{updErr}</p>
+            <button class="link-tiny" onclick={checkUpdate}>Reintentar</button>
+          {/if}
         </section>
       </div>
     </div>
@@ -652,7 +750,7 @@
     padding: 28px 24px 80px;
   }
   .cfg-wrap {
-    max-width: 1080px;
+    max-width: 1480px;
     margin: 0 auto;
     display: flex;
     flex-direction: column;
@@ -681,11 +779,14 @@
 
   .cfg-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr 1fr 1fr;
     gap: 20px;
     align-items: start;
   }
-  @media (max-width: 880px) {
+  @media (max-width: 1180px) {
+    .cfg-grid { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 720px) {
     .cfg-grid { grid-template-columns: 1fr; }
   }
   .col {
@@ -722,6 +823,20 @@
     color: #d8d8e0;
   }
   .hint em { font-style: normal; color: #f3a951; }
+  .badge-opt {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 2px 8px;
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #888892;
+    background: #1c1c26;
+    border: 1px solid #2a2a36;
+    border-radius: 999px;
+    vertical-align: middle;
+  }
 
   .radio-group { display: flex; flex-direction: column; gap: 6px; }
   .radio {

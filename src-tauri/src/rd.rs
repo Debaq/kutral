@@ -62,7 +62,14 @@ async fn add_magnet(cli: &reqwest::Client, token: &str, magnet: &str) -> Result<
         .await
         .map_err(|e| format!("addMagnet red: {e}"))?;
     if !r.status().is_success() {
-        return Err(format!("addMagnet {}", r.status()));
+        let st = r.status();
+        let body = r.text().await.unwrap_or_default();
+        // 451 = RD bloquea ese hash por DMCA (takedown). Es por-torrent:
+        // el front debe saltar a otra fuente.
+        if st.as_u16() == 451 {
+            return Err(format!("BLOQUEADO_DMCA: RD 451 :: {body}"));
+        }
+        return Err(format!("addMagnet {st}: {body}"));
     }
     let v: AddMagnetResp = r.json().await.map_err(|e| format!("addMagnet parse: {e}"))?;
     Ok(v.id)
@@ -125,23 +132,44 @@ fn is_video(p: &str) -> bool {
 /// Resuelve un magnet a URL directa reproducible. Elige el archivo de video
 /// más grande. Falla si no está cacheado en RD (timeout ~30s).
 async fn resolve_magnet(token: &str, magnet: &str) -> Result<String, String> {
+    let hash = magnet
+        .split("btih:")
+        .nth(1)
+        .map(|s| s.chars().take(40).collect::<String>())
+        .unwrap_or_default();
+    eprintln!("[rd] resolve magnet hash={hash}");
     let cli = client()?;
-    let id = add_magnet(&cli, token, magnet).await?;
+    let id = match add_magnet(&cli, token, magnet).await {
+        Ok(id) => {
+            eprintln!("[rd]   addMagnet OK id={id}");
+            id
+        }
+        Err(e) => {
+            eprintln!("[rd]   addMagnet ERR: {e}");
+            return Err(e);
+        }
+    };
 
     // Elegir archivo de video más grande
     let info = torrent_info(&cli, token, &id).await?;
+    eprintln!("[rd]   files={} status={}", info.files.len(), info.status);
     let target = info
         .files
         .iter()
         .filter(|f| is_video(&f.path))
         .max_by_key(|f| f.bytes)
-        .ok_or("sin archivo de video")?;
+        .ok_or_else(|| {
+            eprintln!("[rd]   sin archivo de video en torrent");
+            "sin archivo de video".to_string()
+        })?;
+    eprintln!("[rd]   elegido: {} ({} MB)", target.path, target.bytes / 1_048_576);
     select_files(&cli, token, &id, &target.id.to_string()).await?;
 
     // Poll hasta "downloaded" (instantáneo si cacheado)
     let mut info = torrent_info(&cli, token, &id).await?;
     let mut waited = 0u64;
     while info.status != "downloaded" {
+        eprintln!("[rd]   poll status={} ({}s)", info.status, waited);
         if matches!(
             info.status.as_str(),
             "error" | "virus" | "dead" | "magnet_error"
@@ -157,7 +185,9 @@ async fn resolve_magnet(token: &str, magnet: &str) -> Result<String, String> {
     }
 
     let link = info.links.first().ok_or("sin link")?.clone();
-    unrestrict(&cli, token, &link).await
+    let url = unrestrict(&cli, token, &link).await?;
+    eprintln!("[rd]   unrestrict OK → {url}");
+    Ok(url)
 }
 
 /// Check batch de instant-availability. Devuelve los hashes (lowercase) que
@@ -200,6 +230,7 @@ async fn instant_available(token: &str, hashes: &[String]) -> Result<Vec<String>
             }
         }
     }
+    eprintln!("[rd] instant_available: {}/{} cacheados", found.len(), hashes.len());
     Ok(found.into_iter().collect())
 }
 
@@ -224,6 +255,122 @@ pub async fn rd_instant_available(
         return Err("token RD vacío".into());
     }
     instant_available(&token, &hashes).await
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct RdAccount {
+    #[serde(default)]
+    pub username: String,
+    #[serde(default, rename(deserialize = "type"))]
+    pub account_type: String, // "premium" | "free"
+    #[serde(default)]
+    pub premium: i64, // segundos de premium restantes
+    #[serde(default)]
+    pub expiration: String,
+    #[serde(default)]
+    pub points: i64,
+}
+
+/// Estado de la cuenta RD (premium/free, expiración). Diagnóstico de 451.
+#[tauri::command]
+pub async fn rd_account(token: String) -> Result<RdAccount, String> {
+    if token.is_empty() {
+        return Err("token RD vacío".into());
+    }
+    let cli = client()?;
+    let r = cli
+        .get(format!("{BASE}/user"))
+        .header("Authorization", bearer(&token))
+        .send()
+        .await
+        .map_err(|e| format!("user red: {e}"))?;
+    if !r.status().is_success() {
+        let st = r.status();
+        let body = r.text().await.unwrap_or_default();
+        return Err(format!("RD /user {st}: {body}"));
+    }
+    r.json().await.map_err(|e| format!("user parse: {e}"))
+}
+
+#[derive(Deserialize)]
+struct RdTorrentListItem {
+    id: String,
+    #[serde(default)]
+    added: String, // ISO 8601, ej "2026-05-30T18:41:56.000Z"
+}
+
+/// Días desde epoch (algoritmo de Howard Hinnant, sin deps).
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = (if y >= 0 { y } else { y - 399 }) / 400;
+    let yoe = y - era * 400;
+    let mp = if m > 2 { m - 3 } else { m + 9 };
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146097 + doe - 719468
+}
+
+/// Parsea "2026-05-30T18:41:56[.xxx]Z" (UTC) → epoch segundos.
+fn parse_iso_utc(s: &str) -> Option<i64> {
+    if s.len() < 19 {
+        return None;
+    }
+    let y: i64 = s.get(0..4)?.parse().ok()?;
+    let mo: i64 = s.get(5..7)?.parse().ok()?;
+    let d: i64 = s.get(8..10)?.parse().ok()?;
+    let h: i64 = s.get(11..13)?.parse().ok()?;
+    let mi: i64 = s.get(14..16)?.parse().ok()?;
+    let se: i64 = s.get(17..19)?.parse().ok()?;
+    Some(days_from_civil(y, mo, d) * 86400 + h * 3600 + mi * 60 + se)
+}
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Borra de la lista RD los torrents agregados hace más de `older_than_hours`.
+/// No afecta reproducción ni la caché global de RD. Devuelve cuántos borró.
+#[tauri::command]
+pub async fn rd_cleanup_torrents(token: String, older_than_hours: u64) -> Result<usize, String> {
+    if token.is_empty() {
+        return Err("token RD vacío".into());
+    }
+    if older_than_hours == 0 {
+        return Ok(0);
+    }
+    let cli = client()?;
+    let r = cli
+        .get(format!("{BASE}/torrents?limit=200"))
+        .header("Authorization", bearer(&token))
+        .send()
+        .await
+        .map_err(|e| format!("list red: {e}"))?;
+    if !r.status().is_success() {
+        return Err(format!("torrents list {}", r.status()));
+    }
+    let list: Vec<RdTorrentListItem> = r.json().await.map_err(|e| format!("list parse: {e}"))?;
+
+    let cutoff = now_secs() - (older_than_hours as i64) * 3600;
+    let mut deleted = 0usize;
+    for t in list {
+        match parse_iso_utc(&t.added) {
+            Some(added) if added < cutoff => {
+                let resp = cli
+                    .delete(format!("{BASE}/torrents/delete/{}", t.id))
+                    .header("Authorization", bearer(&token))
+                    .send()
+                    .await;
+                if matches!(resp, Ok(ref x) if x.status().is_success()) {
+                    deleted += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(deleted)
 }
 
 #[derive(Serialize)]

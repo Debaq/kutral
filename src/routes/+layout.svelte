@@ -1,13 +1,45 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { invoke } from "@tauri-apps/api/core";
+  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import Header from "$lib/Header.svelte";
   import Ayuda from "$lib/atajos/Ayuda.svelte";
   import Updater from "$lib/Updater.svelte";
   import { config, loadConfig, initDetection } from "$lib/config.svelte";
   import { setConcurrenciaScreening } from "$lib/screening.svelte";
   let { children } = $props();
+
+  let unlistenRemoteKey: UnlistenFn | null = null;
+
+  // Dispatcha un KeyboardEvent sintético en window y document para que
+  // tanto handlers globales (svelte:window onkeydown) como locales (modals)
+  // reaccionen. Reemplaza inyección OS-level (enigo no anda en Wayland).
+  function dispatchRemoteKey(key: string) {
+    const ev = new KeyboardEvent("keydown", {
+      key,
+      code: keyToCode(key),
+      bubbles: true,
+      cancelable: true,
+    });
+    (document.activeElement ?? document.body).dispatchEvent(ev);
+    window.dispatchEvent(new KeyboardEvent("keydown", { key, code: keyToCode(key), bubbles: true }));
+  }
+  function keyToCode(k: string): string {
+    switch (k) {
+      case "ArrowUp": return "ArrowUp";
+      case "ArrowDown": return "ArrowDown";
+      case "ArrowLeft": return "ArrowLeft";
+      case "ArrowRight": return "ArrowRight";
+      case "Enter": return "Enter";
+      case "Escape": return "Escape";
+      case "Backspace": return "Backspace";
+      case " ": return "Space";
+      case "i": case "I": return "KeyI";
+      case "m": case "M": return "KeyM";
+      default: return "";
+    }
+  }
 
   onMount(() => {
     loadConfig();
@@ -21,6 +53,11 @@
         console.warn("[web autostart]", e);
       });
     }
+    // Recibe keys del mando web y los dispatcha como eventos nativos.
+    // Reemplaza enigo (no compatible Wayland).
+    void listen<string>("remote_key", (e) => {
+      dispatchRemoteKey(e.payload);
+    }).then((un) => { unlistenRemoteKey = un; });
     // Apagar el splash de app.html. Mantenemos un piso mínimo de tiempo
     // (1800 ms) para que se aprecie el banner aunque Svelte monte rápido.
     // .ready dispara el fadeout CSS (700 ms); después removemos el nodo.
@@ -41,6 +78,11 @@
       (config.modeOverride === "auto" && config.detectedKutral)
     )
   );
+
+  onDestroy(() => {
+    unlistenRemoteKey?.();
+    unlistenRemoteKey = null;
+  });
 
   let lastApplied: boolean | null = null;
   $effect(() => {

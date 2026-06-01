@@ -24,41 +24,28 @@
       }
       #kutral-splash.ready { opacity: 0; }
 
-      /* Capa de bleed: el mismo banner agrandado y muy blureado se
-         proyecta como fondo, "capturando" los colores predominantes y
-         tiñiendo el negro circundante. Sin bordes duros entre banner
-         y fondo. La URL del background se pasa inline en el div para
-         esquivar PostCSS (no entiende %sveltekit.assets% dentro de url()). */
+      /* Glow naranja sutil detrás de la fogata. PNG transparente del logo,
+         sin imagen de fondo: el resplandor se hace con radial-gradient. */
       #kutral-splash .splash-bg {
         position: absolute;
-        inset: -15vh -15vw;
-        background-size: cover;
-        background-position: center;
-        background-repeat: no-repeat;
-        filter: blur(80px) saturate(1.4);
-        opacity: 0.55;
+        inset: 0;
+        background: radial-gradient(
+          ellipse at center,
+          rgba(255, 122, 46, 0.28) 0%,
+          rgba(255, 74, 28, 0.12) 30%,
+          rgba(10, 6, 8, 0) 65%
+        );
         z-index: 0;
       }
 
-      /* Contenido centrado: banner crisp + nombre debajo. */
+      /* Contenido centrado: solo el wordmark. */
       #kutral-splash .splash-stage {
         position: absolute;
         inset: 0;
         display: flex;
-        flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 32px;
         z-index: 1;
-      }
-      #kutral-splash .splash-stage img {
-        max-width: 62vw;
-        max-height: 55vh;
-        object-fit: contain;
-        /* Difumina los bordes del banner para que se funda con el bleed
-           del fondo en vez de tener un rectángulo nítido. */
-        -webkit-mask-image: radial-gradient(ellipse at center, black 60%, transparent 100%);
-                mask-image: radial-gradient(ellipse at center, black 60%, transparent 100%);
       }
       #kutral-splash .splash-title {
         font-family: "Inter", system-ui, -apple-system, sans-serif;
@@ -78,9 +65,8 @@
   </head>
   <body data-sveltekit-preload-data="hover">
     <div id="kutral-splash" aria-hidden="true">
-      <div class="splash-bg" style="background-image: url('%sveltekit.assets%/banner.webp');"></div>
+      <div class="splash-bg"></div>
       <div class="splash-stage">
-        <img src="%sveltekit.assets%/banner.webp" alt="" />
         <h1 class="splash-title">Kütral</h1>
       </div>
     </div>

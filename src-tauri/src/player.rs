@@ -78,8 +78,14 @@ pub fn mpv_play(
     #[cfg(not(windows))]
     let _ = std::fs::remove_file(ipc_path());
 
+    // input.conf: Esc y Backspace cierran mpv (por defecto Esc solo sale de
+    // fullscreen). Así el usuario vuelve a kutral con esas teclas.
+    let conf = std::env::temp_dir().join("kutral-mpv-input.conf");
+    let _ = std::fs::write(&conf, "ESC quit\nBS quit\nq quit\n");
+
     let mut cmd = Command::new("mpv");
     cmd.arg(format!("--input-ipc-server={}", ipc_path()))
+        .arg(format!("--input-conf={}", conf.display()))
         .arg("--fullscreen")
         .arg("--force-window=immediate")
         .arg("--no-terminal")
@@ -97,14 +103,18 @@ pub fn mpv_play(
     }
     cmd.arg(&url);
 
+    eprintln!("[mpv] spawn fullscreen url={url}");
     let child = cmd.spawn().map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
+        let msg = if e.kind() == std::io::ErrorKind::NotFound {
             "mpv no está instalado (falta en el PATH)".to_string()
         } else {
             format!("spawn mpv: {e}")
-        }
+        };
+        eprintln!("[mpv] ERROR: {msg}");
+        msg
     })?;
 
+    eprintln!("[mpv] pid={:?} lanzado", child.id());
     *state.child.lock().unwrap() = Some(child);
     Ok(())
 }

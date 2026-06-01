@@ -33,11 +33,14 @@ export async function suscribirScreening(
   };
 }
 
-export async function encolarScreening(ids: string[]): Promise<void> {
+export async function encolarScreening(
+  ids: string[],
+  kind: "movie" | "tv" = "movie",
+): Promise<void> {
   const limpios = ids.filter((s) => !!s && s.startsWith("tt"));
   if (!limpios.length) return;
   try {
-    await invoke("screening_enqueue", { ids: limpios });
+    await invoke("screening_enqueue", { ids: limpios, kind });
   } catch (e) {
     console.warn("[screening] encolar fail:", e);
   }

@@ -1,0 +1,5 @@
+# Binarios pesados: los repuebla fetch.sh, no se versionan.
+retroarch
+cores/*.so
+*.7z
+*.zip

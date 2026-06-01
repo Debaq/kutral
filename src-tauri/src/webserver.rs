@@ -1,13 +1,156 @@
 use serde::Serialize;
+use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Mutex, OnceLock,
 };
 use std::thread::JoinHandle;
 use std::time::Duration;
+use tauri::{Emitter, Manager};
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 
 const REMOTE_HTML: &str = include_str!("remote.html");
+
+/// Sistemas de emulador soportados (deben calzar con emu.rs).
+const SYSTEMS: [&str; 5] = ["nes", "snes", "gba", "gbc", "ds"];
+
+/// Carpeta donde viven las ROMs subidas: <app_data>/roms/.
+fn roms_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let base = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {e}"))?;
+    Ok(base.join("roms"))
+}
+
+/// Valida que un nombre de archivo sea seguro (sin path traversal).
+fn safe_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains("..")
+        && name.len() <= 255
+}
+
+/// Lista las ROMs subidas como JSON: [{"system":"nes","name":"x.nes"},…].
+fn roms_list_json(app: &tauri::AppHandle) -> String {
+    #[derive(Serialize)]
+    struct Rom {
+        system: String,
+        name: String,
+    }
+    let mut out: Vec<Rom> = Vec::new();
+    if let Ok(base) = roms_dir(app) {
+        for sys in SYSTEMS {
+            let dir = base.join(sys);
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for e in entries.flatten() {
+                    if e.path().is_file() {
+                        if let Some(n) = e.file_name().to_str() {
+                            out.push(Rom {
+                                system: sys.to_string(),
+                                name: n.to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    serde_json::to_string(&out).unwrap_or_else(|_| "[]".into())
+}
+
+/// Página web de subida de ROMs (servida en GET /roms).
+const ROMS_HTML: &str = r#"<!doctype html>
+<html lang="es"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Subir ROMs — Kütral</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:system-ui,sans-serif; background:#0d0d12; color:#eee;
+         padding:24px; max-width:640px; margin:0 auto; }
+  h1 { font-size:24px; margin:0 0 4px; }
+  h1 b { background:linear-gradient(135deg,#7d4fff,#2b6cff);
+         -webkit-background-clip:text; background-clip:text; color:transparent; }
+  p.sub { color:#888; margin:0 0 20px; }
+  label { display:block; font-size:13px; color:#aaa; margin:14px 0 6px; }
+  select, input[type=file] { width:100%; padding:12px; border-radius:10px;
+    background:#1a1a22; border:1px solid #2a2a36; color:#eee; font-size:15px; }
+  button { width:100%; margin-top:18px; padding:14px; border:none; border-radius:10px;
+    background:linear-gradient(135deg,#7d4fff,#2b6cff); color:#fff; font-size:16px;
+    font-weight:700; cursor:pointer; }
+  button:disabled { opacity:.5; }
+  #log { margin-top:20px; font-size:13px; }
+  .row { display:flex; justify-content:space-between; padding:8px 10px; border-radius:8px;
+    background:#15151c; margin-bottom:6px; }
+  .ok { color:#4ade80; } .err { color:#f87171; } .wait { color:#fbbf24; }
+  ul#list { list-style:none; padding:0; margin:16px 0 0; }
+  ul#list li { padding:6px 10px; background:#141019; border-radius:6px; margin-bottom:5px;
+    font-size:13px; display:flex; justify-content:space-between; }
+  ul#list .sys { color:#9c7bff; font-weight:700; text-transform:uppercase; font-size:11px; }
+</style></head>
+<body>
+  <h1><b>Juegos</b> · subir ROMs</h1>
+  <p class="sub">Elige el sistema y suelta los archivos. Quedan listos en Kütral.</p>
+
+  <label for="sys">Sistema</label>
+  <select id="sys">
+    <option value="nes">NES</option>
+    <option value="snes">SNES</option>
+    <option value="gba">Game Boy Advance</option>
+    <option value="gbc">GB Color</option>
+    <option value="ds">Nintendo DS</option>
+  </select>
+
+  <label for="files">ROMs</label>
+  <input id="files" type="file" multiple>
+
+  <button id="go">Subir</button>
+  <div id="log"></div>
+
+  <label style="margin-top:24px">Ya subidas</label>
+  <ul id="list"></ul>
+
+<script>
+const $ = (s) => document.querySelector(s);
+async function refresh() {
+  try {
+    const r = await fetch('/roms/list');
+    const items = await r.json();
+    $('#list').innerHTML = items.map(i =>
+      `<li><span>${i.name}</span><span class="sys">${i.system}</span></li>`).join('')
+      || '<li style="color:#666">— vacío —</li>';
+  } catch {}
+}
+$('#go').onclick = async () => {
+  const sys = $('#sys').value;
+  const files = $('#files').files;
+  if (!files.length) return;
+  $('#go').disabled = true;
+  $('#log').innerHTML = '';
+  for (const f of files) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML = `<span>${f.name}</span><span class="wait">subiendo…</span>`;
+    $('#log').appendChild(row);
+    try {
+      const res = await fetch(`/roms/${sys}/${encodeURIComponent(f.name)}`,
+        { method:'PUT', body: f });
+      row.lastChild.className = res.ok ? 'ok' : 'err';
+      row.lastChild.textContent = res.ok ? 'listo ✓' : 'error';
+    } catch {
+      row.lastChild.className = 'err';
+      row.lastChild.textContent = 'falló';
+    }
+  }
+  $('#go').disabled = false;
+  refresh();
+};
+refresh();
+</script>
+</body></html>"#;
 
 struct ServerState {
     handle: Option<JoinHandle<()>>,
@@ -106,7 +249,10 @@ pub fn web_server_status() -> WebStatus {
 }
 
 #[tauri::command]
-pub fn web_server_start(port: Option<u16>) -> Result<WebStatus, String> {
+pub fn web_server_start(
+    app: tauri::AppHandle,
+    port: Option<u16>,
+) -> Result<WebStatus, String> {
     let mut g = state().lock().unwrap();
     if g.is_some() {
         let s = g.as_ref().unwrap();
@@ -122,6 +268,7 @@ pub fn web_server_start(port: Option<u16>) -> Result<WebStatus, String> {
     let server = Server::http(&addr).map_err(|e| format!("bind {}: {}", addr, e))?;
     let stop = std::sync::Arc::new(AtomicBool::new(false));
     let stop_th = stop.clone();
+    let app_th = app.clone();
     let handle = std::thread::spawn(move || loop {
         if stop_th.load(Ordering::Relaxed) {
             break;
@@ -149,6 +296,70 @@ pub fn web_server_start(port: Option<u16>) -> Result<WebStatus, String> {
             (Method::Get, "/health") => {
                 req.respond(Response::from_string("ok"))
             }
+            (Method::Get, "/roms") => {
+                let mut r = Response::from_string(ROMS_HTML);
+                if let Some(h) = header(b"Content-Type", b"text/html; charset=utf-8") {
+                    r = r.with_header(h);
+                }
+                if let Some(h) = header(b"Cache-Control", b"no-store") {
+                    r = r.with_header(h);
+                }
+                req.respond(r)
+            }
+            (Method::Get, "/roms/list") => {
+                let body = roms_list_json(&app_th);
+                let mut r = Response::from_string(body);
+                if let Some(h) = header(b"Content-Type", b"application/json") {
+                    r = r.with_header(h);
+                }
+                req.respond(r)
+            }
+            (Method::Put, p) if p.starts_with("/roms/") => {
+                // Formato esperado: /roms/<sys>/<nombre>
+                let rest = &p["/roms/".len()..];
+                let mut it = rest.splitn(2, '/');
+                let sys = it.next().unwrap_or("");
+                let name_enc = it.next().unwrap_or("");
+                let name = urlencoding::decode(name_enc)
+                    .map(|c| c.into_owned())
+                    .unwrap_or_default();
+
+                if !SYSTEMS.contains(&sys) || !safe_name(&name) {
+                    let r = Response::from_string("ruta inválida")
+                        .with_status_code(StatusCode(400));
+                    req.respond(r)
+                } else {
+                    let mut bytes = Vec::new();
+                    match req.as_reader().read_to_end(&mut bytes) {
+                        Err(_) => {
+                            let r = Response::from_string("bad body")
+                                .with_status_code(StatusCode(400));
+                            req.respond(r)
+                        }
+                        Ok(_) => {
+                            let res = roms_dir(&app_th).and_then(|base| {
+                                let dir = base.join(sys);
+                                std::fs::create_dir_all(&dir)
+                                    .map_err(|e| format!("mkdir: {e}"))?;
+                                std::fs::write(dir.join(&name), &bytes)
+                                    .map_err(|e| format!("write: {e}"))
+                            });
+                            match res {
+                                Ok(_) => {
+                                    let _ = app_th.emit("rom_uploaded", name.clone());
+                                    req.respond(Response::from_string("ok"))
+                                }
+                                Err(e) => {
+                                    eprintln!("[web /roms] {}", e);
+                                    let r = Response::from_string(format!("err: {}", e))
+                                        .with_status_code(StatusCode(500));
+                                    req.respond(r)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             (Method::Post, "/key") => {
                 let mut body = String::new();
                 if req.as_reader().read_to_string(&mut body).is_err() {
@@ -157,15 +368,20 @@ pub fn web_server_start(port: Option<u16>) -> Result<WebStatus, String> {
                     req.respond(r)
                 } else {
                     match parse_key_body(&body) {
-                        Some(k) => match crate::press_key(&k) {
-                            Ok(_) => req.respond(Response::from_string("ok")),
-                            Err(e) => {
-                                eprintln!("[web /key] press_key fail: {}", e);
-                                let r = Response::from_string(format!("err: {}", e))
-                                    .with_status_code(StatusCode(500));
-                                req.respond(r)
+                        Some(k) => {
+                            // Emite evento al frontend; el frontend dispatcha
+                            // un KeyboardEvent nativo. Portable a Wayland/X11/macOS/Windows
+                            // sin depender de enigo (que falla en Wayland).
+                            match app_th.emit("remote_key", k.clone()) {
+                                Ok(_) => req.respond(Response::from_string("ok")),
+                                Err(e) => {
+                                    eprintln!("[web /key] emit fail: {}", e);
+                                    let r = Response::from_string(format!("err: {}", e))
+                                        .with_status_code(StatusCode(500));
+                                    req.respond(r)
+                                }
                             }
-                        },
+                        }
                         None => {
                             let r = Response::from_string("bad json")
                                 .with_status_code(StatusCode(400));

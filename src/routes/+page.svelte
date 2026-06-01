@@ -11,6 +11,8 @@
   import { config } from "$lib/config.svelte";
   import SourcePicker from "$lib/SourcePicker.svelte";
   import PlayMenu from "$lib/PlayMenu.svelte";
+  import EpisodePicker from "$lib/EpisodePicker.svelte";
+  import RemoteQr from "$lib/RemoteQr.svelte";
   import {
     cargarNoDisponiblesIniciales,
     encolarScreening,
@@ -63,11 +65,24 @@
     }
   }
 
+  // Despacha el cierre correcto según el modo actual al momento de presionar Esc/Backspace.
+  // Evita el bug donde Esc en playmenu llamaba a stopDiscover (que no-op) y dejaba la vista colgada.
+  function dispatchBack() {
+    if (mode === "playmenu" || mode === "episodes" || mode === "sources") {
+      closeSources();
+    } else if (mode === "discover" || mode === "trailer" || mode === "unavailable") {
+      stopDiscover();
+    }
+  }
+
   async function registerBackShortcuts(includeArrows = false) {
+    // Desregistrar primero: evita "HotKey already registered" si el modo
+    // anterior dejó shortcuts pegados (ej. trailer → playmenu → trailer).
+    await unregisterBackShortcuts();
     for (const k of BACK_KEYS) {
       try {
         await register(k, (ev) => {
-          if (ev.state === "Pressed") stopDiscover();
+          if (ev.state === "Pressed") dispatchBack();
         });
       } catch (e) {
         console.warn(`shortcut ${k} no registrado`, e);
@@ -128,6 +143,15 @@
     directors: PersonMini[];
     cast: PersonMini[];
     images?: string[];
+    number_of_seasons?: number | null;
+    seasons?: SeasonMini[];
+  };
+  type SeasonMini = {
+    season_number: number;
+    episode_count: number;
+    name: string;
+    air_date: string | null;
+    poster_path: string | null;
   };
   type PersonFilm = {
     id: number;
@@ -201,6 +225,58 @@
   let totalPages = $state(1);
   let hasMore = $state(true);
   let loadingMore = $state(false);
+  // Efecto de chispas mágicas mientras se cargan más pelis tras ArrowDown
+  // al final del grid (gallery + down + no candidato). Se autoapaga cuando
+  // loadingMore vuelve a false o tras un timeout de seguridad.
+  let sparkling = $state(false);
+  let sparkleTimer: ReturnType<typeof setTimeout> | null = null;
+  const SPARKLE_COUNT = 16;
+  // Posiciones / glifos congelados al primer render para que no parpadeen
+  // entre re-renders reactivos.
+  // Paleta dorada con acentos mágicos (rosa, púrpura, cian, ámbar).
+  const SPARKLE_COLORS = ["#f5c518", "#f5c518", "#ffd76a", "#ff8be4", "#a78bff", "#8be0ff"];
+  const SPARKLES = Array.from({ length: SPARKLE_COUNT }, (_, i) => ({
+    i,
+    x: Math.round(5 + Math.random() * 90),
+    y: Math.round(5 + Math.random() * 90),
+    glyph: ["✦", "✧", "⋆", "★", "✺", "·"][Math.floor(Math.random() * 6)],
+    delay: Math.round(Math.random() * 800),
+    size: 14 + Math.round(Math.random() * 18),
+    color: SPARKLE_COLORS[Math.floor(Math.random() * SPARKLE_COLORS.length)],
+  }));
+  // Mide cuántas columnas tiene el grid en tiempo real para calcular cuántos
+  // ghost-slots renderizar (rellenar la fila + opcionalmente la próxima).
+  let gridEl: HTMLDivElement | null = $state(null);
+  let gridCols = $state(6);
+  let gridResizeObs: ResizeObserver | null = null;
+  function measureGridCols() {
+    if (!gridEl) return;
+    const tc = getComputedStyle(gridEl).gridTemplateColumns;
+    const cols = tc.split(" ").filter((x) => x && x !== "0px").length;
+    if (cols > 0) gridCols = cols;
+  }
+  // ghostCount: slots vacíos en la fila actual; si la fila está exacta,
+  // mostramos una fila completa de fantasmas como "lo que viene".
+  const ghostCount = $derived.by(() => {
+    if (!hasMore || !items.length) return 0;
+    const rem = items.length % gridCols;
+    return rem === 0 ? gridCols : gridCols - rem;
+  });
+  function startSparkles() {
+    sparkling = true;
+    if (sparkleTimer) clearTimeout(sparkleTimer);
+    // Safety: si loadMore se cuelga, cortar a los 4s.
+    sparkleTimer = setTimeout(() => { sparkling = false; }, 4000);
+  }
+  $effect(() => {
+    // Autoapaga cuando termina la carga.
+    if (sparkling && !loadingMore) {
+      if (sparkleTimer) { clearTimeout(sparkleTimer); sparkleTimer = null; }
+      // Pequeño delay para que las chispas no desaparezcan en seco.
+      const t = setTimeout(() => { sparkling = false; }, 350);
+      return () => clearTimeout(t);
+    }
+  });
 
   type SortOpt = { id: string; label: string; movie: string; tv: string };
   const SORTS: SortOpt[] = [
@@ -238,7 +314,9 @@
   });
 
   $effect(() => {
-    const reproduciendo = mode === "discover" || mode === "trailer" || mode === "sources";
+    const reproduciendo =
+      mode === "discover" || mode === "trailer" || mode === "sources" ||
+      mode === "episodes" || mode === "playmenu";
     setPlaying(reproduciendo);
     // Pausamos el screening mientras hay video: evita que el worker robe
     // red al stream del iframe y cause cortes/saltitos.
@@ -250,6 +328,20 @@
   type CardStatus = "checking" | "ok" | "trailer" | "none";
   let statusMap = $state<Map<number, CardStatus>>(new Map());
   let imdbIdMap = $state<Map<number, string>>(new Map());
+
+  // URL del servidor web (si está activo) para mostrar QR del mando remoto
+  // sobre la carátula del título seleccionado. Poll periódico para reflejar
+  // auto-start, start manual o stop sin refrescar la página.
+  let webRemoteUrl = $state<string | null>(null);
+  let webStatusTimer: ReturnType<typeof setInterval> | null = null;
+  async function refreshWebStatus() {
+    try {
+      const s = await invoke<{ running: boolean; url: string | null }>("web_server_status");
+      webRemoteUrl = s.running ? s.url : null;
+    } catch {
+      webRemoteUrl = null;
+    }
+  }
 
   type AwardsSummary = { wins: number; nominations: number };
   let awardsMap = $state<Map<string, AwardsSummary | "loading">>(new Map());
@@ -297,10 +389,32 @@
   let selected = $state<Detail | null>(null);
   let detailLoading = $state(false);
 
-  let mode = $state<"browse" | "discover" | "trailer" | "unavailable" | "sources" | "playmenu">("browse");
+  let mode = $state<"browse" | "discover" | "trailer" | "unavailable" | "sources" | "playmenu" | "episodes">("browse");
   let checkingDiscover = $state(false);
   let trailerKey = $state<string>("");
   let appleTrailerUrl = $state<string>("");
+  // Datos extra para PlayMenu: OMDb (premios/ratings/plot) + trailer pre-cargado.
+  type OmdbRating = { source: string; value: string };
+  type OmdbDetail = {
+    plot?: string | null;
+    awards?: string | null;
+    rated?: string | null;
+    writer?: string | null;
+    country?: string | null;
+    language?: string | null;
+    released?: string | null;
+    metascore?: string | null;
+    imdb_rating?: string | null;
+    imdb_votes?: string | null;
+    box_office?: string | null;
+    production?: string | null;
+    ratings: OmdbRating[];
+  };
+  let menuOmdb = $state<OmdbDetail | null>(null);
+  let menuTrailerKey = $state<string>("");
+  let menuApple = $state<string>("");
+  const omdbCache = new Map<string, OmdbDetail>();
+  const trailerCache = new Map<string, { yt: string; apple: string }>();
   let unavailable = $state<{ open: boolean; reason: "404" | "no_imdb"; checking: boolean }>({
     open: false,
     reason: "404",
@@ -327,7 +441,9 @@
     // En discover/trailer: Esc o Backspace cierran y vuelven a browse.
     ayuda.set("inicio", [
       { tecla: "← → ↑ ↓", desc: "Navegar entre cards" },
-      { tecla: "Enter", desc: "Abrir / descubrir" },
+      { tecla: "Enter · Espacio", desc: "Abrir / descubrir" },
+      { tecla: "I", desc: "Saltar a panel info / volver a cards" },
+      { tecla: "Home · End", desc: "Primera / última card" },
       { tecla: "Esc · Backspace", desc: "Cerrar player (en discover)" },
       { tecla: "I-I", desc: "Ayuda" },
     ]);
@@ -351,6 +467,18 @@
       resetAndLoad();
     }
 
+    // QR del mando remoto: refrescar estado del servidor cada 4s.
+    refreshWebStatus();
+    webStatusTimer = setInterval(refreshWebStatus, 4000);
+
+    // Observar cambios de tamaño del grid para recalcular columnas (ghost slots).
+    gridResizeObs = new ResizeObserver(() => measureGridCols());
+
+    // Si el foco se pierde (cae en body), devolverlo a la primera card real
+    // (cardEls[0] = la peli a la derecha de la card de Vera). Solo en browse
+    // y sin overlays activos: no robar foco a modales o inputs.
+    document.addEventListener("focusout", scheduleFocusGuard);
+
     // El handoff de Vera (B5) NO va acá: onMount solo corre una vez en la
     // SPA, y Vera navega cliente-side con goto(). Movido a afterNavigate
     // abajo, que sí corre en cada navegación.
@@ -361,6 +489,57 @@
   // tiene que limpiarse cuando home desmonta.
   onDestroy(() => {
     window.removeEventListener("message", onIframeMessage);
+    if (webStatusTimer !== null) {
+      clearInterval(webStatusTimer);
+      webStatusTimer = null;
+    }
+    gridResizeObs?.disconnect();
+    gridResizeObs = null;
+    document.removeEventListener("focusout", scheduleFocusGuard);
+  });
+
+  // Reasegura foco en la primera card del catálogo cuando se pierde.
+  // setTimeout(0) para leer activeElement DESPUÉS de que el navegador haya
+  // movido el foco al destino del focusout (suele ser body si nadie lo agarró).
+  let focusGuardScheduled = false;
+  function scheduleFocusGuard() {
+    if (focusGuardScheduled) return;
+    focusGuardScheduled = true;
+    setTimeout(() => {
+      focusGuardScheduled = false;
+      if (mode !== "browse") return;
+      if (carousel || personOpen || unavailable.open || sortOpen) return;
+      if (showKey) return;
+      if (document.visibilityState !== "visible") return;
+      const cur = document.activeElement as HTMLElement | null;
+      // Tiene foco navegable real → no tocar.
+      if (cur && cur !== document.body && cur.matches?.("[data-nav]")) return;
+      // Tampoco intervenir si está en un input no marcado data-nav.
+      const tag = cur?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      // Estricto: SOLO la primera card real (a la derecha de Vera). Nada de
+      // tabs/búsqueda/info como fallback — esos roles confunden al user.
+      // Si aún no hay card montada, esperar (el $effect inicial la enfoca
+      // apenas se monte).
+      const target = cardEls.find((el) => el) ?? null;
+      target?.focus({ preventScroll: true });
+    }, 0);
+  }
+
+  // Ligar/desligar el observer al elemento real cuando cambia.
+  // Capturamos las refs locales para que el cleanup use el MISMO elemento
+  // que se observó (gridEl puede ser null al desmontar y unobserve(null) tira
+  // TypeError, lo que rompe toda la cadena reactiva de Svelte 5).
+  $effect(() => {
+    const el = gridEl;
+    const obs = gridResizeObs;
+    if (el && obs) {
+      obs.observe(el);
+      measureGridCols();
+      return () => {
+        try { obs.unobserve(el); } catch { /* tolerado */ }
+      };
+    }
   });
 
   // Handoff de Vera (B5): se dispara en CADA navegación cliente, incluyendo
@@ -590,9 +769,10 @@
   async function markUnavailable(imdb_id: string) {
     if (!db) return;
     try {
+      const kind = tabToMediaType(tab);
       await db.execute(
-        `INSERT OR REPLACE INTO unavailable_items (imdb_id, detected_at) VALUES ($1, $2)`,
-        [imdb_id, Date.now()]
+        `INSERT OR REPLACE INTO unavailable_items (imdb_id, kind, detected_at) VALUES ($1, $2, $3)`,
+        [imdb_id, kind, Date.now()]
       );
       const s = new Set(unavailableSet);
       s.add(imdb_id);
@@ -782,9 +962,9 @@
         const im = new Map(imdbIdMap);
         im.set(id, s.imdb_id);
         imdbIdMap = im;
-        // Disparar screening de fondo: si la peli no tiene player real,
-        // queda marcada y la UI esconde el botón Descubrir.
-        void encolarScreening([s.imdb_id]);
+        // Disparar screening de fondo: si el título no tiene player real,
+        // queda marcado y la UI esconde el botón Descubrir.
+        void encolarScreening([s.imdb_id], tabToMediaType(tab));
         // Premios/nominaciones (Wikidata). Cache + cola con concurrencia.
         enqueueAwards(s.imdb_id);
       }
@@ -900,12 +1080,16 @@
 
   function attachObserver(node: HTMLDivElement) {
     sentinelEl = node;
+    // root = .grid-wrap (scroll container real). Sin esto el observer mide
+    // contra el viewport y el sentinel — que está dentro de un scroll
+    // interno — nunca cuenta como intersectado por más que el user llegue
+    // al fondo del grid.
+    const root = node.parentElement as HTMLElement | null;
     observer = new IntersectionObserver(
       async (entries) => {
         for (const e of entries) {
           if (e.isIntersecting) {
             await loadMore();
-            // Re-armar dispatch: si tras append el sentinel sigue visible, vuelve a disparar
             if (observer && sentinelEl) {
               observer.unobserve(sentinelEl);
               observer.observe(sentinelEl);
@@ -913,7 +1097,7 @@
           }
         }
       },
-      { rootMargin: "400px" }
+      { root, rootMargin: "400px" }
     );
     observer.observe(node);
     return {
@@ -981,11 +1165,13 @@
   // Solo se setea en startDiscover y se limpia en stopDiscover.
   let discoverSrc = $state<string>("");
 
-  function discoverUrl(imdb_id: string, resumeAt?: number) {
+  function discoverUrl(imdb_id: string, kind: "movie" | "tv", resumeAt?: number) {
     // VidAPI endpoint canónico (docs: vidapi.ru/api). Acepta resumeAt en
     // segundos para seek inicial y emite PLAYER_EVENT postMessage con el
     // progreso real del <video>. Reemplaza el chain playimdb→streamimdb.
-    let url = `https://vaplayer.ru/embed/movie/${imdb_id}?autoplay=1`;
+    // El path debe coincidir con el tipo: /embed/movie/ para pelis,
+    // /embed/tv/ para series — si no, el provider no encuentra el título.
+    let url = `https://vaplayer.ru/embed/${kind}/${imdb_id}?autoplay=1`;
     if (resumeAt && resumeAt > 5) {
       url += `&resumeAt=${Math.floor(resumeAt)}`;
     }
@@ -1047,7 +1233,8 @@
     // Snapshot del src ANTES de cambiar a mode=discover. progressForSelected
     // puede mutar varias veces durante la sesión (cada PLAYER_EVENT), pero
     // discoverSrc queda fijo hasta stopDiscover.
-    discoverSrc = discoverUrl(selected.imdb_id, progressForSelected?.watched_seconds);
+    const playKind = selected.media_type === "tv" ? "tv" : "movie";
+    discoverSrc = discoverUrl(selected.imdb_id, playKind, progressForSelected?.watched_seconds);
     discoverStartTs = Date.now();
     mode = "discover";
     setFs(true);
@@ -1055,9 +1242,18 @@
     setTimeout(() => document.querySelector<HTMLElement>(".back-btn")?.focus(), 50);
   }
 
-  // Si la lista de fuentes debe auto-reproducir la mejor (⚡ Ver con RealDebrid)
+  // Si la lista de fuentes debe auto-reproducir la mejor (⚡ Ver con debrid)
   // o mostrar la lista para elegir (🔄 Rebuscar fuentes).
   let sourcesAutoplay = $state(false);
+  // Temporada/episodio elegidos (series/anime). null en películas.
+  let sourcesSeason = $state<number | null>(null);
+  let sourcesEpisode = $state<number | null>(null);
+
+  // Tipo para el scraper: movie / anime (tab) / series.
+  function currentKind(): "movie" | "series" | "anime" {
+    if (selected?.media_type === "movie") return "movie";
+    return tab === "anime" ? "anime" : "series";
+  }
 
   // Etiqueta de progreso para el menú ("45%" / "12m 3s" / null si no hay).
   function progressLabelFor(): string | null {
@@ -1079,19 +1275,129 @@
     }
     mode = "playmenu";
     setFs(true);
+    void prefetchMenuExtras();
+    // Atajos OS-level para asegurar que Esc/Backspace cierren incluso si el
+    // foco quedó atrapado en un iframe/embed.
+    void registerBackShortcuts(false);
+  }
+
+  // Bajamos OMDb (premios/ratings/plot largo) + trailer en paralelo cuando se
+  // abre el PlayMenu. No bloquea: la UI ya mostró todo lo que tiene de TMDb.
+  async function prefetchMenuExtras() {
+    if (!selected?.imdb_id) {
+      menuOmdb = null;
+      menuTrailerKey = "";
+      menuApple = "";
+      return;
+    }
+    const imdb = selected.imdb_id;
+    const mediaType = selected.media_type;
+    const title = selected.title;
+    const year = selected.year || "";
+    const tmdbId = selected.id;
+    const omdbKey = (config.omdbKey || "").trim();
+
+    // Servir desde cache si existe.
+    menuOmdb = omdbCache.get(imdb) ?? null;
+    const tCache = trailerCache.get(imdb);
+    menuTrailerKey = tCache?.yt || "";
+    menuApple = tCache?.apple || "";
+
+    const tasks: Promise<unknown>[] = [];
+
+    if (omdbKey && !omdbCache.has(imdb)) {
+      tasks.push(
+        invoke<OmdbDetail>("omdb_detail", { imdbId: imdb, apiKey: omdbKey })
+          .then((d) => {
+            omdbCache.set(imdb, d);
+            if (selected?.imdb_id === imdb) menuOmdb = d;
+          })
+          .catch((e) => console.warn("[omdb_detail]", e)),
+      );
+    }
+
+    if (!trailerCache.has(imdb)) {
+      tasks.push(
+        (async () => {
+          let yt = "";
+          let apple = "";
+          try {
+            const a = await invoke<{ url: string } | null>("apple_trailer", {
+              title, year, mediaType,
+            });
+            if (a?.url) apple = a.url;
+          } catch (e) { console.warn("[apple_trailer menu]", e); }
+          if (!apple) {
+            try {
+              const vids = await invoke<Video[]>("tmdb_videos", {
+                mediaType, id: tmdbId, apiKey,
+              });
+              if (vids.length) yt = vids[0].key;
+            } catch (e) { console.warn("[tmdb_videos menu]", e); }
+          }
+          trailerCache.set(imdb, { yt, apple });
+          if (selected?.imdb_id === imdb) {
+            menuTrailerKey = yt;
+            menuApple = apple;
+          }
+        })(),
+      );
+    }
+
+    await Promise.all(tasks);
+  }
+
+  // Acción "Trailer" desde PlayMenu: reusa los datos ya bajados.
+  function menuTrailer() {
+    if (menuApple) {
+      appleTrailerUrl = menuApple;
+      mode = "trailer";
+      setFs(true);
+      setTimeout(() => document.querySelector<HTMLElement>(".trailer-bar .bar-btn")?.focus(), 50);
+      return;
+    }
+    if (menuTrailerKey) {
+      trailerKey = menuTrailerKey;
+      mode = "trailer";
+      setFs(true);
+      setTimeout(() => document.querySelector<HTMLElement>(".trailer-bar .bar-btn")?.focus(), 50);
+      return;
+    }
+    // Fallback al flujo original (busca de nuevo).
+    void watchTrailer();
   }
 
   // --- Acciones del menú ---
   function menuContinue() { void startDiscover(); }      // web con resume
   function menuRestart() { void restartDiscover(); }     // web desde 0
-  function menuRealDebrid() { sourcesAutoplay = true; mode = "sources"; }  // auto mejor
-  function menuResearch() { sourcesAutoplay = false; mode = "sources"; }   // elegir
+  // Abre la ruta debrid. Películas → lista directa. Series/anime → elegir
+  // temporada/episodio primero.
+  function openDebrid(autoplay: boolean) {
+    sourcesAutoplay = autoplay;
+    if (selected?.media_type === "movie") {
+      sourcesSeason = null;
+      sourcesEpisode = null;
+      mode = "sources";
+    } else {
+      mode = "episodes";
+    }
+  }
+  function menuRealDebrid() { openDebrid(true); }  // auto mejor
+  function menuResearch() { openDebrid(false); }   // elegir
+
+  // Episodio elegido en EpisodePicker → a la lista de fuentes.
+  function onPickEpisode(season: number, episode: number) {
+    sourcesSeason = season;
+    sourcesEpisode = episode;
+    mode = "sources";
+  }
   function menuWeb() { void startDiscover(true); }       // iframe playimdb
 
   // Cierra menú/lista y vuelve al catálogo.
   function closeSources() {
     mode = "browse";
     setFs(false);
+    void unregisterBackShortcuts();
     setTimeout(() => {
       document.querySelector<HTMLElement>('[data-section="info"] [data-nav]')?.focus();
     }, 50);
@@ -1275,7 +1581,17 @@
       // info SOLO puede salir lateralmente; vertical queda cautivo
       const allowCross =
         curSection !== "info" || dir === "right" || dir === "left";
-      if (allowCross) {
+      // gallery + ArrowDown: NUNCA saltar a info. Si quedan más pelis
+      // por cargar, dispara loadMore y deja el foco donde está; el siguiente
+      // ArrowDown ya encontrará candidatos válidos en la misma sección.
+      const galleryDownTrapped =
+        curSection === "gallery" && dir === "down";
+      if (galleryDownTrapped) {
+        if (hasMore) {
+          startSparkles();
+          if (!loadingMore) void loadMore();
+        }
+      } else if (allowCross) {
         best = findBest(cur, all, dir);
       }
     }
@@ -1369,6 +1685,23 @@
       }
       return;
     }
+    if (mode === "trailer") {
+      if (e.key === "Escape" || e.key === "Backspace") {
+        e.preventDefault();
+        stopDiscover();
+        return;
+      }
+      return;
+    }
+    if (mode === "playmenu" || mode === "episodes" || mode === "sources") {
+      if (e.key === "Escape" || e.key === "Backspace") {
+        e.preventDefault();
+        closeSources();
+        return;
+      }
+      // Dejar que el componente maneje el resto (flechas, Enter).
+      return;
+    }
     onGlobalKey(e);
   }}
   onclick={(e) => {
@@ -1407,25 +1740,41 @@
   </div>
 {:else if mode === "playmenu" && selected?.imdb_id}
   <PlayMenu
-    title={selected.title}
+    detail={selected}
+    omdb={menuOmdb}
     progressLabel={progressLabelFor()}
-    backdrop={selected.backdrop_path ? img(`${IMG}/w1280${selected.backdrop_path}`, 1280) : null}
-    year={selected.year || null}
-    overview={selected.overview || null}
+    posterUrl={selected.poster_path ? img(`${IMG}/w342${selected.poster_path}`, 342) : null}
+    backdropUrl={selected.backdrop_path ? img(`${IMG}/w1280${selected.backdrop_path}`, 1280) : null}
+    trailerKey={menuTrailerKey}
+    appleTrailerUrl={menuApple}
     hasRd={!!(config.rdKey || "").trim()}
-    isMovie={selected.media_type === "movie"}
     onContinue={menuContinue}
     onRestart={menuRestart}
     onRealDebrid={menuRealDebrid}
     onResearch={menuResearch}
+    onTrailer={menuTrailer}
+    onClose={closeSources}
+  />
+{:else if mode === "episodes" && selected?.imdb_id}
+  <EpisodePicker
+    seriesId={selected.id}
+    title={selected.title}
+    backdrop={selected.backdrop_path ? img(`${IMG}/w1280${selected.backdrop_path}`, 1280) : null}
+    stillBase={`${IMG}/w300`}
+    seasons={selected.seasons ?? []}
+    apiKey={apiKey}
+    onPick={onPickEpisode}
     onWeb={menuWeb}
     onClose={closeSources}
   />
 {:else if mode === "sources" && selected?.imdb_id}
   <SourcePicker
     imdbId={selected.imdb_id}
-    mediaType={selected.media_type === "tv" ? "tv" : "movie"}
+    kind={currentKind()}
+    season={sourcesSeason}
+    episode={sourcesEpisode}
     title={selected.title}
+    backdrop={selected.backdrop_path ? img(`${IMG}/w1280${selected.backdrop_path}`, 1280) : null}
     token={(config.rdKey || "").trim()}
     autoplay={sourcesAutoplay}
     onClose={closeSources}
@@ -1651,6 +2000,12 @@
 
     <section class="gallery">
       <header data-section="filters">
+        {#if webRemoteUrl}
+          <div class="qr-col">
+            <RemoteQr url={webRemoteUrl} size={70} />
+          </div>
+        {/if}
+        <div class="filters-col">
         <div class="row1">
           <div class="tabs">
             <button data-nav class:active={tab === "movie"} onclick={() => switchTab("movie")}>Películas</button>
@@ -1721,6 +2076,7 @@
             {/each}
           </div>
         {/if}
+        </div>
       </header>
 
       {#if listError}<p class="err">{listError}</p>{/if}
@@ -1729,7 +2085,7 @@
         <div class="empty">Cargando…</div>
       {:else}
         <div class="grid-wrap">
-          <div class="grid" data-section="gallery">
+          <div class="grid" data-section="gallery" bind:this={gridEl}>
             <a class="card vera-card" data-nav href="/vera" title="Pregúntale a Vera">
               <div class="vera-poster">
                 <div class="vera-title-poster">
@@ -1761,6 +2117,19 @@
                 <span class="card-sub">Compite. El que gana elige peli.</span>
               </div>
             </div>
+
+            <a class="card juegos-card" data-nav href="/juegos" title="Jugar">
+              <div class="juegos-poster">
+                <div class="vera-title-poster">
+                  <span class="juegos-marca">Juegos</span>
+                  <em>retro</em>
+                </div>
+              </div>
+              <div class="card-meta">
+                <span class="card-title juegos-icon-title">🎮</span>
+                <span class="card-sub">NES · SNES · GBC · DS</span>
+              </div>
+            </a>
 
             {#each items as it, i (it.id)}
               {@const title = it.title || it.name || ""}
@@ -1816,6 +2185,21 @@
                   </div>
                 </button>
               {/if}
+            {/each}
+            {#each Array(ghostCount) as _, g (g)}
+              <div class="ghost-card" class:loading={loadingMore || sparkling} aria-hidden="true">
+                {#each SPARKLES as s (s.i)}
+                  <span
+                    class="sparkle"
+                    style:left="{(s.x + g * 7) % 100}%"
+                    style:top="{(s.y + g * 11) % 100}%"
+                    style:font-size="{s.size}px"
+                    style:animation-delay="{s.delay + g * 90}ms"
+                    style:color={s.color}
+                    style:text-shadow="0 0 6px {s.color}, 0 0 14px {s.color}"
+                  >{s.glyph}</span>
+                {/each}
+              </div>
             {/each}
             {#if !items.length && apiKey}
               <div class="empty">Sin resultados</div>
@@ -2306,13 +2690,34 @@
 
   /* GALLERY */
   .gallery { display: flex; flex-direction: column; min-height: 0; }
+  /* Header = caja horizontal: QR (izq) + filtros stacked (der). */
   .gallery > header {
-    padding: 10px 16px; display: flex; flex-direction: column; gap: 8px;
-    border-bottom: 1px solid #1f1f28; background: #0d0d12;
+    padding: 10px 16px;
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    gap: 12px;
+    border-bottom: 1px solid #1f1f28;
+    background: #0d0d12;
+  }
+  .qr-col {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+  }
+  .qr-col > :global(.qr-badge) { margin: 0; }
+  .filters-col {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    justify-content: center;
   }
   .row1 { display: flex; gap: 10px; align-items: center; }
 
-  .tabs { display: flex; gap: 2px; background: #15151c; border-radius: 6px; padding: 3px; border: 1px solid #1f1f28; }
+  .tabs { display: flex; gap: 2px; background: #15151c; border-radius: 6px; padding: 3px; border: 1px solid #1f1f28; align-items: stretch; }
   .tabs button {
     background: transparent; color: #888; border: 0;
     padding: 6px 14px; border-radius: 4px; cursor: pointer;
@@ -2389,15 +2794,49 @@
     transition: all 0.12s;
   }
   .chip:hover { color: #fff; border-color: #f5c518; }
-  .chip.active {
+  .chip:focus, .chip:focus-visible {
+    outline: none;
+    border-color: #f5c518;
+    color: #fff;
+  }
+  .chip.active,
+  .chip.active:focus,
+  .chip.active:focus-visible {
+    outline: none;
     background: #f5c518; color: #0d0d12; border-color: #f5c518; font-weight: 700;
-    box-shadow: 0 0 0 3px rgba(245,197,24,0.15);
   }
   .err { color: #ff6b6b; padding: 12px 16px; font-size: 12px; }
 
   .grid-wrap {
     flex: 1; overflow-y: auto;
     display: flex; flex-direction: column;
+    position: relative;
+  }
+  /* Ghost cards = placeholders del slot de la próxima card mientras carga. */
+  .ghost-card {
+    aspect-ratio: 2 / 3;
+    background:
+      radial-gradient(ellipse at 50% 40%, rgba(245, 197, 24, 0.08), transparent 70%),
+      linear-gradient(160deg, rgba(255, 255, 255, 0.02), rgba(0, 0, 0, 0.25));
+    border: 1px dashed rgba(245, 197, 24, 0.35);
+    border-radius: 4px;
+    position: relative;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .sparkle {
+    position: absolute;
+    display: inline-block;
+    transform-origin: center;
+    animation: sparkle-pop 1.5s cubic-bezier(.2, .8, .2, 1) infinite;
+    will-change: transform, opacity;
+    line-height: 1;
+  }
+  @keyframes sparkle-pop {
+    0%   { transform: scale(0) rotate(0deg) translateY(0); opacity: 0; }
+    35%  { transform: scale(1.25) rotate(180deg) translateY(-6px); opacity: 1; }
+    70%  { transform: scale(0.85) rotate(300deg) translateY(-14px); opacity: 0.8; }
+    100% { transform: scale(0) rotate(420deg) translateY(-26px); opacity: 0; }
   }
   .grid {
     padding: 20px;
@@ -2424,7 +2863,9 @@
     overflow: hidden; cursor: pointer; padding: 0;
     color: inherit; text-align: left;
     display: flex; flex-direction: column;
-    transition: transform 0.15s, box-shadow 0.15s;
+    /* Sin transición en box-shadow: el halo amarillo del foco queda
+       "pegado" al cambiar de card si dejamos que se desvanezca. */
+    transition: transform 0.15s;
   }
   .card:hover { transform: translateY(-3px); box-shadow: 0 12px 28px rgba(0,0,0,0.6); }
   .card.selected { box-shadow: 0 0 0 2px #f5c518; }
@@ -2491,8 +2932,6 @@
 
   /* Sepá: misma fila que Vera, esquina derecha. Placeholder "Próximamente". */
   .sepa-card {
-    grid-row: 1;
-    grid-column-end: -1;
     cursor: default;
     text-decoration: none;
   }
@@ -2527,6 +2966,37 @@
   .sepa-icon-title {
     color: #6ec1ff;
     text-shadow: 0 0 10px rgba(110, 193, 255, 0.5);
+    font-size: 18px;
+  }
+  .juegos-card {
+    text-decoration: none;
+  }
+  .juegos-poster {
+    aspect-ratio: 2 / 3;
+    background:
+      radial-gradient(ellipse at 50% 35%, #1a0f3d 0%, #0a0820 65%, #050310 100%);
+    position: relative; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .juegos-poster::before {
+    content: ""; position: absolute; inset: 0;
+    background:
+      radial-gradient(circle at 30% 20%, rgba(125, 79, 255, 0.16), transparent 55%),
+      radial-gradient(circle at 70% 80%, rgba(43, 108, 255, 0.16), transparent 55%);
+    pointer-events: none;
+  }
+  .juegos-marca {
+    font-size: clamp(28px, 4.2vw, 44px);
+    font-weight: 800;
+    background: linear-gradient(90deg, #7d4fff, #9c7bff, #2b6cff, #9c7bff, #7d4fff);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+  }
+  .juegos-icon-title {
+    color: #9c7bff;
+    text-shadow: 0 0 10px rgba(125, 79, 255, 0.5);
     font-size: 18px;
   }
   .badge-coming {
@@ -2606,11 +3076,11 @@
   .card-sub { font-size: 12px; color: #888; }
 
   /* PLAY mode */
-  .discover-mode { position: fixed; inset: 0; background: #000; z-index: 999; }
+  .discover-mode { position: fixed; inset: 0; background: #000; z-index: 1500; }
   .discover-mode iframe,
   .discover-mode video { width: 100%; height: 100%; border: 0; background: #000; object-fit: contain; }
   .back-btn {
-    position: absolute; top: 14px; right: 14px; z-index: 1000;
+    position: absolute; top: 14px; right: 14px; z-index: 1100;
     display: inline-flex; align-items: center; gap: 8px;
     padding: 10px 18px 10px 14px;
     background: rgba(0,0,0,0.75);
@@ -2626,7 +3096,7 @@
   .back-btn:hover { background: #f5c518; color: #000; border-color: #f5c518; }
   .back-btn:active { transform: scale(0.97); }
   .report-btn {
-    position: absolute; top: 14px; left: 14px; z-index: 1000;
+    position: absolute; top: 14px; left: 14px; z-index: 1100;
     padding: 10px 16px;
     background: rgba(20,20,28,0.75);
     color: #ffb4b4;
@@ -2641,7 +3111,7 @@
 
   /* Vista unavailable */
   .unavail-screen {
-    position: fixed; inset: 0; z-index: 990;
+    position: fixed; inset: 0; z-index: 1500;
     background: #0d0d12;
     display: flex; align-items: center; justify-content: center;
     padding: 40px;
@@ -2675,7 +3145,7 @@
     font-size: 14px; font-weight: 600; cursor: pointer;
   }
   .trailer-bar {
-    position: absolute; top: 0; left: 0; right: 0; z-index: 1000;
+    position: absolute; top: 0; left: 0; right: 0; z-index: 1100;
     display: flex; align-items: center; gap: 10px;
     padding: 10px 14px;
     background: linear-gradient(180deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0) 100%);

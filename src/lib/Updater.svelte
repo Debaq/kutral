@@ -4,6 +4,7 @@
   import { relaunch } from "@tauri-apps/plugin-process";
   import { isKutralOs } from "$lib/os";
   import { notify } from "$lib/notifStore.svelte";
+  import { player } from "$lib/playerState.svelte";
 
   type Stage = "idle" | "available" | "downloading" | "installing" | "ready" | "error" | "uptodate";
 
@@ -91,7 +92,7 @@
   }
 </script>
 
-{#if stage === "available" && !kutral}
+{#if stage === "available" && !kutral && !player.playing}
   <div
     class="up-backdrop"
     role="dialog"
