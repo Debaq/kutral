@@ -59,6 +59,38 @@ fn connect_ipc() -> Result<Box<dyn Write>, String> {
     }
 }
 
+/// Ruta al binario mpv. En release lo buscamos EMBEBIDO en vendor/ (igual que
+/// RetroArch, copiado vía bundle.resources) para no depender de que el usuario
+/// tenga mpv instalado. En dev cae a PATH.
+fn mpv_bin(app: &tauri::AppHandle) -> String {
+    use tauri::Manager;
+    #[cfg(windows)]
+    let exe = "mpv.exe";
+    #[cfg(not(windows))]
+    let exe = "mpv";
+
+    let mut cands: Vec<std::path::PathBuf> = Vec::new();
+    // 1) Bundle (release): resource_dir/vendor.
+    if let Ok(res) = app.path().resource_dir() {
+        cands.push(res.join("vendor").join(exe));
+    }
+    // 2) Dev: src-tauri/vendor.
+    cands.push(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("vendor").join(exe));
+    // 3) Junto al ejecutable.
+    if let Ok(p) = std::env::current_exe() {
+        if let Some(dir) = p.parent() {
+            cands.push(dir.join("vendor").join(exe));
+        }
+    }
+    for c in cands {
+        if c.exists() {
+            return c.to_string_lossy().into_owned();
+        }
+    }
+    // 4) PATH (dev / si está instalado en el sistema).
+    exe.to_string()
+}
+
 /// Lanza mpv fullscreen con la URL. Mata cualquier mpv previo.
 #[tauri::command]
 pub fn mpv_play(
@@ -86,7 +118,11 @@ pub fn mpv_play(
     let conf = std::env::temp_dir().join("kutral-mpv-input.conf");
     let _ = std::fs::write(&conf, "ESC quit\nBS quit\nq quit\n");
 
-    let mut cmd = Command::new("mpv");
+    let mut cmd = Command::new(mpv_bin(&app));
+    // El mpv embebido en Linux es un AppImage: correrlo sin FUSE (se
+    // auto-extrae a /tmp). Inofensivo si es un mpv normal del PATH.
+    #[cfg(not(windows))]
+    cmd.env("APPIMAGE_EXTRACT_AND_RUN", "1");
     cmd.arg(format!("--input-ipc-server={}", ipc_path()))
         .arg(format!("--input-conf={}", conf.display()))
         .arg("--fullscreen")

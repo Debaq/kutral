@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Baja retroarch + cores libretro a vendor/ (Linux x86_64).
-# Se ejecuta una vez antes de `npm run tauri build`. Los binarios NO se
-# versionan en git (ver vendor/.gitignore); este script los reproduce.
+# Baja retroarch + cores libretro + mpv a vendor/ (Linux x86_64).
+# Se ejecuta una vez antes de `npm run tauri build` (y en la CI). Los binarios
+# NO se versionan en git (ver vendor/.gitignore); este script los reproduce.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 CORES="https://buildbot.libretro.com/nightly/linux/x86_64/latest"
 RA="https://buildbot.libretro.com/nightly/linux/x86_64/RetroArch.7z"
+# mpv self-contained (AppImage); resolvemos el asset del último release.
+MPV_API="https://api.github.com/repos/pkgforge-dev/mpv-AppImage/releases/latest"
 
 echo ">> cores"
 mkdir -p cores
@@ -32,5 +34,18 @@ else
   rm -rf "$tmp"
 fi
 
+echo ">> mpv (AppImage)"
+if [ -f mpv ]; then
+  echo "  ya está"
+else
+  url=$(curl -sSL "$MPV_API" \
+    | grep -oE '"browser_download_url": *"[^"]*anylinux-x86_64\.AppImage"' \
+    | head -1 | sed -E 's/.*"(https[^"]+)"$/\1/')
+  if [ -z "$url" ]; then echo "  no encontré el AppImage de mpv"; exit 1; fi
+  echo "  bajando: $url"
+  curl -sSL -o mpv "$url"
+  chmod +x mpv
+fi
+
 echo ">> listo"
-ls -lh retroarch cores/*.so
+ls -lh retroarch mpv cores/*.so

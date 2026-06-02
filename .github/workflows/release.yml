@@ -39,7 +39,20 @@ jobs:
             libgtk-3-dev \
             libssl-dev \
             libsoup-3.0-dev \
-            libjavascriptcoregtk-4.1-dev
+            libjavascriptcoregtk-4.1-dev \
+            p7zip-full \
+            unzip \
+            libgstreamer1.0-dev \
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad \
+            gstreamer1.0-plugins-ugly \
+            gstreamer1.0-libav \
+            gstreamer1.0-gl \
+            gstreamer1.0-pulseaudio
+
+      - name: Fetch vendored binaries (retroarch + cores + mpv)
+        run: bash src-tauri/vendor/fetch.sh
 
       - name: Install npm deps
         run: npm ci
@@ -95,6 +108,10 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+
+      - name: Fetch vendored binaries (retroarch + cores + mpv)
+        shell: pwsh
+        run: pwsh src-tauri/vendor/fetch-windows.ps1
 
       - name: Install npm deps
         run: npm ci

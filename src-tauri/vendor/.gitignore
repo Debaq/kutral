@@ -1,5 +1,11 @@
-# Binarios pesados: los repuebla fetch.sh, no se versionan.
+# Binarios pesados: los repueblan fetch.sh / fetch-windows.ps1, no se versionan.
 retroarch
+retroarch.exe
+mpv
+mpv.exe
 cores/*.so
+cores/*.dll
+# Soporte de RetroArch Windows (dlls + assets extraídos junto al .exe).
+*.dll
 *.7z
 *.zip
