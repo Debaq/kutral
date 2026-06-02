@@ -42,7 +42,6 @@ jobs:
             libjavascriptcoregtk-4.1-dev \
             p7zip-full \
             unzip \
-            libgstreamer1.0-dev \
             gstreamer1.0-plugins-base \
             gstreamer1.0-plugins-good \
             gstreamer1.0-plugins-bad \
