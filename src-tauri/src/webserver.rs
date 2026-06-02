@@ -317,6 +317,20 @@ pub fn web_server_start(
             (Method::Get, "/health") => {
                 req.respond(Response::from_string("ok"))
             }
+            (Method::Get, "/mpv") => {
+                // Estado en vivo del reproductor para que el mando muestre
+                // título + barra de progreso mientras mpv reproduce.
+                let st = crate::player::status_for(&app_th);
+                let body = serde_json::to_string(&st).unwrap_or_else(|_| "{}".into());
+                let mut r = Response::from_string(body);
+                if let Some(h) = header(b"Content-Type", b"application/json") {
+                    r = r.with_header(h);
+                }
+                if let Some(h) = header(b"Cache-Control", b"no-store") {
+                    r = r.with_header(h);
+                }
+                req.respond(r)
+            }
             (Method::Get, "/roms") => {
                 let mut r = Response::from_string(ROMS_HTML);
                 if let Some(h) = header(b"Content-Type", b"text/html; charset=utf-8") {
@@ -388,7 +402,25 @@ pub fn web_server_start(
                         .with_status_code(StatusCode(400));
                     req.respond(r)
                 } else {
+                    // ¿Es soltar la tecla? {"down": false}. Por defecto es apretar.
+                    let down = !body.contains("\"down\":false")
+                        && !body.contains("\"down\": false");
                     match parse_key_body(&body) {
+                        Some(k) if crate::emu::remote_to_emu(&app_th, &k, down) => {
+                            // RetroArch vivo: el botón va al Network Gamepad (UDP),
+                            // con hold real (down/up). phone → Rust → RetroArch,
+                            // sin pasar por el webview (clave: el juego tiene el foco).
+                            req.respond(Response::from_string("emu"))
+                        }
+                        Some(k) if down && crate::player::remote_to_mpv(&app_th, &k) => {
+                            // mpv está vivo y la tecla es de control de reproducción:
+                            // se mandó directo al IPC de mpv (phone → Rust → mpv),
+                            // sin pasar por el webview. Funciona aunque mpv tenga
+                            // el foco (clave en Wayland).
+                            req.respond(Response::from_string("mpv"))
+                        }
+                        // Soltar tecla fuera de un juego: no hay nada que navegar.
+                        Some(_) if !down => req.respond(Response::from_string("ok")),
                         Some(k) => {
                             // Emite evento al frontend; el frontend dispatcha
                             // un KeyboardEvent nativo. Portable a Wayland/X11/macOS/Windows

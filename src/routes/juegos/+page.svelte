@@ -93,6 +93,9 @@
   // fatiga). El toggle revela el catálogo completo para explorar/coleccionar.
   let busca = $state("");
   let soloTengo = $state(true);
+  // Filtros nuevos: género (pasillo) y jugado/no jugado. "Todos" = sin filtro.
+  let generoSel = $state<string>("Todos");
+  let jugadoSel = $state<"todos" | "si" | "no">("todos");
 
   // Vista: biblioteca (grid) o colección (stats completista).
   let vista = $state<"biblioteca" | "coleccion">("biblioteca");
@@ -200,7 +203,7 @@
 
   // Catálogo filtrado por región + deduplicado por título (1 card por juego).
   // Orden: las que tengo primero, luego alfabético.
-  let lista = $derived.by(() => {
+  let baseLista = $derived.by(() => {
     const names = (catalogo[filtro] ?? []).filter((n) =>
       nameInRegions(n, config.gameRegions),
     );
@@ -228,6 +231,32 @@
         if (ta !== tb) return ta - tb; // tenidas primero
         return a.display.localeCompare(b.display);
       }) as Juego[];
+  });
+
+  // Pasillo (género) de un juego, considerando "Familia" por ESRB.
+  function generoDe(name: string): string {
+    return esFamilia(name) ? "Familia" : pasilloDe(name);
+  }
+  // ¿Lo marqué como jugado? (set de matchKeys por sistema)
+  function fueJugado(name: string): boolean {
+    return (jugados[filtro] ?? new Set()).has(matchKey(name));
+  }
+
+  // Géneros presentes en el catálogo actual (para los chips), en orden fijo.
+  let generosDisponibles = $derived.by(() => {
+    const set = new Set(baseLista.map((g) => generoDe(g.name)));
+    return ORDEN_PASILLOS.filter((p) => set.has(p));
+  });
+
+  // Lista final = base + filtros género/jugado.
+  let lista = $derived.by(() => {
+    return baseLista
+      .filter((g) => generoSel === "Todos" || generoDe(g.name) === generoSel)
+      .filter((g) => {
+        if (jugadoSel === "si") return fueJugado(g.name);
+        if (jugadoSel === "no") return !fueJugado(g.name);
+        return true;
+      });
   });
 
   // --- Metadata por matchKey (el catálogo usa "_" donde la DB usa "&", etc.) ---
@@ -368,6 +397,8 @@
     errorMsg = "";
     fRow = 0;
     fCol = 0;
+    generoSel = "Todos";
+    jugadoSel = "todos";
     try {
       const [cat, own, md] = await Promise.all([
         invoke<string[]>("emu_catalog", { system: sys }),
@@ -398,18 +429,54 @@
     if (vista === "coleccion") untrack(() => void cargarColeccion());
   });
 
+  // Títulos PAL renombrados respecto al boxart No-Intro (libretro). El nombre
+  // europeo no existe como carátula; mapeamos al título USA equivalente.
+  const PAL_ALIAS: Record<string, string> = {
+    "Star Wing": "Star Fox",
+    Starwing: "Star Fox",
+    "Lylat Wars": "Star Fox 64",
+    "The 7th Saga": "The 7th Saga",
+    "Terranigma": "Terranigma",
+    "Mega Man": "Mega Man",
+    Rockman: "Mega Man",
+  };
+  const BOX_REGIONS = ["(USA)", "(World)", "(Europe)", "(Japan)"];
+
+  // Candidatos de URL de carátula: variante elegida → sin tags de revisión →
+  // mismo título base con otras regiones → alias PAL→USA. Cubre los casos en
+  // que la variante por región no tiene boxart pero otra sí.
+  function boxartCandidates(sys: System, name: string): string[] {
+    const urls: string[] = [];
+    const push = (n: string) => {
+      const u = thumbUrl(sys, n);
+      if (n && !urls.includes(u)) urls.push(u);
+    };
+    push(name);
+    const limpio = name.replace(/\s*\((Rev|Beta|Proto|Demo|Sample)[^)]*\)/g, "").trim();
+    if (limpio !== name) push(limpio);
+    const bases = [baseTitle(name)];
+    const alias = PAL_ALIAS[baseTitle(name)];
+    if (alias && alias !== baseTitle(name)) bases.push(alias);
+    for (const b of bases) {
+      for (const r of BOX_REGIONS) push(`${b} ${r}`);
+      push(b);
+    }
+    return urls;
+  }
+
   // --- Carátulas (lazy) ---
   async function loadBoxart(g: Juego) {
     if (boxarts[g.name]) return;
-    try {
-      const local = await invoke<string>("cache_image", {
-        url: thumbUrl(g.system, g.name),
-        maxW: 512,
-      });
-      boxarts = { ...boxarts, [g.name]: convertFileSrc(local) };
-    } catch {
-      // 404 / sin red → placeholder de color.
+    for (const url of boxartCandidates(g.system, g.name)) {
+      try {
+        const local = await invoke<string>("cache_image", { url, maxW: 512 });
+        boxarts = { ...boxarts, [g.name]: convertFileSrc(local) };
+        return;
+      } catch {
+        // Candidato 404 / sin red → probar el siguiente.
+      }
     }
+    // Ninguno resolvió → placeholder de color.
   }
 
   function attachThumb(node: HTMLElement, g: Juego) {
@@ -767,6 +834,23 @@
           {soloTengo ? "★ Mi biblioteca" : "Catálogo completo"}
         </button>
       </div>
+      <div class="filtros3">
+        <div class="generos">
+          <button class="gchip" class:active={generoSel === "Todos"} onclick={() => (generoSel = "Todos")}>
+            Todos
+          </button>
+          {#each generosDisponibles as g}
+            <button class="gchip" class:active={generoSel === g} onclick={() => (generoSel = g)}>
+              {g}
+            </button>
+          {/each}
+        </div>
+        <div class="jugado-seg">
+          <button class:active={jugadoSel === "todos"} onclick={() => (jugadoSel = "todos")}>Todos</button>
+          <button class:active={jugadoSel === "si"} onclick={() => (jugadoSel = "si")}>✓ Jugados</button>
+          <button class:active={jugadoSel === "no"} onclick={() => (jugadoSel = "no")}>○ Sin jugar</button>
+        </div>
+      </div>
     {/if}
   </header>
 
@@ -818,6 +902,27 @@
         : "Catálogo vacío."}
     </div>
   {:else}
+    <section class="pasillo">
+      <h2 class="pasillo-titulo">Otras secciones</h2>
+      <div class="fila">
+        <a class="card nav-card nav-movie" data-nav href="/?tab=movie" title="Películas">
+          <div class="nav-face"><span class="nav-marca">Pelis</span><em>cine</em></div>
+          <div class="card-meta"><span class="card-title">🎬 Películas</span></div>
+        </a>
+        <a class="card nav-card nav-tv" data-nav href="/?tab=tv" title="Series">
+          <div class="nav-face"><span class="nav-marca">Series</span><em>tv</em></div>
+          <div class="card-meta"><span class="card-title">📺 Series</span></div>
+        </a>
+        <a class="card nav-card nav-anime" data-nav href="/?tab=anime" title="Anime">
+          <div class="nav-face"><span class="nav-marca">Anime</span><em>日本</em></div>
+          <div class="card-meta"><span class="card-title">🌸 Anime</span></div>
+        </a>
+        <a class="card nav-card nav-iptv" data-nav href="/iptv" title="TV en vivo">
+          <div class="nav-face"><span class="nav-marca">IPTV</span><em>en vivo</em></div>
+          <div class="card-meta"><span class="card-title">📡 En vivo</span></div>
+        </a>
+      </div>
+    </section>
     {#each pasillos as p, r (r)}
       <section class="pasillo" class:pasillo-top={p.kind === "top"}>
         {#if p.label}
@@ -1043,6 +1148,126 @@
     color: #fff;
     border-color: #f5c518;
     box-shadow: 0 0 0 1px #f5c518 inset;
+  }
+
+  /* --- Fila 2 de filtros: género + jugado/no jugado --- */
+  .filtros3 {
+    flex-basis: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    margin-top: 4px;
+  }
+  .generos {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .gchip {
+    background: #15151c;
+    border: 1px solid #2a2a36;
+    color: #aaa;
+    padding: 5px 12px;
+    border-radius: 999px;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .gchip:hover {
+    color: #fff;
+    background: #1f1f28;
+  }
+  .gchip.active {
+    background: #7d4fff;
+    border-color: #7d4fff;
+    color: #fff;
+  }
+  .jugado-seg {
+    display: flex;
+    gap: 2px;
+    margin-left: auto;
+    background: #15151c;
+    border: 1px solid #2a2a36;
+    border-radius: 999px;
+    padding: 3px;
+  }
+  .jugado-seg button {
+    background: transparent;
+    border: 0;
+    color: #999;
+    padding: 5px 12px;
+    border-radius: 999px;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .jugado-seg button.active {
+    background: #2b6cff;
+    color: #fff;
+  }
+
+  /* --- Cards de otras secciones (tamaño carátula de juego) --- */
+  .nav-card {
+    text-decoration: none;
+    display: block;
+  }
+  .nav-face {
+    width: 150px;
+    height: 225px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    text-align: center;
+  }
+  .nav-marca {
+    font-size: 30px;
+    font-weight: 800;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+  }
+  .nav-face em {
+    font-style: italic;
+    font-weight: 300;
+    font-size: 15px;
+  }
+  .nav-movie .nav-face {
+    background: radial-gradient(ellipse at 50% 35%, #2a2008 0%, #14100a 65%, #070503 100%);
+  }
+  .nav-movie .nav-marca {
+    background-image: linear-gradient(90deg, #f5c518, #ffd76a, #fff0b3, #ffd76a, #f5c518);
+  }
+  .nav-movie .nav-face em { color: #ffd76a; }
+  .nav-tv .nav-face {
+    background: radial-gradient(ellipse at 50% 35%, #07261c 0%, #051613 65%, #03090a 100%);
+  }
+  .nav-tv .nav-marca {
+    background-image: linear-gradient(90deg, #10b981, #34d399, #a7f3d0, #34d399, #10b981);
+  }
+  .nav-tv .nav-face em { color: #6ee7b7; }
+  .nav-anime .nav-face {
+    background: radial-gradient(ellipse at 50% 35%, #2e0f24 0%, #1a0814 65%, #0d0309 100%);
+  }
+  .nav-anime .nav-marca {
+    background-image: linear-gradient(90deg, #f472b6, #ff9ad4, #ffd1ec, #ff9ad4, #f472b6);
+  }
+  .nav-anime .nav-face em { color: #ff9ad4; }
+  .nav-iptv .nav-face {
+    background: radial-gradient(ellipse at 50% 35%, #2a0d08 0%, #160806 65%, #0a0303 100%);
+  }
+  .nav-iptv .nav-marca {
+    background-image: linear-gradient(90deg, #ef4444, #f97316, #fbbf24, #f97316, #ef4444);
+  }
+  .nav-iptv .nav-face em { color: #fca56b; }
+  .nav-card:focus,
+  .nav-card:focus-visible {
+    outline: 3px solid #f5c518;
+    outline-offset: 2px;
   }
 
   /* --- Switch de vista --- */

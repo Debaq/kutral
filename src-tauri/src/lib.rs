@@ -2432,6 +2432,27 @@ pub fn run() {
     ];
 
     tauri::Builder::default()
+        .setup(|app| {
+            // Activa MSE en el WebKitGTK del webview para que hls.js pueda
+            // reproducir HLS (IPTV) DENTRO de la app. Sin esto el <video>
+            // queda en negro porque el webview no expone MediaSource.
+            #[cfg(target_os = "linux")]
+            {
+                use tauri::Manager;
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.with_webview(|webview| {
+                        use webkit2gtk::{SettingsExt, WebViewExt};
+                        let wv = webview.inner();
+                        if let Some(settings) = WebViewExt::settings(&wv) {
+                            settings.set_enable_mediasource(true);
+                            settings.set_media_playback_requires_user_gesture(false);
+                            settings.set_enable_webaudio(true);
+                        }
+                    });
+                }
+            }
+            Ok(())
+        })
         .manage(screening::ScreeningState::default())
         .manage(emu::EmuState::default())
         .manage(player::PlayerState::default())
@@ -2488,6 +2509,7 @@ pub fn run() {
             player::mpv_cmd,
             player::mpv_stop,
             player::mpv_running,
+            player::mpv_status,
             screening::screening_enqueue,
             screening::screening_get_unavailable,
             screening::screening_set_paused,
@@ -2497,6 +2519,7 @@ pub fn run() {
             emu::emu_cmd,
             emu::emu_stop,
             emu::emu_running,
+            emu::emu_input,
             emu::emu_catalog,
             emu::emu_metadata,
             emu::emu_synopsis,

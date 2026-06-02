@@ -138,6 +138,9 @@ async fn resolve_magnet(token: &str, magnet: &str) -> Result<String, String> {
         .map(|s| s.chars().take(40).collect::<String>())
         .unwrap_or_default();
     eprintln!("[rd] resolve magnet hash={hash}");
+    // Log del magnet completo para verificar a mano que existe / es válido
+    // (pegándolo en un cliente torrent o buscando el hash en su tracker).
+    eprintln!("[rd]   magnet={magnet}");
     let cli = client()?;
     let id = match add_magnet(&cli, token, magnet).await {
         Ok(id) => {

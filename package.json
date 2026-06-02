@@ -1,6 +1,6 @@
 {
   "name": "kutral",
-  "version": "26.5.0",
+  "version": "26.5.2",
   "description": "Kütral",
   "type": "module",
   "scripts": {
@@ -20,6 +20,7 @@
     "@tauri-apps/plugin-sql": "^2.4.0",
     "@tauri-apps/plugin-updater": "^2.10.1",
     "@types/qrcode": "^1.5.6",
+    "hls.js": "^1.6.16",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {

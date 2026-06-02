@@ -56,6 +56,16 @@ export function saveGamepadMap(m: GamepadMap): void {
   localStorage.setItem("gamepad_map", JSON.stringify(m));
 }
 
+// Captura: mientras /config prueba/remapea el mando, el bridge global no debe
+// navegar (si no, pulsar B saldría de config). Singleton de módulo.
+let _capture = false;
+export function setGamepadCapture(v: boolean): void {
+  _capture = v;
+}
+export function gamepadCaptured(): boolean {
+  return _capture;
+}
+
 // Nombre legible de un botón estándar de gamepad.
 export function nombreBoton(i: number): string {
   const n: Record<number, string> = {

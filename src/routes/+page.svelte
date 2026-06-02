@@ -552,6 +552,12 @@
   // SvelteKit navigation event), entonces corre una sola vez por descubrir.
   afterNavigate(() => {
     const url = new URL(window.location.href);
+    // Tab inicial vía ?tab= (cards de sección en /juegos → /?tab=tv, etc.).
+    const tabParam = url.searchParams.get("tab");
+    if (tabParam === "movie" || tabParam === "tv" || tabParam === "anime") {
+      history.replaceState({}, "", "/");
+      if (tab !== tabParam) switchTab(tabParam);
+    }
     const playId = url.searchParams.get("play");
     const playType = url.searchParams.get("type");
     if (playId && playType) {
@@ -2007,11 +2013,6 @@
         {/if}
         <div class="filters-col">
         <div class="row1">
-          <div class="tabs">
-            <button data-nav class:active={tab === "movie"} onclick={() => switchTab("movie")}>Películas</button>
-            <button data-nav class:active={tab === "tv"} onclick={() => switchTab("tv")}>Series</button>
-            <button data-nav class:active={tab === "anime"} onclick={() => switchTab("anime")}>Anime</button>
-          </div>
           <div class="search-wrap">
             <svg class="search-icon" viewBox="0 0 16 16" width="14" height="14">
               <circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.6"/>
@@ -2130,6 +2131,62 @@
                 <span class="card-sub">NES · SNES · GBC · DS</span>
               </div>
             </a>
+
+            <a class="card iptv-card" data-nav href="/iptv" title="TV en vivo">
+              <div class="iptv-poster">
+                <div class="vera-title-poster">
+                  <span class="iptv-marca">IPTV</span>
+                  <em>en vivo</em>
+                </div>
+              </div>
+              <div class="card-meta">
+                <span class="card-title iptv-icon-title">📡</span>
+                <span class="card-sub">Canales en directo</span>
+              </div>
+            </a>
+
+            {#if tab !== "movie"}
+              <button class="card cat-card cat-movie" data-nav onclick={() => switchTab("movie")} title="Películas">
+                <div class="cat-poster">
+                  <div class="vera-title-poster">
+                    <span class="cat-marca">Pelis</span>
+                    <em>cine</em>
+                  </div>
+                </div>
+                <div class="card-meta">
+                  <span class="card-title cat-icon-title">🎬</span>
+                  <span class="card-sub">Películas</span>
+                </div>
+              </button>
+            {/if}
+            {#if tab !== "tv"}
+              <button class="card cat-card cat-tv" data-nav onclick={() => switchTab("tv")} title="Series">
+                <div class="cat-poster">
+                  <div class="vera-title-poster">
+                    <span class="cat-marca">Series</span>
+                    <em>tv</em>
+                  </div>
+                </div>
+                <div class="card-meta">
+                  <span class="card-title cat-icon-title">📺</span>
+                  <span class="card-sub">Series</span>
+                </div>
+              </button>
+            {/if}
+            {#if tab !== "anime"}
+              <button class="card cat-card cat-anime" data-nav onclick={() => switchTab("anime")} title="Anime">
+                <div class="cat-poster">
+                  <div class="vera-title-poster">
+                    <span class="cat-marca">Anime</span>
+                    <em>日本</em>
+                  </div>
+                </div>
+                <div class="card-meta">
+                  <span class="card-title cat-icon-title">🌸</span>
+                  <span class="card-sub">Anime</span>
+                </div>
+              </button>
+            {/if}
 
             {#each items as it, i (it.id)}
               {@const title = it.title || it.name || ""}
@@ -2717,15 +2774,6 @@
   }
   .row1 { display: flex; gap: 10px; align-items: center; }
 
-  .tabs { display: flex; gap: 2px; background: #15151c; border-radius: 6px; padding: 3px; border: 1px solid #1f1f28; align-items: stretch; }
-  .tabs button {
-    background: transparent; color: #888; border: 0;
-    padding: 6px 14px; border-radius: 4px; cursor: pointer;
-    font-weight: 600; font-size: 13px;
-    transition: background 0.12s, color 0.12s;
-  }
-  .tabs button.active { background: #f5c518; color: #0d0d12; }
-  .tabs button:not(.active):hover { color: #eee; background: #1f1f28; }
   .search-wrap {
     flex: 1; position: relative;
     display: flex; align-items: center;
@@ -2999,6 +3047,110 @@
     text-shadow: 0 0 10px rgba(125, 79, 255, 0.5);
     font-size: 18px;
   }
+
+  /* IPTV — rojo/naranjo señal en vivo. */
+  .iptv-card { text-decoration: none; }
+  .iptv-poster {
+    aspect-ratio: 2 / 3;
+    background: radial-gradient(ellipse at 50% 35%, #2a0d08 0%, #160806 65%, #0a0303 100%);
+    position: relative; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .iptv-poster::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background:
+      radial-gradient(circle at 30% 20%, rgba(239, 68, 68, 0.16), transparent 55%),
+      radial-gradient(circle at 70% 80%, rgba(249, 115, 22, 0.14), transparent 55%);
+  }
+  .iptv-marca {
+    font-size: clamp(28px, 4.2vw, 44px);
+    font-weight: 800;
+    background-image: linear-gradient(90deg, #ef4444, #f97316, #fbbf24, #f97316, #ef4444);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+  }
+  .iptv-card em { color: #fca56b !important; text-shadow: 0 0 14px rgba(249, 115, 22, 0.45); }
+  .iptv-icon-title {
+    color: #f97316;
+    text-shadow: 0 0 10px rgba(249, 115, 22, 0.5);
+    font-size: 18px;
+  }
+
+  /* Cards de categoría (Películas / Series / Anime) — reemplazan los tabs. */
+  .cat-card {
+    text-decoration: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+  }
+  .cat-poster {
+    aspect-ratio: 2 / 3;
+    position: relative; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .cat-poster::before {
+    content: ""; position: absolute; inset: 0;
+    pointer-events: none;
+  }
+  .cat-marca {
+    font-size: clamp(28px, 4.2vw, 44px);
+    font-weight: 800;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+  }
+  .cat-icon-title { font-size: 18px; }
+
+  /* Películas — dorado/ámbar */
+  .cat-movie .cat-poster {
+    background: radial-gradient(ellipse at 50% 35%, #2a2008 0%, #14100a 65%, #070503 100%);
+  }
+  .cat-movie .cat-poster::before {
+    background:
+      radial-gradient(circle at 30% 20%, rgba(245, 197, 24, 0.14), transparent 55%),
+      radial-gradient(circle at 70% 80%, rgba(255, 140, 60, 0.12), transparent 55%);
+  }
+  .cat-movie .cat-marca {
+    background-image: linear-gradient(90deg, #f5c518, #ffd76a, #fff0b3, #ffd76a, #f5c518);
+  }
+  .cat-movie em { color: #ffd76a !important; text-shadow: 0 0 14px rgba(245, 197, 24, 0.45); }
+  .cat-movie .cat-icon-title { color: #f5c518; text-shadow: 0 0 10px rgba(245, 197, 24, 0.5); }
+
+  /* Series — verde/teal */
+  .cat-tv .cat-poster {
+    background: radial-gradient(ellipse at 50% 35%, #07261c 0%, #051613 65%, #03090a 100%);
+  }
+  .cat-tv .cat-poster::before {
+    background:
+      radial-gradient(circle at 30% 20%, rgba(52, 211, 153, 0.14), transparent 55%),
+      radial-gradient(circle at 70% 80%, rgba(16, 185, 129, 0.12), transparent 55%);
+  }
+  .cat-tv .cat-marca {
+    background-image: linear-gradient(90deg, #10b981, #34d399, #a7f3d0, #34d399, #10b981);
+  }
+  .cat-tv em { color: #6ee7b7 !important; text-shadow: 0 0 14px rgba(52, 211, 153, 0.45); }
+  .cat-tv .cat-icon-title { color: #34d399; text-shadow: 0 0 10px rgba(52, 211, 153, 0.5); }
+
+  /* Anime — rosa sakura */
+  .cat-anime .cat-poster {
+    background: radial-gradient(ellipse at 50% 35%, #2e0f24 0%, #1a0814 65%, #0d0309 100%);
+  }
+  .cat-anime .cat-poster::before {
+    background:
+      radial-gradient(circle at 30% 20%, rgba(244, 114, 182, 0.16), transparent 55%),
+      radial-gradient(circle at 70% 80%, rgba(217, 70, 160, 0.12), transparent 55%);
+  }
+  .cat-anime .cat-marca {
+    background-image: linear-gradient(90deg, #f472b6, #ff9ad4, #ffd1ec, #ff9ad4, #f472b6);
+  }
+  .cat-anime em { color: #ff9ad4 !important; text-shadow: 0 0 14px rgba(244, 114, 182, 0.45); }
+  .cat-anime .cat-icon-title { color: #f472b6; text-shadow: 0 0 10px rgba(244, 114, 182, 0.5); }
   .badge-coming {
     background: #4a8ed8;
     color: #04101e;

@@ -11,9 +11,11 @@
 // Requisito: mpv en el PATH (o bundleado). En la ISO viene incluido; en la
 // build Windows el instalador debe traerlo o pedirlo.
 
-use std::io::Write;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::process::Child;
 use std::sync::Mutex;
+use std::time::Duration;
+use tauri::Emitter;
 
 /// Estado del player: el proceso mpv vivo (si hay). Cross-platform.
 #[derive(Default)]
@@ -60,6 +62,7 @@ fn connect_ipc() -> Result<Box<dyn Write>, String> {
 /// Lanza mpv fullscreen con la URL. Mata cualquier mpv previo.
 #[tauri::command]
 pub fn mpv_play(
+    app: tauri::AppHandle,
     state: tauri::State<'_, PlayerState>,
     url: String,
     title: Option<String>,
@@ -116,6 +119,8 @@ pub fn mpv_play(
 
     eprintln!("[mpv] pid={:?} lanzado", child.id());
     *state.child.lock().unwrap() = Some(child);
+    // Avisar al front: ya hay mpv → muestra OSD global y empieza a sondear.
+    let _ = app.emit("mpv:state", true);
     Ok(())
 }
 
@@ -146,17 +151,17 @@ pub fn mpv_cmd(args: Vec<serde_json::Value>) -> Result<(), String> {
 
 /// Cierra mpv (quit limpio por IPC + kill por si acaso).
 #[tauri::command]
-pub fn mpv_stop(state: tauri::State<'_, PlayerState>) -> Result<(), String> {
+pub fn mpv_stop(app: tauri::AppHandle, state: tauri::State<'_, PlayerState>) -> Result<(), String> {
     let _ = mpv_cmd(vec![serde_json::Value::String("quit".into())]);
     kill_existing(&state);
     #[cfg(not(windows))]
     let _ = std::fs::remove_file(ipc_path());
+    let _ = app.emit("mpv:state", false);
     Ok(())
 }
 
-/// ¿Hay un mpv vivo?
-#[tauri::command]
-pub fn mpv_running(state: tauri::State<'_, PlayerState>) -> bool {
+/// ¿Hay un mpv vivo? (reapea el proceso si ya murió)
+fn alive(state: &tauri::State<'_, PlayerState>) -> bool {
     let mut guard = state.child.lock().unwrap();
     match guard.as_mut() {
         Some(c) => match c.try_wait() {
@@ -168,6 +173,172 @@ pub fn mpv_running(state: tauri::State<'_, PlayerState>) -> bool {
             Err(_) => false,
         },
         None => false,
+    }
+}
+
+#[tauri::command]
+pub fn mpv_running(state: tauri::State<'_, PlayerState>) -> bool {
+    alive(&state)
+}
+
+/// Traduce una tecla canónica del mando (web/teclado) a un comando IPC de mpv.
+/// Devuelve `true` si la manejó (mpv vivo + tecla mapeada): en ese caso el
+/// webserver NO debe emitir `remote_key`, porque el control es de mpv, no de la
+/// UI. Esto da control absoluto del reproductor desde el teléfono aunque mpv
+/// tenga el foco (el camino es phone → Rust → IPC, sin pasar por el webview).
+pub fn remote_to_mpv(app: &tauri::AppHandle, key: &str) -> bool {
+    use tauri::Manager;
+    let state = app.state::<PlayerState>();
+    if !alive(&state) {
+        return false;
+    }
+    // Volver/atrás cierra mpv (mismo efecto que Esc nativo).
+    if key == "Backspace" || key == "Escape" {
+        let _ = mpv_stop(app.clone(), state);
+        return true;
+    }
+    let args = match key {
+        " " | "Enter" => serde_json::json!(["cycle", "pause"]),
+        "ArrowLeft" => serde_json::json!(["seek", -10, "relative"]),
+        "ArrowRight" => serde_json::json!(["seek", 10, "relative"]),
+        "ArrowUp" => serde_json::json!(["add", "volume", 5]),
+        "ArrowDown" => serde_json::json!(["add", "volume", -5]),
+        "[" => serde_json::json!(["seek", -60, "relative"]),
+        "]" => serde_json::json!(["seek", 60, "relative"]),
+        "m" | "M" => serde_json::json!(["cycle", "mute"]),
+        "s" | "S" => serde_json::json!(["cycle", "sub-visibility"]),
+        _ => return false, // tecla sin mapeo de mpv → que la maneje el front
+    };
+    if let Some(arr) = args.as_array() {
+        let _ = mpv_cmd(arr.clone());
+    }
+    true
+}
+
+/// Estado en vivo de mpv leído por IPC (get_property).
+#[derive(serde::Serialize, Default)]
+pub struct MpvStatus {
+    pub running: bool,
+    pub pos: f64,
+    pub duration: f64,
+    pub pause: bool,
+    pub volume: f64,
+    pub mute: bool,
+    pub sub: bool,
+    pub title: String,
+}
+
+/// Escribe N get_property y junta las respuestas por request_id. Lectura con
+/// timeout (Unix) para no colgarse si mpv no responde.
+fn query_props<S: Read + Write>(
+    s: &mut S,
+    names: &[&str],
+) -> serde_json::Map<String, serde_json::Value> {
+    for (i, n) in names.iter().enumerate() {
+        let cmd = serde_json::json!({ "command": ["get_property", n], "request_id": i + 1 });
+        let mut line = cmd.to_string();
+        line.push('\n');
+        if s.write_all(line.as_bytes()).is_err() {
+            break;
+        }
+    }
+    let _ = s.flush();
+
+    let mut out = serde_json::Map::new();
+    let mut reader = BufReader::new(s);
+    let mut line = String::new();
+    let mut leidos = 0usize;
+    // Tope de líneas por si mpv emite muchos eventos entre respuestas.
+    for _ in 0..200 {
+        if leidos >= names.len() {
+            break;
+        }
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {
+                let v: serde_json::Value = match serde_json::from_str(line.trim()) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                if let Some(id) = v.get("request_id").and_then(|x| x.as_u64()) {
+                    if let Some(name) = names.get((id as usize).wrapping_sub(1)) {
+                        out.insert(
+                            (*name).to_string(),
+                            v.get("data").cloned().unwrap_or(serde_json::Value::Null),
+                        );
+                        leidos += 1;
+                    }
+                }
+            }
+            Err(_) => break, // timeout / EOF
+        }
+    }
+    out
+}
+
+#[cfg(not(windows))]
+fn read_props(names: &[&str]) -> serde_json::Map<String, serde_json::Value> {
+    use std::os::unix::net::UnixStream;
+    let mut s = match UnixStream::connect(ipc_path()) {
+        Ok(s) => s,
+        Err(_) => return serde_json::Map::new(),
+    };
+    let _ = s.set_read_timeout(Some(Duration::from_millis(400)));
+    query_props(&mut s, names)
+}
+
+#[cfg(windows)]
+fn read_props(names: &[&str]) -> serde_json::Map<String, serde_json::Value> {
+    use std::fs::OpenOptions;
+    let mut f = match OpenOptions::new().read(true).write(true).open(ipc_path()) {
+        Ok(f) => f,
+        Err(_) => return serde_json::Map::new(),
+    };
+    query_props(&mut f, names)
+}
+
+/// Estado en vivo para el OSD: posición, duración, pausa, volumen, subs, título.
+#[tauri::command]
+pub fn mpv_status(state: tauri::State<'_, PlayerState>) -> MpvStatus {
+    build_status(&state)
+}
+
+/// Igual que `mpv_status` pero usable desde Rust (ej. el webserver) con un
+/// AppHandle en vez de una State inyectada por Tauri.
+pub fn status_for(app: &tauri::AppHandle) -> MpvStatus {
+    use tauri::Manager;
+    build_status(&app.state::<PlayerState>())
+}
+
+fn build_status(state: &tauri::State<'_, PlayerState>) -> MpvStatus {
+    if !alive(state) {
+        return MpvStatus::default();
+    }
+    let p = read_props(&[
+        "time-pos",
+        "duration",
+        "pause",
+        "volume",
+        "mute",
+        "sub-visibility",
+        "media-title",
+    ]);
+    let f = |k: &str| p.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let b = |k: &str| p.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+    MpvStatus {
+        running: true,
+        pos: f("time-pos"),
+        duration: f("duration"),
+        pause: b("pause"),
+        volume: f("volume"),
+        mute: b("mute"),
+        sub: b("sub-visibility"),
+        title: p
+            .get("media-title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
     }
 }
 

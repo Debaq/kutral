@@ -15,25 +15,29 @@
     GAME_REGIONS,
     SCREENING_MIN,
     SCREENING_MAX,
+    IPTV_DEFAULT_LISTS,
     type ModeOverride,
+    type IptvList,
   } from "$lib/config.svelte";
   import { setConcurrenciaScreening } from "$lib/screening.svelte";
   import { notify } from "$lib/notifStore.svelte";
   import { ayuda } from "$lib/atajos/store.svelte";
+  import Gamepad from "$lib/Gamepad.svelte";
   import {
     ACCIONES,
     loadGamepadMap,
     saveGamepadMap,
     defaultGamepadMap,
     nombreBoton,
+    setGamepadCapture,
     type GamepadMap,
   } from "$lib/controls";
 
   // --- Controles: mapeo del mando físico (los 3 métodos comparten teclas) ---
   let gpMap = $state<GamepadMap>(loadGamepadMap());
-  let bindId = $state<string | null>(null); // acción esperando botón
-  let bindRaf = 0;
-  let bindPrev: boolean[] = [];
+  let selBtn = $state<number | null>(null); // botón clicado, esperando acción
+  let padPressed = $state<number[]>([]); // botones pulsados ahora (en vivo)
+  let padRaf = 0;
 
   function keyLabel(key: string): string {
     const m: Record<string, string> = {
@@ -44,39 +48,47 @@
     return m[key] ?? key;
   }
 
+  // Reverso: índice de botón → etiqueta de acción asignada.
+  const actionByBtn = $derived.by(() => {
+    const out: Record<number, string> = {};
+    for (const a of ACCIONES) {
+      const b = gpMap[a.id];
+      if (b !== undefined && b >= 0) out[b] = a.label;
+    }
+    return out;
+  });
+
   function aplicarGpMap() {
     saveGamepadMap(gpMap);
     window.dispatchEvent(new Event("gamepad-map-changed"));
   }
   function restaurarControles() {
     gpMap = defaultGamepadMap();
+    selBtn = null;
     aplicarGpMap();
   }
-  function cancelarBind() {
-    bindId = null;
-    cancelAnimationFrame(bindRaf);
+  // Clic en un botón del mando → seleccionarlo para asignarle acción.
+  function onpick(i: number) {
+    selBtn = selBtn === i ? null : i;
   }
-  function empezarBind(id: string) {
-    bindId = id;
-    bindPrev = [];
-    cancelAnimationFrame(bindRaf);
-    const loop = () => {
-      const gp = (navigator.getGamepads?.() ?? []).find((p) => p) ?? null;
-      if (gp) {
-        const b = gp.buttons.map((x) => x.pressed);
-        for (let i = 0; i < b.length; i++) {
-          if (b[i] && !bindPrev[i]) {
-            gpMap = { ...gpMap, [id]: i };
-            aplicarGpMap();
-            bindId = null;
-            return;
-          }
-        }
-        bindPrev = b;
-      }
-      bindRaf = requestAnimationFrame(loop);
-    };
-    bindRaf = requestAnimationFrame(loop);
+  // Asignar una acción al botón seleccionado (cada botón = una acción).
+  function asignar(id: string) {
+    if (selBtn === null) return;
+    const m: GamepadMap = {};
+    for (const k of Object.keys(gpMap)) if (gpMap[k] !== selBtn) m[k] = gpMap[k];
+    m[id] = selBtn;
+    gpMap = m;
+    selBtn = null;
+    aplicarGpMap();
+  }
+  // Loop de lectura en vivo (resaltado). Mientras estás en /config el bridge
+  // global queda en captura → el mando no navega, solo se prueba aquí.
+  function padLoop() {
+    const gp = (navigator.getGamepads?.() ?? []).find((p) => p) ?? null;
+    padPressed = gp
+      ? gp.buttons.map((x, i) => (x.pressed ? i : -1)).filter((i) => i >= 0)
+      : [];
+    padRaf = requestAnimationFrame(padLoop);
   }
 
   type RdDeviceStart = {
@@ -106,7 +118,25 @@
   let webAuto = $state(config.webAutoStart);
   let webPortInput = $state(config.webPort);
   let gameRegions = $state<string[]>([...config.gameRegions]);
+  let iptvLists = $state<IptvList[]>(config.iptvLists.map((l) => ({ ...l })));
+  let nuevaListaNombre = $state("");
+  let nuevaListaUrl = $state("");
   let saved = $state(false);
+
+  function agregarLista() {
+    const url = nuevaListaUrl.trim();
+    if (!url) return;
+    const name = nuevaListaNombre.trim() || `Lista ${iptvLists.length + 1}`;
+    iptvLists = [...iptvLists, { name, url }];
+    nuevaListaNombre = "";
+    nuevaListaUrl = "";
+  }
+  function quitarLista(i: number) {
+    iptvLists = iptvLists.filter((_, idx) => idx !== i);
+  }
+  function restaurarListaDefault() {
+    iptvLists = IPTV_DEFAULT_LISTS.map((l) => ({ ...l }));
+  }
 
   function toggleRegion(id: string) {
     gameRegions = gameRegions.includes(id)
@@ -154,12 +184,17 @@
     webAuto = config.webAutoStart;
     webPortInput = config.webPort;
     gameRegions = [...config.gameRegions];
+    iptvLists = config.iptvLists.map((l) => ({ ...l }));
     try { currentVer = await getVersion(); } catch {}
+    // Probar el mando aquí sin que navegue la app.
+    setGamepadCapture(true);
+    padRaf = requestAnimationFrame(padLoop);
   });
 
   onDestroy(() => {
     cancelRd();
-    cancelAnimationFrame(bindRaf);
+    cancelAnimationFrame(padRaf);
+    setGamepadCapture(false);
   });
 
   const dirty = $derived(
@@ -174,7 +209,8 @@
     subSize !== config.subSize ||
     webAuto !== config.webAutoStart ||
     webPortInput !== config.webPort ||
-    gameRegions.join(",") !== config.gameRegions.join(",")
+    gameRegions.join(",") !== config.gameRegions.join(",") ||
+    JSON.stringify(iptvLists) !== JSON.stringify(config.iptvLists)
   );
 
   function applyAndSave() {
@@ -192,6 +228,12 @@
     config.webPort = Math.min(65535, Math.max(1024, Math.round(webPortInput) || 8080));
     webPortInput = config.webPort;
     config.gameRegions = [...gameRegions];
+    const listas = iptvLists.filter((l) => l.url.trim());
+    config.iptvLists = (listas.length ? listas : IPTV_DEFAULT_LISTS).map((l) => ({
+      name: (l.name || "Lista").trim(),
+      url: l.url.trim(),
+    }));
+    iptvLists = config.iptvLists.map((l) => ({ ...l }));
     saveConfig();
     void setConcurrenciaScreening(conc);
     saved = true;
@@ -605,6 +647,42 @@
             {/if}
           </div>
         </section>
+
+        <section class="block">
+          <h2>Actualizaciones</h2>
+          <p class="hint">
+            Versión actual: <em>{currentVer || "?"}</em>
+          </p>
+
+          {#if updStage === "idle"}
+            <button class="btn-link" onclick={checkUpdate}>Buscar actualizaciones</button>
+          {:else if updStage === "checking"}
+            <p class="upd-line"><span class="spinner"></span> Buscando…</p>
+          {:else if updStage === "uptodate"}
+            <p class="upd-line upd-ok">Estás al día.</p>
+            <button class="link-tiny" onclick={checkUpdate}>Volver a buscar</button>
+          {:else if updStage === "available"}
+            <p class="upd-line">
+              Disponible: <strong>v{updVersion}</strong>
+            </p>
+            {#if updNotes}<pre class="upd-notes">{updNotes}</pre>{/if}
+            <button class="btn-link" onclick={installUpdate}>Instalar y reiniciar</button>
+            <button class="link-tiny" onclick={() => { updStage = "idle"; }}>Más tarde</button>
+          {:else if updStage === "installing"}
+            <p class="upd-line"><span class="spinner"></span> Descargando…</p>
+            {#if updTotal > 0}
+              <div class="bar"><div class="bar-fill" style="width: {updPct()}%"></div></div>
+              <p class="upd-mb">{updMb(updDownloaded)} / {updMb(updTotal)} MB · {updPct()}%</p>
+            {:else}
+              <p class="upd-mb">{updMb(updDownloaded)} MB</p>
+            {/if}
+          {:else if updStage === "ready"}
+            <p class="upd-line"><span class="spinner"></span> Reiniciando…</p>
+          {:else if updStage === "error"}
+            <p class="err">{updErr}</p>
+            <button class="link-tiny" onclick={checkUpdate}>Reintentar</button>
+          {/if}
+        </section>
       </div>
 
       <div class="col">
@@ -732,40 +810,6 @@
         </section>
 
         <section class="block">
-          <h2>Controles</h2>
-          <p class="hint">
-            Los tres mandos comparten las mismas teclas: <strong>teclado</strong>,
-            <strong>mando web</strong> (celular) y <strong>mando físico</strong>.
-            El teclado y el web son fijos; el mando físico lo remapeas aquí.
-          </p>
-          <div class="ctrl-tabla">
-            <div class="ctrl-head">
-              <span>Acción</span><span>Teclado</span><span>Web</span><span>Mando físico</span>
-            </div>
-            {#each ACCIONES as a}
-              <div class="ctrl-fila">
-                <span class="ctrl-acc">
-                  {a.label}
-                  {#if a.hint}<em>{a.hint}</em>{/if}
-                </span>
-                <span><kbd>{keyLabel(a.key)}</kbd></span>
-                <span class="ctrl-web">{a.web ? "✓" : "—"}</span>
-                <span>
-                  {#if bindId === a.id}
-                    <button class="ctrl-btn binding" onclick={cancelarBind}>Pulsa un botón…</button>
-                  {:else}
-                    <button class="ctrl-btn" onclick={() => empezarBind(a.id)}>
-                      {gpMap[a.id] !== undefined ? nombreBoton(gpMap[a.id]) : "— asignar —"}
-                    </button>
-                  {/if}
-                </span>
-              </div>
-            {/each}
-          </div>
-          <button class="ctrl-reset" onclick={restaurarControles}>Restaurar por defecto</button>
-        </section>
-
-        <section class="block">
           <h2>Juegos — Regiones aceptadas</h2>
           <p class="hint">
             Qué versiones de cada juego se muestran en el catálogo, según la
@@ -786,42 +830,103 @@
         </section>
 
         <section class="block">
-          <h2>Actualizaciones</h2>
+          <h2>IPTV — Listas de canales</h2>
           <p class="hint">
-            Versión actual: <em>{currentVer || "?"}</em>
+            Playlists M3U que alimentan los canales en vivo. Podés tener varias
+            (iptv-org, tu proveedor, listas propias). Se cargan todas juntas en
+            la sección TV.
           </p>
 
-          {#if updStage === "idle"}
-            <button class="btn-link" onclick={checkUpdate}>Buscar actualizaciones</button>
-          {:else if updStage === "checking"}
-            <p class="upd-line"><span class="spinner"></span> Buscando…</p>
-          {:else if updStage === "uptodate"}
-            <p class="upd-line upd-ok">Estás al día.</p>
-            <button class="link-tiny" onclick={checkUpdate}>Volver a buscar</button>
-          {:else if updStage === "available"}
-            <p class="upd-line">
-              Disponible: <strong>v{updVersion}</strong>
-            </p>
-            {#if updNotes}<pre class="upd-notes">{updNotes}</pre>{/if}
-            <button class="btn-link" onclick={installUpdate}>Instalar y reiniciar</button>
-            <button class="link-tiny" onclick={() => { updStage = "idle"; }}>Más tarde</button>
-          {:else if updStage === "installing"}
-            <p class="upd-line"><span class="spinner"></span> Descargando…</p>
-            {#if updTotal > 0}
-              <div class="bar"><div class="bar-fill" style="width: {updPct()}%"></div></div>
-              <p class="upd-mb">{updMb(updDownloaded)} / {updMb(updTotal)} MB · {updPct()}%</p>
-            {:else}
-              <p class="upd-mb">{updMb(updDownloaded)} MB</p>
-            {/if}
-          {:else if updStage === "ready"}
-            <p class="upd-line"><span class="spinner"></span> Reiniciando…</p>
-          {:else if updStage === "error"}
-            <p class="err">{updErr}</p>
-            <button class="link-tiny" onclick={checkUpdate}>Reintentar</button>
+          {#if iptvLists.length}
+            <ul class="iptv-listas">
+              {#each iptvLists as lista, i}
+                <li class="iptv-item">
+                  <input
+                    class="iptv-nombre"
+                    type="text"
+                    bind:value={lista.name}
+                    placeholder="Nombre"
+                    spellcheck="false"
+                  />
+                  <input
+                    class="iptv-url"
+                    type="text"
+                    bind:value={lista.url}
+                    placeholder="https://…/lista.m3u"
+                    spellcheck="false"
+                  />
+                  <button class="iptv-del" title="Quitar" onclick={() => quitarLista(i)}>✕</button>
+                </li>
+              {/each}
+            </ul>
+          {:else}
+            <p class="hint">No hay listas. Agregá una abajo.</p>
           {/if}
+
+          <div class="iptv-add">
+            <input
+              class="iptv-nombre"
+              type="text"
+              bind:value={nuevaListaNombre}
+              placeholder="Nombre (opcional)"
+              spellcheck="false"
+            />
+            <input
+              class="iptv-url"
+              type="text"
+              bind:value={nuevaListaUrl}
+              placeholder="https://…/lista.m3u"
+              spellcheck="false"
+              onkeydown={(e) => e.key === "Enter" && agregarLista()}
+            />
+            <button class="iptv-add-btn" onclick={agregarLista} disabled={!nuevaListaUrl.trim()}>
+              + Agregar
+            </button>
+          </div>
+
+          <button class="btn-ghost" onclick={restaurarListaDefault}>
+            Restaurar listas por defecto (Español + global)
+          </button>
         </section>
+
       </div>
     </div>
+
+    <!-- Controles: a todo el ancho, fuera de las columnas. -->
+    <section class="block ancho">
+      <h2>Controles</h2>
+      <p class="hint">
+        Los tres mandos comparten las mismas teclas: <strong>teclado</strong>,
+        <strong>mando web</strong> (celular) y <strong>mando físico</strong>.
+        Pulsa el mando para probarlo (se ilumina) y toca un botón para
+        reasignarle una acción.
+      </p>
+
+      <Gamepad {actionByBtn} pressed={padPressed} selected={selBtn} {onpick} />
+
+      {#if selBtn !== null}
+        <div class="asignar">
+          <span>Asignar <b>{nombreBoton(selBtn)}</b> a:</span>
+          {#each ACCIONES as a}
+            <button class="acc-chip" onclick={() => asignar(a.id)}>{a.label}</button>
+          {/each}
+          <button class="acc-chip cancel" onclick={() => (selBtn = null)}>cancelar</button>
+        </div>
+      {/if}
+
+      <!-- Referencia teclado/web (fijos) -->
+      <div class="ctrl-ref">
+        {#each ACCIONES as a}
+          <div class="ref-fila">
+            <span class="ref-acc">{a.label}</span>
+            <kbd>{keyLabel(a.key)}</kbd>
+            <span class="ref-web">{a.web ? "web ✓" : ""}</span>
+            <span class="ref-btn">{gpMap[a.id] !== undefined ? nombreBoton(gpMap[a.id]) : "—"}</span>
+          </div>
+        {/each}
+      </div>
+      <button class="ctrl-reset" onclick={restaurarControles}>Restaurar por defecto</button>
+    </section>
 
     <div class="actions">
       <button class="btn-save" onclick={applyAndSave} disabled={!dirty}>
@@ -874,7 +979,14 @@
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
     gap: 20px;
-    align-items: start;
+    align-items: stretch; /* columnas de igual alto → bottoms parejos */
+  }
+  /* Sección a todo el ancho (fuera de las columnas): el mando. */
+  .block.ancho {
+    margin-top: 20px;
+  }
+  .block.ancho .ctrl-ref {
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   }
   @media (max-width: 1180px) {
     .cfg-grid { grid-template-columns: 1fr 1fr; }
@@ -886,6 +998,11 @@
     display: flex;
     flex-direction: column;
     gap: 18px;
+  }
+  /* Las cajas crecen para llenar la columna → las 3 columnas terminan al
+     mismo nivel (look parejo, "pro"). */
+  .col > :global(.block) {
+    flex: 1 1 auto;
   }
 
   .block {
@@ -1170,6 +1287,44 @@
   .field input[type="range"] { accent-color: #f3a951; }
   .field input:focus, .field select:focus { border-color: #f3a951; outline: none; }
 
+  /* --- Gestor de listas IPTV --- */
+  .iptv-listas { list-style: none; margin: 10px 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .iptv-item, .iptv-add { display: flex; gap: 8px; align-items: center; }
+  .iptv-add { margin-top: 12px; }
+  .iptv-nombre, .iptv-url {
+    background: #0b0b0f;
+    border: 1px solid #2a2a36;
+    border-radius: 6px;
+    padding: 7px 9px;
+    color: #e6e6ec;
+    font-size: 13px;
+  }
+  .iptv-nombre { flex: 0 0 150px; }
+  .iptv-url { flex: 1 1 auto; min-width: 0; }
+  .iptv-nombre:focus, .iptv-url:focus { border-color: #f3a951; outline: none; }
+  .iptv-del {
+    flex: 0 0 auto;
+    background: #2a1518;
+    border: 1px solid #4a2a2e;
+    color: #f88;
+    border-radius: 6px;
+    padding: 7px 11px;
+    cursor: pointer;
+  }
+  .iptv-del:hover { background: #3a1d22; }
+  .iptv-add-btn {
+    flex: 0 0 auto;
+    background: #f3a951;
+    border: 0;
+    color: #1a1206;
+    font-weight: 700;
+    border-radius: 6px;
+    padding: 8px 14px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .iptv-add-btn:disabled { opacity: 0.5; cursor: default; }
+
   .toggle-row {
     display: flex;
     align-items: center;
@@ -1198,66 +1353,66 @@
   }
 
   /* --- Controles --- */
-  .ctrl-tabla {
+  .asignar {
     display: flex;
-    flex-direction: column;
-    gap: 2px;
-    margin-top: 8px;
-  }
-  .ctrl-head,
-  .ctrl-fila {
-    display: grid;
-    grid-template-columns: 1fr 90px 60px 150px;
+    flex-wrap: wrap;
     align-items: center;
     gap: 8px;
-    padding: 8px 10px;
-  }
-  .ctrl-head {
-    font-size: 12px;
-    color: #888;
-    text-transform: uppercase;
-    letter-spacing: 0.4px;
-  }
-  .ctrl-fila {
+    padding: 12px;
     background: #15151c;
-    border-radius: 8px;
+    border: 1px solid #f5c518;
+    border-radius: 10px;
+    margin-bottom: 12px;
   }
-  .ctrl-acc {
-    display: flex;
-    flex-direction: column;
+  .asignar > span {
+    font-size: 14px;
+    margin-right: 4px;
   }
-  .ctrl-acc em {
-    font-style: normal;
-    color: #777;
-    font-size: 12px;
-  }
-  .ctrl-web {
-    color: #4ade80;
-    font-weight: 700;
-  }
-  .ctrl-btn {
+  .acc-chip {
     background: #1a1a22;
     border: 1px solid #2a2a36;
     color: #eee;
-    padding: 7px 12px;
-    border-radius: 8px;
+    padding: 6px 12px;
+    border-radius: 999px;
     font-size: 13px;
-    font-weight: 600;
     cursor: pointer;
-    width: 100%;
   }
-  .ctrl-btn.binding {
-    border-color: #f5c518;
-    color: #f5c518;
-    animation: pulso 1s infinite;
+  .acc-chip:hover {
+    border-color: #6ec1ff;
   }
-  @keyframes pulso {
-    50% {
-      opacity: 0.5;
-    }
+  .acc-chip.cancel {
+    color: #888;
+  }
+  .ctrl-ref {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 4px 16px;
+    margin-top: 8px;
+  }
+  .ref-fila {
+    display: grid;
+    grid-template-columns: 1fr auto auto auto;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 0;
+    font-size: 13px;
+    border-bottom: 1px solid #1d1d26;
+  }
+  .ref-acc {
+    color: #ddd;
+  }
+  .ref-web {
+    color: #4ade80;
+    font-size: 11px;
+  }
+  .ref-btn {
+    color: #9c7bff;
+    font-weight: 700;
+    min-width: 56px;
+    text-align: right;
   }
   .ctrl-reset {
-    margin-top: 12px;
+    margin-top: 14px;
     background: transparent;
     border: 1px solid #2a2a36;
     color: #aaa;

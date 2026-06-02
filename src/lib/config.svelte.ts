@@ -40,6 +40,26 @@ export const GAME_REGIONS: { id: string; label: string; tags: string[] }[] = [
 
 const GAME_REGIONS_DEFAULT = ["eu", "usa"];
 
+// Playlist M3U por defecto (iptv-org, libre y mantenida por la comunidad).
+export const IPTV_DEFAULT_URL = "https://iptv-org.github.io/iptv/index.m3u";
+
+export type IptvList = { name: string; url: string };
+export const IPTV_DEFAULT_LIST: IptvList = {
+	name: "iptv-org (global)",
+	url: IPTV_DEFAULT_URL,
+};
+// Lista en español (idioma) de iptv-org: ~1600 canales hispanohablantes de
+// todos los países, CORS habilitado (github.io).
+export const IPTV_ES_LIST: IptvList = {
+	name: "Español (todas)",
+	url: "https://iptv-org.github.io/iptv/languages/spa.m3u",
+};
+// Por defecto: español primero, global de respaldo.
+export const IPTV_DEFAULT_LISTS: IptvList[] = [
+	{ ...IPTV_ES_LIST },
+	{ ...IPTV_DEFAULT_LIST },
+];
+
 // Todos los tags conocidos (para detectar si un nombre trae región).
 const ALL_REGION_TAGS = GAME_REGIONS.flatMap((r) => r.tags);
 
@@ -90,6 +110,8 @@ export const config = $state({
 	rdCleanupHours: 0,
 	// Regiones de ROM aceptadas en Juegos (ids de GAME_REGIONS).
 	gameRegions: [...GAME_REGIONS_DEFAULT] as string[],
+	// IPTV: varias playlists M3U que alimentan /iptv. Editables en config.
+	iptvLists: IPTV_DEFAULT_LISTS.map((l) => ({ ...l })) as IptvList[],
 	loaded: false,
 	detectedKutral: false,
 });
@@ -124,6 +146,26 @@ export function loadConfig() {
 	} else {
 		config.gameRegions = [...GAME_REGIONS_DEFAULT];
 	}
+	// IPTV: nuevo formato (lista de listas). Migra desde el viejo iptv_url.
+	const rawLists = localStorage.getItem("iptv_lists");
+	if (rawLists) {
+		try {
+			const arr = JSON.parse(rawLists);
+			if (Array.isArray(arr)) {
+				const limpio = arr
+					.filter((x) => x && typeof x.url === "string" && x.url.trim())
+					.map((x) => ({ name: String(x.name || "Lista").trim(), url: String(x.url).trim() }));
+				config.iptvLists = limpio.length ? limpio : IPTV_DEFAULT_LISTS.map((l) => ({ ...l }));
+			}
+		} catch {
+			config.iptvLists = IPTV_DEFAULT_LISTS.map((l) => ({ ...l }));
+		}
+	} else {
+		const viejo = localStorage.getItem("iptv_url");
+		config.iptvLists = viejo
+			? [{ name: "Principal", url: viejo }, { ...IPTV_ES_LIST }]
+			: IPTV_DEFAULT_LISTS.map((l) => ({ ...l }));
+	}
 	config.loaded = true;
 }
 
@@ -145,6 +187,10 @@ export function saveConfig() {
 	localStorage.setItem("web_port", String(config.webPort));
 	localStorage.setItem("rd_cleanup_hours", String(config.rdCleanupHours));
 	localStorage.setItem("game_regions", config.gameRegions.join(","));
+	const listas = (config.iptvLists.length ? config.iptvLists : IPTV_DEFAULT_LISTS)
+		.filter((l) => l.url.trim())
+		.map((l) => ({ name: (l.name || "Lista").trim(), url: l.url.trim() }));
+	localStorage.setItem("iptv_lists", JSON.stringify(listas));
 }
 
 export async function initDetection() {

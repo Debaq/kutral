@@ -8,7 +8,7 @@
   import Updater from "$lib/Updater.svelte";
   import { config, loadConfig, initDetection } from "$lib/config.svelte";
   import { setConcurrenciaScreening } from "$lib/screening.svelte";
-  import { ACCIONES, loadGamepadMap, type GamepadMap } from "$lib/controls";
+  import { ACCIONES, loadGamepadMap, gamepadCaptured, type GamepadMap } from "$lib/controls";
   let { children } = $props();
 
   // --- Mando físico global: dispatcha las mismas teclas que el web/teclado ---
@@ -33,7 +33,7 @@
     const pads = navigator.getGamepads?.() ?? [];
     const gp = pads.find((p) => p) ?? null;
     // No interferir mientras se escribe en un campo.
-    if (gp && document.activeElement?.tagName !== "INPUT") {
+    if (gp && document.activeElement?.tagName !== "INPUT" && !gamepadCaptured()) {
       const b = gp.buttons.map((x) => x.pressed);
       for (let i = 0; i < b.length; i++) {
         if (b[i] && !padPrev[i] && btnToKey[i]) dispatchRemoteKey(btnToKey[i]);
@@ -160,6 +160,14 @@
     padding: 0;
     height: 100%;
     background: #0b0b0f;
+    /* Controles nativos (desplegables de <select>, scrollbars) en oscuro:
+       evita el item blanco sobre fondo blanco. */
+    color-scheme: dark;
+  }
+  /* Refuerzo para los <option> del desplegable nativo. */
+  :global(option) {
+    background: #15151c;
+    color: #e6e6ec;
   }
   .app-shell {
     display: flex;

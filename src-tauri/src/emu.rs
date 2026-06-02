@@ -33,6 +33,12 @@ pub struct EmuState {
 
 /// Puerto UDP del network command interface de RetroArch.
 const NET_CMD_PORT: u16 = 55355;
+// Network Gamepad de RetroArch: recibe input de pad por UDP (player 1 =
+// base_port + 0). Funciona aunque RetroArch tenga el foco, con hold real y
+// baja latencia — a diferencia de despachar teclas en el webview (que no le
+// llegan al proceso de RetroArch).
+const NET_REMOTE_PORT: u16 = 55400;
+const RETRO_DEVICE_JOYPAD: i32 = 1;
 
 /// Nombre del core libretro para cada sistema soportado.
 fn core_name(system: &str) -> Result<&'static str, String> {
@@ -660,7 +666,11 @@ fn validate_rom(path: &std::path::Path) -> Result<(), String> {
 fn write_netcmd_config() -> Result<PathBuf, String> {
     let path = std::env::temp_dir().join("kutral-retroarch.cfg");
     let body = format!(
-        "network_cmd_enable = \"true\"\nnetwork_cmd_port = \"{NET_CMD_PORT}\"\n"
+        "network_cmd_enable = \"true\"\n\
+         network_cmd_port = \"{NET_CMD_PORT}\"\n\
+         network_remote_enable = \"true\"\n\
+         network_remote_base_port = \"{NET_REMOTE_PORT}\"\n\
+         network_remote_enable_user_p1 = \"true\"\n"
     );
     std::fs::write(&path, body).map_err(|e| format!("write cfg: {e}"))?;
     Ok(path)
@@ -731,9 +741,7 @@ pub fn emu_stop(state: tauri::State<'_, EmuState>) -> Result<(), String> {
     Ok(())
 }
 
-/// ¿Hay un emulador vivo?
-#[tauri::command]
-pub fn emu_running(state: tauri::State<'_, EmuState>) -> bool {
+fn alive(state: &tauri::State<'_, EmuState>) -> bool {
     let mut guard = state.child.lock().unwrap();
     match guard.as_mut() {
         Some(c) => match c.try_wait() {
@@ -744,6 +752,73 @@ pub fn emu_running(state: tauri::State<'_, EmuState>) -> bool {
             Ok(None) => true,
             Err(_) => false,
         },
+        None => false,
+    }
+}
+
+/// ¿Hay un emulador vivo?
+#[tauri::command]
+pub fn emu_running(state: tauri::State<'_, EmuState>) -> bool {
+    alive(&state)
+}
+
+/// Envía un estado de botón al Network Gamepad de RetroArch (player 1).
+/// `id` es un RETRO_DEVICE_ID_JOYPAD_* (B=0,Y=1,SELECT=2,START=3,UP=4,DOWN=5,
+/// LEFT=6,RIGHT=7,A=8,X=9,L=10,R=11). `pressed` = true al apretar, false al
+/// soltar (hold real). El paquete replica el struct remote_message de
+/// RetroArch: { i32 port; i32 device; i32 index; i32 id; u16 state; } nativo.
+fn send_pad(id: i32, pressed: bool) -> Result<(), String> {
+    let mut buf = [0u8; 20];
+    buf[0..4].copy_from_slice(&0i32.to_le_bytes()); // port (user 0)
+    buf[4..8].copy_from_slice(&RETRO_DEVICE_JOYPAD.to_le_bytes());
+    buf[8..12].copy_from_slice(&0i32.to_le_bytes()); // index
+    buf[12..16].copy_from_slice(&id.to_le_bytes());
+    buf[16..18].copy_from_slice(&(if pressed { 1u16 } else { 0u16 }).to_le_bytes());
+    // 18..20 = padding (0)
+    let sock = UdpSocket::bind("0.0.0.0:0").map_err(|e| format!("udp bind: {e}"))?;
+    sock.send_to(&buf, format!("127.0.0.1:{NET_REMOTE_PORT}"))
+        .map_err(|e| format!("udp send: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn emu_input(id: i32, pressed: bool) -> Result<(), String> {
+    send_pad(id, pressed)
+}
+
+/// Mapea una tecla canónica del mando (web/teclado) a un botón del retropad.
+fn key_to_retropad(key: &str) -> Option<i32> {
+    Some(match key {
+        "ArrowUp" => 4,
+        "ArrowDown" => 5,
+        "ArrowLeft" => 6,
+        "ArrowRight" => 7,
+        "Enter" => 8,     // A (botón A del mando)
+        "Backspace" => 0, // B
+        " " => 9,         // X (botón X del mando web)
+        "i" | "I" => 1,   // Y (botón Y del mando web)
+        "m" | "M" => 2,   // Select
+        "Escape" => 3,    // Start
+        "[" => 10,        // L (LB)
+        "]" => 11,        // R (RB)
+        _ => return None,
+    })
+}
+
+/// Si hay un emulador vivo y la tecla mapea a un botón, manda el estado al
+/// Network Gamepad y devuelve true (el webserver NO debe emitir remote_key).
+/// Camino phone → Rust → RetroArch, sin pasar por el webview.
+pub fn remote_to_emu(app: &tauri::AppHandle, key: &str, pressed: bool) -> bool {
+    use tauri::Manager;
+    let state = app.state::<EmuState>();
+    if !alive(&state) {
+        return false;
+    }
+    match key_to_retropad(key) {
+        Some(id) => {
+            let _ = send_pad(id, pressed);
+            true
+        }
         None => false,
     }
 }

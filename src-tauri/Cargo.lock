@@ -2441,7 +2441,7 @@ dependencies = [
 
 [[package]]
 name = "kutral"
-version = "26.5.1"
+version = "26.5.2"
 dependencies = [
  "enigo",
  "hex",
@@ -2463,6 +2463,7 @@ dependencies = [
  "tokio",
  "url",
  "urlencoding",
+ "webkit2gtk",
 ]
 
 [[package]]
