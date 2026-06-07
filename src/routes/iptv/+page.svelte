@@ -30,10 +30,10 @@
   let fuenteSel = $state<string>("Todas");
   let query = $state("");
 
-  let focusedIdx = $state(0);
-  let cardEls: (HTMLButtonElement | null)[] = $state([]);
-  let cols = $state(6);
-  let gridEl: HTMLDivElement | null = $state(null);
+  // Dropdowns key-first: reemplazan los <select> nativos (no operables con el
+  // control, que solo emite flechas/Enter). Mismo patrón que el home.
+  let listaOpen = $state(false);
+  let catOpen = $state(false);
 
   // Reproducción IN-APP: video + hls.js (HLS por MSE). Sin mpv.
   let playing = $state<Canal | null>(null);
@@ -130,31 +130,81 @@
   const visibles = $derived(filtrados.slice(0, CAP));
   const ocultos = $derived(Math.max(0, filtrados.length - CAP));
 
-  function measureCols() {
-    if (!gridEl) return;
-    const tc = getComputedStyle(gridEl).gridTemplateColumns;
-    const n = tc.split(" ").filter((x) => x && x !== "0px").length;
-    if (n > 0) cols = n;
+  // --- Navegación espacial key-first sobre [data-nav] (mismo motor que el home) ---
+  // Geométrica: elige el candidato más cercano en la dirección pedida. Cubre por
+  // igual el header (volver, filtros, buscador) y la grilla, sin depender de un
+  // índice. Con un dropdown abierto, atrapa el foco dentro del menú.
+  function findBest(
+    cur: HTMLElement,
+    candidates: HTMLElement[],
+    dir: "up" | "down" | "left" | "right",
+  ): HTMLElement | null {
+    const r = cur.getBoundingClientRect();
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    let best: HTMLElement | null = null;
+    let bestDist = Infinity;
+    for (const el of candidates) {
+      if (el === cur) continue;
+      const er = el.getBoundingClientRect();
+      const ex = er.left + er.width / 2;
+      const ey = er.top + er.height / 2;
+      const dx = ex - cx;
+      const dy = ey - cy;
+      let primary = 0, secondary = 0, valid = false;
+      if (dir === "right") { valid = dx > 6; primary = dx; secondary = Math.abs(dy); }
+      else if (dir === "left") { valid = dx < -6; primary = -dx; secondary = Math.abs(dy); }
+      else if (dir === "down") { valid = dy > 6; primary = dy; secondary = Math.abs(dx); }
+      else { valid = dy < -6; primary = -dy; secondary = Math.abs(dx); }
+      if (!valid) continue;
+      const dist = primary + secondary * 1.4;
+      if (dist < bestDist) { bestDist = dist; best = el; }
+    }
+    return best;
   }
 
-  async function focar() {
+  function spatialNav(dir: "up" | "down" | "left" | "right") {
+    let all = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-nav]:not([disabled])"),
+    ).filter((el) => el.offsetParent !== null);
+    // Dropdown abierto: navegar solo entre sus opciones (foco atrapado).
+    if (listaOpen || catOpen) {
+      const menu = document.querySelector<HTMLElement>(".ddmenu");
+      if (menu) all = Array.from(menu.querySelectorAll<HTMLElement>("[data-nav]"));
+    }
+    const cur = document.activeElement as HTMLElement | null;
+    if (!cur || !cur.matches?.("[data-nav]")) { all[0]?.focus(); return; }
+    const best = findBest(cur, all, dir);
+    if (best) {
+      best.focus({ preventScroll: false });
+      best.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+    }
+  }
+
+  // Acción Svelte: enfoca la primera opción al abrir un dropdown.
+  function autofocusFirst(node: HTMLElement) {
+    tick().then(() => node.querySelector<HTMLElement>("[data-nav]")?.focus());
+  }
+
+  function cerrarMenus() {
+    listaOpen = false;
+    catOpen = false;
+  }
+  function toggleLista() { const o = !listaOpen; cerrarMenus(); listaOpen = o; }
+  function toggleCat() { const o = !catOpen; cerrarMenus(); catOpen = o; }
+  function elegirFuente(f: string) {
+    fuenteSel = f;
+    cerrarMenus();
+    void focoPrimerCanal();
+  }
+  function elegirGrupo(g: string) {
+    grupoSel = g;
+    cerrarMenus();
+    void focoPrimerCanal();
+  }
+  async function focoPrimerCanal() {
     await tick();
-    const el = cardEls[focusedIdx];
-    el?.focus();
-    el?.scrollIntoView({ block: "nearest" });
-  }
-
-  function clamp(v: number, max: number) {
-    return Math.max(0, Math.min(max, v));
-  }
-  function mover(d: number) {
-    if (!visibles.length) return;
-    focusedIdx = clamp(focusedIdx + d, visibles.length - 1);
-    void focar();
-  }
-
-  function setQuery() {
-    focusedIdx = 0;
+    document.querySelector<HTMLElement>(".canal")?.focus();
   }
 
   function destroyHls() {
@@ -269,9 +319,11 @@
     const k = e.key;
     const tgt = e.target as HTMLElement | null;
 
-    // En el buscador: dejar escribir; Escape lo desenfoca.
+    // En el buscador: dejar escribir; ↑/↓ saltan fuera; Escape lo desenfoca.
     if (tgt?.tagName === "INPUT") {
       if (k === "Escape") (tgt as HTMLInputElement).blur();
+      else if (k === "ArrowUp") { e.preventDefault(); spatialNav("up"); }
+      else if (k === "ArrowDown") { e.preventDefault(); spatialNav("down"); }
       return;
     }
 
@@ -289,25 +341,31 @@
       return;
     }
 
-    if (k === "Escape" || k === "Backspace") {
+    // Dropdown abierto: Esc/Backspace lo cierran (no salen de la página).
+    if ((listaOpen || catOpen) && (k === "Escape" || k === "Backspace")) {
       e.preventDefault();
-      goto("/");
-    } else if (k === "ArrowRight") {
-      e.preventDefault();
-      mover(1);
-    } else if (k === "ArrowLeft") {
-      e.preventDefault();
-      mover(-1);
-    } else if (k === "ArrowDown") {
-      e.preventDefault();
-      mover(cols);
-    } else if (k === "ArrowUp") {
-      e.preventDefault();
-      mover(-cols);
-    } else if (k === "Enter") {
-      e.preventDefault();
-      const c = visibles[focusedIdx];
-      if (c) void reproducir(c);
+      cerrarMenus();
+      return;
+    }
+
+    switch (k) {
+      case "Escape":
+      case "Backspace":
+        e.preventDefault();
+        goto("/");
+        break;
+      case "ArrowRight": e.preventDefault(); spatialNav("right"); break;
+      case "ArrowLeft": e.preventDefault(); spatialNav("left"); break;
+      case "ArrowDown": e.preventDefault(); spatialNav("down"); break;
+      case "ArrowUp": e.preventDefault(); spatialNav("up"); break;
+      case "Enter":
+      case " ": {
+        // Activa el elemento enfocado (card, volver, filtro, opción). preventDefault
+        // evita doble disparo con la activación nativa del teclado físico.
+        const el = document.activeElement as HTMLElement | null;
+        if (el?.matches?.("[data-nav]")) { e.preventDefault(); el.click(); }
+        break;
+      }
     }
   }
 
@@ -318,15 +376,11 @@
       { tecla: "Esc · Backspace", desc: "Volver / detener" },
     ]);
     if (!config.loaded) loadConfig();
-    window.addEventListener("resize", measureCols);
     await cargar();
-    await tick();
-    measureCols();
-    cardEls[0]?.focus();
+    await focoPrimerCanal();
   });
 
   onDestroy(() => {
-    window.removeEventListener("resize", measureCols);
     destroyHls();
   });
 </script>
@@ -335,40 +389,52 @@
 
 <div class="iptv">
   <header class="top">
-    <button class="back" onclick={() => goto("/")} title="Volver (Esc)">‹ Volver</button>
+    <button data-nav class="back" onclick={() => goto("/")} title="Volver (Esc)">‹ Volver</button>
     <h1>📡 TV en vivo</h1>
     {#if fuentes.length}
-      <label class="grupo-sel">
-        <span>Lista</span>
-        <select bind:value={fuenteSel} onchange={() => (focusedIdx = 0)}>
-          <option value="Todas">Todas</option>
-          {#each fuentes as f}
-            <option value={f}>{f}</option>
-          {/each}
-        </select>
-      </label>
+      <div class="dropdown">
+        <span class="dd-label">Lista</span>
+        <button data-nav class="dd-trigger" onclick={toggleLista} title="Elegir lista">
+          <span>{fuenteSel}</span>
+          <svg class="chev" viewBox="0 0 10 6" width="10" height="6"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </button>
+        {#if listaOpen}
+          <ul class="ddmenu" role="menu" use:autofocusFirst>
+            <li><button data-nav class:active={fuenteSel === "Todas"} onclick={() => elegirFuente("Todas")}>Todas</button></li>
+            {#each fuentes as f}
+              <li><button data-nav class:active={fuenteSel === f} onclick={() => elegirFuente(f)}>{f}</button></li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
     {/if}
     {#if grupos.length}
-      <label class="grupo-sel">
-        <span>Categoría</span>
-        <select bind:value={grupoSel} onchange={() => (focusedIdx = 0)}>
-          <option value="Todos">Todas ({canales.length})</option>
-          {#each grupos as g}
-            <option value={g.name}>{g.name} ({g.count})</option>
-          {/each}
-        </select>
-      </label>
+      <div class="dropdown">
+        <span class="dd-label">Categoría</span>
+        <button data-nav class="dd-trigger" onclick={toggleCat} title="Elegir categoría">
+          <span>{grupoSel === "Todos" ? `Todas (${canales.length})` : grupoSel}</span>
+          <svg class="chev" viewBox="0 0 10 6" width="10" height="6"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </button>
+        {#if catOpen}
+          <ul class="ddmenu ddmenu-scroll" role="menu" use:autofocusFirst>
+            <li><button data-nav class:active={grupoSel === "Todos"} onclick={() => elegirGrupo("Todos")}>Todas ({canales.length})</button></li>
+            {#each grupos as g}
+              <li><button data-nav class:active={grupoSel === g.name} onclick={() => elegirGrupo(g.name)}>{g.name} ({g.count})</button></li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
     {/if}
     <div class="search-wrap">
       <input
+        data-nav
         class="search"
         bind:value={query}
-        oninput={setQuery}
         placeholder="Buscar canal…"
         spellcheck="false"
       />
       {#if query}
-        <button class="search-clear" onclick={() => { query = ""; setQuery(); }} title="Limpiar">✕</button>
+        <button data-nav class="search-clear" onclick={() => { query = ""; void focoPrimerCanal(); }} title="Limpiar">✕</button>
       {/if}
     </div>
   </header>
@@ -383,14 +449,12 @@
   {:else if !visibles.length}
     <div class="estado">Sin canales para este filtro.</div>
   {:else}
-    <div class="grid" bind:this={gridEl}>
+    <div class="grid">
       {#each visibles as c, i (c.url + i)}
         <button
           class="canal"
           data-nav
-          bind:this={cardEls[i]}
           onclick={() => reproducir(c, i)}
-          onfocus={() => (focusedIdx = i)}
           title={c.name}
         >
           <div class="logo-wrap">
@@ -543,14 +607,19 @@
     font-size: 13px;
   }
 
-  .grupo-sel {
+  .dropdown {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 8px;
     font-size: 13px;
     color: #aaa;
   }
-  .grupo-sel select {
+  .dd-label { white-space: nowrap; }
+  .dd-trigger {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     background: #15151c;
     border: 1px solid #2a2a35;
     color: #eee;
@@ -560,10 +629,64 @@
     max-width: 260px;
     cursor: pointer;
   }
-  .grupo-sel select:focus {
+  .dd-trigger span {
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .dd-trigger .chev { color: #888; flex: none; }
+  .dd-trigger:hover,
+  .dd-trigger:focus,
+  .dd-trigger:focus-visible {
     outline: none;
     border-color: #f97316;
+    color: #fff;
   }
+  .ddmenu {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 60;
+    list-style: none;
+    margin: 0;
+    padding: 6px;
+    min-width: 100%;
+    background: #15151c;
+    border: 1px solid #2a2a35;
+    border-radius: 10px;
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.6);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .ddmenu-scroll {
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+  .ddmenu li { margin: 0; }
+  .ddmenu button {
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: 0;
+    color: #ddd;
+    border-radius: 7px;
+    padding: 9px 12px;
+    font-size: 13.5px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .ddmenu button:hover,
+  .ddmenu button:focus,
+  .ddmenu button:focus-visible {
+    outline: none;
+    background: #f97316;
+    color: #1a0a02;
+  }
+  .ddmenu button.active { color: #f97316; font-weight: 700; }
+  .ddmenu button.active:hover,
+  .ddmenu button.active:focus { color: #1a0a02; }
 
   .grid {
     display: grid;
