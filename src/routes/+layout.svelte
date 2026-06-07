@@ -6,7 +6,7 @@
   import Header from "$lib/Header.svelte";
   import Ayuda from "$lib/atajos/Ayuda.svelte";
   import Updater from "$lib/Updater.svelte";
-  import { config, loadConfig, initDetection } from "$lib/config.svelte";
+  import { config, loadConfig, initDetection, initRd } from "$lib/config.svelte";
   import { setConcurrenciaScreening } from "$lib/screening.svelte";
   import { ACCIONES, loadGamepadMap, gamepadCaptured, type GamepadMap } from "$lib/controls";
   let { children } = $props();
@@ -53,6 +53,58 @@
   }
 
   let unlistenRemoteKey: UnlistenFn | null = null;
+  let unlistenRemoteText: UnlistenFn | null = null;
+
+  // Último input/textarea enfocado: si al llegar el texto del celular el foco ya
+  // se movió (p.ej. el webview perdió foco al escanear), igual sabemos a qué
+  // campo va. Lo rastreamos con focusin global.
+  let lastInput: HTMLInputElement | HTMLTextAreaElement | null = null;
+  function trackFocus(e: FocusEvent) {
+    const t = e.target as HTMLElement | null;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) {
+      lastInput = t as HTMLInputElement | HTMLTextAreaElement;
+    }
+  }
+
+  // ¿Es un campo de texto utilizable (input/textarea visible y habilitado)?
+  function isUsableField(n: Element | null): n is HTMLInputElement | HTMLTextAreaElement {
+    if (!n) return false;
+    const tag = n.tagName;
+    if (tag !== "INPUT" && tag !== "TEXTAREA") return false;
+    const el = n as HTMLInputElement | HTMLTextAreaElement;
+    if (el.disabled || (el as HTMLInputElement).readOnly) return false;
+    if (tag === "INPUT") {
+      const t = (el as HTMLInputElement).type;
+      if (["checkbox", "radio", "range", "button", "submit", "hidden", "file", "color"].includes(t))
+        return false;
+    }
+    // Visible en pantalla (offsetParent null = display:none o sin layout).
+    return el.offsetParent !== null;
+  }
+
+  // Escribe el texto que llega del teclado web (POST /text) en un campo de texto.
+  // Orden de preferencia: el campo enfocado → el último enfocado → el primer
+  // campo de texto visible en pantalla (p.ej. el buscador del home, donde el
+  // foco suele estar en una tarjeta y no en el input). Usa el setter nativo de
+  // value + evento "input" para que Svelte (bind:value) y los handlers reaccionen.
+  function injectRemoteText(text: string) {
+    let el: Element | null = document.activeElement;
+    if (!isUsableField(el)) el = lastInput;
+    if (!isUsableField(el)) {
+      el = Array.from(document.querySelectorAll("input, textarea"))
+        .find((n) => isUsableField(n)) ?? null;
+    }
+    if (!isUsableField(el)) return;
+    const input = el;
+    const proto = input.tagName === "TEXTAREA"
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    setter?.call(input, text);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    input.focus();
+  }
 
   // Dispatcha un KeyboardEvent sintético en window y document para que
   // tanto handlers globales (svelte:window onkeydown) como locales (modals)
@@ -86,6 +138,8 @@
   onMount(() => {
     loadConfig();
     initDetection();
+    // Migra/lee credenciales RD del store seguro del backend.
+    void initRd();
     // Propagar concurrencia configurada al worker Rust.
     void setConcurrenciaScreening(config.screeningConcurrency);
     // Auto-arranque del servidor web si el user lo activó en config.
@@ -100,6 +154,11 @@
     void listen<string>("remote_key", (e) => {
       dispatchRemoteKey(e.payload);
     }).then((un) => { unlistenRemoteKey = un; });
+    // Texto largo (API key) tecleado/pegado/escaneado en el celular → campo activo.
+    void listen<string>("remote_text", (e) => {
+      injectRemoteText(e.payload);
+    }).then((un) => { unlistenRemoteText = un; });
+    window.addEventListener("focusin", trackFocus);
     // Mando físico global + recarga de mapeo al cambiarlo en /config.
     window.addEventListener("gamepad-map-changed", onGamepadMapChanged);
     padRaf = requestAnimationFrame(gamepadBridge);
@@ -127,7 +186,10 @@
   onDestroy(() => {
     unlistenRemoteKey?.();
     unlistenRemoteKey = null;
+    unlistenRemoteText?.();
+    unlistenRemoteText = null;
     cancelAnimationFrame(padRaf);
+    window.removeEventListener("focusin", trackFocus);
     window.removeEventListener("gamepad-map-changed", onGamepadMapChanged);
   });
 

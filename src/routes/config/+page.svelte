@@ -10,6 +10,8 @@
     config,
     loadConfig,
     saveConfig,
+    refreshRdLinked,
+    refreshOsStatus,
     LANGS,
     SUB_LANGS,
     GAME_REGIONS,
@@ -18,11 +20,13 @@
     IPTV_DEFAULT_LISTS,
     type ModeOverride,
     type IptvList,
+    type SubMode,
   } from "$lib/config.svelte";
   import { setConcurrenciaScreening } from "$lib/screening.svelte";
   import { notify } from "$lib/notifStore.svelte";
   import { ayuda } from "$lib/atajos/store.svelte";
   import Gamepad from "$lib/Gamepad.svelte";
+  import RemoteQr from "$lib/RemoteQr.svelte";
   import {
     ACCIONES,
     loadGamepadMap,
@@ -98,16 +102,10 @@
     interval: number;
     expires_in: number;
   };
-  type RdLinked = {
-    access_token: string;
-    refresh_token: string;
-    client_id: string;
-    client_secret: string;
-    expires_in: number;
-  };
-
   let tmdb = $state("");
-  let rd = $state("");
+  // Token pegado a mano (avanzado). NO se persiste en localStorage: se manda al
+  // store 0600 del backend vía rd_creds_save. El vínculo se lee de config.rdLinked.
+  let rdManual = $state("");
   let lang = $state(config.lang);
   let mode = $state<ModeOverride>(config.modeOverride);
   let screeningConc = $state(config.screeningConcurrency);
@@ -115,6 +113,12 @@
   let wyzieKey = $state(config.wyzieKey);
   let showWyzie = $state(false);
   let subSize = $state(config.subSize);
+  let subMode = $state<SubMode>(config.subMode);
+  // OpenSubtitles: login de cuenta gratis (sube cuota a 20/día).
+  let osUserInput = $state("");
+  let osPassInput = $state("");
+  let osBusy = $state(false);
+  let osErr = $state("");
   let webAuto = $state(config.webAutoStart);
   let webPortInput = $state(config.webPort);
   let gameRegions = $state<string[]>([...config.gameRegions]);
@@ -143,6 +147,28 @@
       ? gameRegions.filter((x) => x !== id)
       : [...gameRegions, id];
   }
+  // --- Teclado por celular: QR a /api para escribir/pegar/escanear claves ---
+  type WebStatus = { running: boolean; ip: string | null; port: number | null; url: string | null };
+  let phoneUrl = $state("");
+  let phoneBusy = $state(false);
+  let phoneErr = $state("");
+  async function conectarCelular() {
+    phoneBusy = true;
+    phoneErr = "";
+    try {
+      let st = await invoke<WebStatus>("web_server_status");
+      if (!st.running) {
+        st = await invoke<WebStatus>("web_server_start", { port: config.webPort });
+      }
+      if (st.url) phoneUrl = `${st.url}/api`;
+      else phoneErr = "No se pudo obtener la IP de la red local.";
+    } catch (e) {
+      phoneErr = String(e);
+    } finally {
+      phoneBusy = false;
+    }
+  }
+
   let showTmdb = $state(false);
   let showOmdb = $state(false);
   let omdb = $state("");
@@ -173,7 +199,6 @@
     ayuda.set("config", []);
     loadConfig();
     tmdb = config.tmdbKey;
-    rd = config.rdKey;
     omdb = config.omdbKey;
     lang = config.lang;
     mode = config.modeOverride;
@@ -181,6 +206,8 @@
     subsLang = config.subsLang;
     wyzieKey = config.wyzieKey;
     subSize = config.subSize;
+    subMode = config.subMode;
+    void refreshOsStatus();
     webAuto = config.webAutoStart;
     webPortInput = config.webPort;
     gameRegions = [...config.gameRegions];
@@ -199,7 +226,6 @@
 
   const dirty = $derived(
     tmdb !== config.tmdbKey ||
-    rd !== config.rdKey ||
     omdb !== config.omdbKey ||
     lang !== config.lang ||
     mode !== config.modeOverride ||
@@ -207,6 +233,7 @@
     subsLang !== config.subsLang ||
     wyzieKey !== config.wyzieKey ||
     subSize !== config.subSize ||
+    subMode !== config.subMode ||
     webAuto !== config.webAutoStart ||
     webPortInput !== config.webPort ||
     gameRegions.join(",") !== config.gameRegions.join(",") ||
@@ -215,7 +242,6 @@
 
   function applyAndSave() {
     config.tmdbKey = tmdb.trim();
-    config.rdKey = rd.trim();
     config.omdbKey = omdb.trim();
     config.lang = lang;
     config.modeOverride = mode;
@@ -224,6 +250,7 @@
     config.subsLang = subsLang;
     config.wyzieKey = wyzieKey.trim();
     config.subSize = Math.min(200, Math.max(50, Math.round(subSize)));
+    config.subMode = subMode;
     config.webAutoStart = webAuto;
     config.webPort = Math.min(65535, Math.max(1024, Math.round(webPortInput) || 8080));
     webPortInput = config.webPort;
@@ -290,17 +317,14 @@
 
   async function pollRd(start: RdDeviceStart) {
     try {
-      const linked = await invoke<RdLinked>("rd_device_poll", {
+      // El backend persiste las credenciales en su store 0600; aquí no llega
+      // ningún token. Solo refrescamos el indicador de vínculo.
+      await invoke("rd_device_poll", {
         deviceCode: start.device_code,
         interval: start.interval,
         expiresIn: start.expires_in,
       });
-      rd = linked.access_token;
-      localStorage.setItem("realdebrid_refresh", linked.refresh_token);
-      localStorage.setItem("realdebrid_client_id", linked.client_id);
-      localStorage.setItem("realdebrid_client_secret", linked.client_secret);
-      config.rdKey = linked.access_token;
-      saveConfig();
+      await refreshRdLinked();
       rdOk = true;
       rdLink = null;
       stopCountdown();
@@ -331,13 +355,57 @@
     try { await openUrl(rdLink.verification_url); } catch {}
   }
 
-  function unlinkRd() {
-    rd = "";
-    localStorage.removeItem("realdebrid_refresh");
-    localStorage.removeItem("realdebrid_client_id");
-    localStorage.removeItem("realdebrid_client_secret");
-    config.rdKey = "";
-    saveConfig();
+  async function unlinkRd() {
+    try { await invoke("rd_creds_clear"); } catch {}
+    await refreshRdLinked();
+    rdManual = "";
+    rdOk = false;
+  }
+
+  // OpenSubtitles: vincular / desvincular cuenta gratis (cuota 20/día).
+  async function loginOs() {
+    osErr = "";
+    if (!osUserInput.trim() || !osPassInput) {
+      osErr = "Usuario y contraseña requeridos.";
+      return;
+    }
+    osBusy = true;
+    try {
+      await invoke("os_login", { username: osUserInput.trim(), password: osPassInput });
+      osPassInput = "";
+      osUserInput = "";
+      await refreshOsStatus();
+    } catch (e) {
+      osErr = String(e);
+    } finally {
+      osBusy = false;
+    }
+  }
+
+  async function unlinkOs() {
+    try { await invoke("os_clear"); } catch {}
+    await refreshOsStatus();
+  }
+
+  // Guarda un token pegado a mano en el store seguro del backend.
+  async function saveManualToken() {
+    const tok = rdManual.trim();
+    if (!tok) return;
+    rdErr = "";
+    try {
+      await invoke("rd_creds_save", {
+        accessToken: tok,
+        refreshToken: "",
+        clientId: "",
+        clientSecret: "",
+      });
+      await refreshRdLinked();
+      rdManual = "";
+      showRdAdvanced = false;
+      rdOk = true;
+    } catch (e) {
+      rdErr = String(e);
+    }
   }
 
   function fmtMmSs(s: number): string {
@@ -362,19 +430,18 @@
     testSrcs = [];
     const log = testLogPush;
     try {
-      const tok = (rd || config.rdKey || "").trim();
-      log(`token: ${tok ? tok.slice(0, 8) + "…" : "NINGUNO"}`);
+      const linked = config.rdLinked;
+      log(`RD: ${linked ? "vinculado" : "NO vinculado"}`);
       log("buscando fuentes…");
       const srcs = await invoke<any[]>("kodios_search", {
         imdbId: testImdb.trim(),
         kind: "movie",
-        rdToken: tok || undefined,
       });
       testSrcs = srcs;
       const conUrl = srcs.filter((s) => s.url).length;
       log(`fuentes: ${srcs.length} · ${conUrl} pre-resueltas (Torrentio+RD)`);
       if (!srcs.length) { log("sin fuentes, fin"); return; }
-      if (!tok) { log("sin token RD → no resuelvo"); return; }
+      if (!linked) { log("sin RD vinculado → no resuelvo"); return; }
       // Itera: usa url directa si existe, si no resuelve magnet. Salta bloqueadas.
       let blocked = 0;
       const max = Math.min(srcs.length, 12);
@@ -385,7 +452,7 @@
         try {
           const url = s.url
             ? s.url
-            : await invoke<string>("rd_resolve", { magnet: s.magnet, token: tok });
+            : await invoke<string>("rd_resolve", { magnet: s.magnet });
           testUrl = url;
           log(`✓ REPRODUCIBLE (#${i + 1}, ${blocked} bloqueadas antes): ${url.slice(0, 70)}…`);
           return;
@@ -406,13 +473,12 @@
   // ⚡ Cuántas de las fuentes ya están cacheadas en RD (reproducción instantánea)
   async function runCacheTest() {
     const log = testLogPush;
-    const tok = (rd || config.rdKey || "").trim();
-    if (!tok) { log("sin token RD"); return; }
+    if (!config.rdLinked) { log("sin RD vinculado"); return; }
     if (!testSrcs.length) { log("primero pulsa Probar (no hay fuentes)"); return; }
     const hashes = testSrcs.map((s) => s.info_hash).filter(Boolean);
     log(`checando cache de ${hashes.length} hashes…`);
     try {
-      const cached = await invoke<string[]>("rd_instant_available", { hashes, token: tok });
+      const cached = await invoke<string[]>("rd_instant_available", { hashes });
       const set = new Set(cached.map((h) => h.toLowerCase()));
       log(`⚡ cacheadas en RD: ${set.size} / ${hashes.length}`);
       const top = testSrcs
@@ -449,10 +515,9 @@
   // 👤 Estado de la cuenta RD (diagnóstico de 451)
   async function runAccountTest() {
     const log = testLogPush;
-    const tok = (rd || config.rdKey || "").trim();
-    if (!tok) { log("sin token RD"); return; }
+    if (!config.rdLinked) { log("sin RD vinculado"); return; }
     try {
-      const a = await invoke<any>("rd_account", { token: tok });
+      const a = await invoke<any>("rd_account");
       const secs = a.premium ?? 0;
       const dias = Math.round(secs / 86400);
       log(`👤 ${a.username} · tipo: ${a.account_type || "?"} · premium: ${dias}d · expira: ${a.expiration || "?"}`);
@@ -530,6 +595,33 @@
 
     <div class="cfg-grid">
       <div class="col">
+        <section class="block phone-block">
+          <h2>Escribir desde el celular</h2>
+          <p class="hint">
+            ¿La API es muy larga para el control? Conecta tu celular por WiFi,
+            escanea el QR y escribe, pega o <strong>escanea otro QR</strong> con
+            la clave desde el teléfono. Llega al campo que tengas seleccionado aquí.
+          </p>
+          {#if !phoneUrl}
+            <button class="btn-link" onclick={conectarCelular} disabled={phoneBusy}>
+              {phoneBusy ? "Conectando…" : "📱 Conectar celular"}
+            </button>
+          {:else}
+            <div class="phone-qr">
+              <RemoteQr url={phoneUrl} label="Teclado" size={132} />
+              <div class="phone-steps">
+                <p class="hint" style="margin:0 0 8px;">
+                  1. Escanea con la cámara del celular.<br />
+                  2. Toca aquí el campo a llenar (TMDb, OMDb…).<br />
+                  3. Escribe/pega/escanea en el cel y pulsa <em>Enviar</em>.
+                </p>
+                <code class="phone-url">{phoneUrl}</code>
+              </div>
+            </div>
+          {/if}
+          {#if phoneErr}<p class="err">{phoneErr}</p>{/if}
+        </section>
+
         <section class="block">
           <h2>API key de TMDb</h2>
           <p class="hint">
@@ -573,7 +665,7 @@
           <h2>RealDebrid</h2>
           <p class="hint">Vinculá tu cuenta para streaming premium sin publicidad.</p>
 
-          {#if rd && !rdLink}
+          {#if config.rdLinked && !rdLink}
             <div class="rd-linked">
               <span class="dot ok"></span>
               <span>Cuenta vinculada</span>
@@ -601,11 +693,14 @@
               <div class="key-row" style="margin-top: 10px;">
                 <input
                   type="password"
-                  bind:value={rd}
+                  bind:value={rdManual}
                   placeholder="access_token"
                   autocomplete="off"
                   spellcheck="false"
                 />
+                <button class="btn-sec" onclick={saveManualToken} disabled={!rdManual.trim()}>
+                  Guardar
+                </button>
               </div>
             {/if}
           {/if}
@@ -722,6 +817,30 @@
         </section>
 
         <section class="block">
+          <h2>Audio y subtítulos</h2>
+          <p class="hint">
+            Cómo prefieres ver. Kütral ordena las fuentes y elige la pista
+            correcta del archivo. Si el release no la trae, busca subtítulos.
+          </p>
+          <div class="mode-group">
+            <label class="mode-card" class:sel={subMode === "dub"}>
+              <input type="radio" name="subMode" value="dub" bind:group={subMode} />
+              <div>
+                <strong>Doblado</strong>
+                <span>Audio en español primero (Latino / Castellano).</span>
+              </div>
+            </label>
+            <label class="mode-card" class:sel={subMode === "sub"}>
+              <input type="radio" name="subMode" value="sub" bind:group={subMode} />
+              <div>
+                <strong>Subtitulado</strong>
+                <span>Audio original con subtítulos en español.</span>
+              </div>
+            </label>
+          </div>
+        </section>
+
+        <section class="block">
           <h2>Subtítulos</h2>
           <p class="hint">
             Idioma preferido. Si pones API key de Wyzie, Kütral busca
@@ -759,6 +878,33 @@
               bind:value={subSize}
             />
           </label>
+
+          <div class="field">
+            <span class="field-label">Cuenta OpenSubtitles (opcional)</span>
+            {#if !config.osHasKey}
+              <p class="hint">
+                Subtítulos externos deshabilitados: falta la API key de la app.
+                Configúrala en el código (módulo opensubtitles.rs).
+              </p>
+            {:else if config.osLinked}
+              <div class="key-row">
+                <span class="os-linked">✓ Vinculada{config.osUser ? ` (${config.osUser})` : ""} — 20 descargas/día</span>
+                <button type="button" class="btn-ghost" onclick={unlinkOs}>Desvincular</button>
+              </div>
+            {:else}
+              <p class="hint">
+                Sin cuenta usas 5 subtítulos/día (anónimo). Con una cuenta gratis
+                suben a 20/día.
+                <a href="https://www.opensubtitles.com/newuser" target="_blank" rel="noopener">Crear cuenta gratis →</a>
+              </p>
+              <input type="text" bind:value={osUserInput} placeholder="Usuario" autocomplete="off" />
+              <input type="password" bind:value={osPassInput} placeholder="Contraseña" autocomplete="off" />
+              {#if osErr}<p class="err">{osErr}</p>{/if}
+              <button type="button" class="btn-ghost" disabled={osBusy} onclick={loginOs}>
+                {osBusy ? "Vinculando…" : "Vincular cuenta"}
+              </button>
+            {/if}
+          </div>
         </section>
       </div>
 
@@ -1063,6 +1209,21 @@
   .radio:hover { border-color: #2a2a36; }
   .radio input { accent-color: #f3a951; }
 
+  .phone-block { border-color: #3a2c12; background: #15130d; }
+  .phone-qr { display: flex; gap: 16px; align-items: flex-start; margin-top: 6px; }
+  .phone-steps { flex: 1; min-width: 0; }
+  .phone-steps .hint em { color: #f3a951; }
+  .phone-url {
+    display: inline-block;
+    background: #0d0d12;
+    border: 1px solid #2a2a36;
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 11.5px;
+    color: #d8d8e0;
+    word-break: break-all;
+  }
+
   .key-row { display: flex; gap: 8px; }
   .key-row input {
     flex: 1;
@@ -1200,6 +1361,7 @@
   }
   .err { color: #ff7373; }
   .ok { color: #9be38a; }
+  .os-linked { color: #9be38a; font-size: 13px; flex: 1; }
 
   .actions {
     display: flex; flex-direction: column;

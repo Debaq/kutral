@@ -241,22 +241,18 @@ async fn instant_available(token: &str, hashes: &[String]) -> Result<Vec<String>
 
 /// Resuelve un magnet → URL directa lista para mpv.
 #[tauri::command]
-pub async fn rd_resolve(magnet: String, token: String) -> Result<String, String> {
-    if token.is_empty() {
-        return Err("token RD vacío".into());
-    }
+pub async fn rd_resolve(app: tauri::AppHandle, magnet: String) -> Result<String, String> {
+    let token = crate::creds::token(&app)?;
     resolve_magnet(&token, &magnet).await
 }
 
 /// Devuelve qué info_hashes ya están cacheados en RD (para badge "instantáneo").
 #[tauri::command]
 pub async fn rd_instant_available(
+    app: tauri::AppHandle,
     hashes: Vec<String>,
-    token: String,
 ) -> Result<Vec<String>, String> {
-    if token.is_empty() {
-        return Err("token RD vacío".into());
-    }
+    let token = crate::creds::token(&app)?;
     instant_available(&token, &hashes).await
 }
 
@@ -276,10 +272,8 @@ pub struct RdAccount {
 
 /// Estado de la cuenta RD (premium/free, expiración). Diagnóstico de 451.
 #[tauri::command]
-pub async fn rd_account(token: String) -> Result<RdAccount, String> {
-    if token.is_empty() {
-        return Err("token RD vacío".into());
-    }
+pub async fn rd_account(app: tauri::AppHandle) -> Result<RdAccount, String> {
+    let token = crate::creds::token(&app)?;
     let cli = client()?;
     let r = cli
         .get(format!("{BASE}/user"))
@@ -337,13 +331,14 @@ fn now_secs() -> i64 {
 /// Borra de la lista RD los torrents agregados hace más de `older_than_hours`.
 /// No afecta reproducción ni la caché global de RD. Devuelve cuántos borró.
 #[tauri::command]
-pub async fn rd_cleanup_torrents(token: String, older_than_hours: u64) -> Result<usize, String> {
-    if token.is_empty() {
-        return Err("token RD vacío".into());
-    }
+pub async fn rd_cleanup_torrents(
+    app: tauri::AppHandle,
+    older_than_hours: u64,
+) -> Result<usize, String> {
     if older_than_hours == 0 {
         return Ok(0);
     }
+    let token = crate::creds::token(&app)?;
     let cli = client()?;
     let r = cli
         .get(format!("{BASE}/torrents?limit=200"))

@@ -10,6 +10,7 @@
 
   import { onMount, onDestroy, tick } from "svelte";
   import { goto } from "$app/navigation";
+  import { invoke } from "@tauri-apps/api/core";
   import Hls from "hls.js";
   import { config, loadConfig, IPTV_DEFAULT_LISTS } from "$lib/config.svelte";
   import { ayuda } from "$lib/atajos/store.svelte";
@@ -163,9 +164,24 @@
     }
   }
 
-  // Reproduce el canal DENTRO de la app en un <video>. HLS (.m3u8) vía hls.js
-  // (MSE) o nativo si el webview lo soporta; otros formatos van directo al src.
+  // Reproduce un canal. PRIMARIO: mpv+uosc (reproductor profesional, un solo
+  // motor para IPTV y películas) con TODA la grilla como playlist → zapping
+  // con ←/→. Si mpv no está (dev), cae al player in-app <video>+hls.js.
   async function reproducir(c: Canal, idx = -1) {
+    const start = idx >= 0 ? idx : visibles.indexOf(c);
+    const items = visibles.map((ch) => ({ url: ch.url, title: ch.name }));
+    try {
+      await invoke("mpv_play_iptv", { items, start: Math.max(0, start) });
+      return;
+    } catch (e) {
+      console.warn("[iptv] mpv no disponible, uso player in-app:", e);
+    }
+    await reproducirInApp(c, idx);
+  }
+
+  // Fallback: reproduce el canal DENTRO de la app en un <video>. HLS (.m3u8)
+  // vía hls.js (MSE) o nativo si el webview lo soporta; otros van directo al src.
+  async function reproducirInApp(c: Canal, idx = -1) {
     playing = c;
     playingIdx = idx >= 0 ? idx : visibles.indexOf(c);
     playError = "";

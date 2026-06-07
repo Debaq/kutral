@@ -126,16 +126,25 @@
   type ActionItem = { id: string; label: string; primary?: boolean };
 
   const actions: ActionItem[] = $derived.by(() => {
-    const a: ActionItem[] = [];
+    // Acciones del player WEB (vidapi). Con debrid pasan a ser secundarias.
+    const web: ActionItem[] = [];
     if (progressLabel) {
-      a.push({ id: "cont", label: `▶  Continuar (${progressLabel})`, primary: true });
-      a.push({ id: "restart", label: "↻  Empezar de nuevo" });
+      web.push({ id: "cont", label: `▶  Continuar (${progressLabel})` });
+      web.push({ id: "restart", label: "↻  Empezar de nuevo" });
     } else {
-      a.push({ id: "discover", label: "▶  Descubrir", primary: true });
+      web.push({ id: "discover", label: hasRd ? "🌐  Ver en web" : "▶  Descubrir" });
     }
+
+    const a: ActionItem[] = [];
     if (hasRd) {
-      a.push({ id: "rd", label: "⚡  Ver con debrid" });
+      // Prioridad: si hay RealDebrid, va debrid primero (mejor calidad, directo
+      // a mpv) y el player web queda como alternativa.
+      a.push({ id: "rd", label: "⚡  Ver con debrid", primary: true });
       a.push({ id: "research", label: "🔄  Rebuscar fuentes" });
+      a.push(...web);
+    } else {
+      web[0].primary = true;
+      a.push(...web);
     }
     if (hasTrailer) {
       a.push({ id: "trailer", label: "🎬  Ver trailer" });

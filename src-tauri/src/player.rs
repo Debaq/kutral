@@ -91,58 +91,70 @@ fn mpv_bin(app: &tauri::AppHandle) -> String {
     exe.to_string()
 }
 
-/// Lanza mpv fullscreen con la URL. Mata cualquier mpv previo.
-#[tauri::command]
-pub fn mpv_play(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, PlayerState>,
-    url: String,
-    title: Option<String>,
-    start_secs: Option<u64>,
+/// Dir de config de mpv embebido en vendor/mpv-config (uosc + mpv.conf +
+/// input.conf). Da la UI profesional. Se resuelve igual que el binario mpv.
+fn mpv_config_dir(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    use tauri::Manager;
+    let mut cands: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(res) = app.path().resource_dir() {
+        cands.push(res.join("vendor").join("mpv-config"));
+    }
+    cands.push(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("vendor")
+            .join("mpv-config"),
+    );
+    if let Ok(p) = std::env::current_exe() {
+        if let Some(dir) = p.parent() {
+            cands.push(dir.join("vendor").join("mpv-config"));
+        }
+    }
+    cands.into_iter().find(|c| c.exists())
+}
+
+/// Lanza mpv fullscreen con los args extra dados (url/playlist/título/etc.).
+/// Mata cualquier mpv previo y aplica la config embebida (uosc) si existe.
+fn spawn_mpv(
+    app: &tauri::AppHandle,
+    state: &tauri::State<'_, PlayerState>,
+    extra: Vec<String>,
 ) -> Result<(), String> {
     use std::process::Command;
 
-    if url.is_empty() {
-        return Err("url vacía".into());
-    }
-
     // Cerrar mpv anterior si quedó vivo.
-    kill_existing(&state);
+    kill_existing(state);
 
     // En Unix limpiamos el socket viejo; en Windows el pipe se recrea solo.
     #[cfg(not(windows))]
     let _ = std::fs::remove_file(ipc_path());
 
-    // input.conf: Esc y Backspace cierran mpv (por defecto Esc solo sale de
-    // fullscreen). Así el usuario vuelve a kutral con esas teclas.
-    let conf = std::env::temp_dir().join("kutral-mpv-input.conf");
-    let _ = std::fs::write(&conf, "ESC quit\nBS quit\nq quit\n");
-
-    let mut cmd = Command::new(mpv_bin(&app));
+    let mut cmd = Command::new(mpv_bin(app));
     // El mpv embebido en Linux es un AppImage: correrlo sin FUSE (se
     // auto-extrae a /tmp). Inofensivo si es un mpv normal del PATH.
     #[cfg(not(windows))]
     cmd.env("APPIMAGE_EXTRACT_AND_RUN", "1");
     cmd.arg(format!("--input-ipc-server={}", ipc_path()))
-        .arg(format!("--input-conf={}", conf.display()))
         .arg("--fullscreen")
         .arg("--force-window=immediate")
         .arg("--no-terminal")
         .arg("--really-quiet")
-        .arg("--hwdec=auto-safe") // HDR/AV1 por hardware si se puede
         .arg("--keep-open=no");
 
-    if let Some(t) = &title {
-        cmd.arg(format!("--force-media-title={t}"));
+    if let Some(cfg) = mpv_config_dir(app) {
+        // mpv.conf (hwdec, subs, cache) + input.conf + uosc viven aquí.
+        cmd.arg(format!("--config-dir={}", cfg.display()));
+    } else {
+        // Sin config embebida (dev sin fetch): al menos salir a kutral con Esc.
+        let conf = std::env::temp_dir().join("kutral-mpv-input.conf");
+        let _ = std::fs::write(&conf, "ESC quit\nBS quit\nq quit\n");
+        cmd.arg(format!("--input-conf={}", conf.display()))
+            .arg("--hwdec=auto-safe");
     }
-    if let Some(s) = start_secs {
-        if s > 0 {
-            cmd.arg(format!("--start=+{s}"));
-        }
-    }
-    cmd.arg(&url);
 
-    eprintln!("[mpv] spawn fullscreen url={url}");
+    for a in extra {
+        cmd.arg(a);
+    }
+
     let child = cmd.spawn().map_err(|e| {
         let msg = if e.kind() == std::io::ErrorKind::NotFound {
             "mpv no está instalado (falta en el PATH)".to_string()
@@ -158,6 +170,76 @@ pub fn mpv_play(
     // Avisar al front: ya hay mpv → muestra OSD global y empieza a sondear.
     let _ = app.emit("mpv:state", true);
     Ok(())
+}
+
+/// Lanza mpv fullscreen con la URL. Mata cualquier mpv previo.
+#[tauri::command]
+pub fn mpv_play(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, PlayerState>,
+    url: String,
+    title: Option<String>,
+    start_secs: Option<u64>,
+) -> Result<(), String> {
+    if url.is_empty() {
+        return Err("url vacía".into());
+    }
+    let mut extra: Vec<String> = Vec::new();
+    if let Some(t) = &title {
+        extra.push(format!("--force-media-title={t}"));
+    }
+    if let Some(s) = start_secs {
+        if s > 0 {
+            extra.push(format!("--start=+{s}"));
+        }
+    }
+    extra.push(url.clone());
+    eprintln!("[mpv] spawn fullscreen url={url}");
+    spawn_mpv(&app, &state, extra)
+}
+
+/// Un canal IPTV para la playlist de mpv.
+#[derive(serde::Deserialize)]
+pub struct IptvItem {
+    pub url: String,
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
+/// Lanza mpv con TODA la grilla de canales como playlist (zapping con ←/→).
+/// Arranca en `start`. Un solo reproductor pro (uosc) para IPTV y películas.
+#[tauri::command]
+pub fn mpv_play_iptv(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, PlayerState>,
+    items: Vec<IptvItem>,
+    start: Option<usize>,
+) -> Result<(), String> {
+    if items.is_empty() {
+        return Err("sin canales".into());
+    }
+    let start = start.unwrap_or(0).min(items.len() - 1);
+
+    // Playlist m3u temporal con títulos (EXTINF) → uosc los muestra al zapear.
+    let mut m3u = String::from("#EXTM3U\n");
+    for it in &items {
+        let name = it.title.clone().unwrap_or_default().replace(['\n', '\r'], " ");
+        m3u.push_str(&format!("#EXTINF:-1,{name}\n{}\n", it.url));
+    }
+    let pl = std::env::temp_dir().join("kutral-iptv.m3u");
+    std::fs::write(&pl, m3u).map_err(|e| format!("playlist: {e}"))?;
+
+    let mut extra: Vec<String> = Vec::new();
+    if let Some(cfg) = mpv_config_dir(&app) {
+        // input.conf de IPTV: flechas = zapping en vez de seek.
+        extra.push(format!("--input-conf={}", cfg.join("iptv-input.conf").display()));
+    }
+    // Permitir URLs de red dentro de un playlist local.
+    extra.push("--load-unsafe-playlists".into());
+    extra.push(format!("--playlist-start={start}"));
+    extra.push(format!("--playlist={}", pl.display()));
+    eprintln!("[mpv] spawn IPTV playlist start={start} n={}", items.len());
+    spawn_mpv(&app, &state, extra)
 }
 
 /// Envía un comando JSON al IPC de mpv.
@@ -332,6 +414,56 @@ fn read_props(names: &[&str]) -> serde_json::Map<String, serde_json::Value> {
         Err(_) => return serde_json::Map::new(),
     };
     query_props(&mut f, names)
+}
+
+/// Una pista del contenedor (audio o subtítulo) leída de mpv. Verdad del
+/// archivo: lo que el release REALMENTE trae, no lo que dice el nombre.
+#[derive(serde::Serialize, Default)]
+pub struct MpvTrack {
+    pub id: i64,
+    /// "audio" | "sub" | "video"
+    pub kind: String,
+    /// ISO 639 (ej. "spa", "eng") si el contenedor lo declara.
+    pub lang: String,
+    pub title: String,
+    pub selected: bool,
+}
+
+/// Lista de pistas reales de audio/subtítulos del archivo en reproducción.
+/// El frontend la usa para auto-seleccionar la pista ES (nivel 3) y decidir si
+/// hace falta bajar subtítulos externos.
+#[tauri::command]
+pub fn mpv_tracks(state: tauri::State<'_, PlayerState>) -> Vec<MpvTrack> {
+    if !alive(&state) {
+        return Vec::new();
+    }
+    let p = read_props(&["track-list"]);
+    let Some(arr) = p.get("track-list").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|t| {
+            let kind = t.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            if kind != "audio" && kind != "sub" {
+                return None;
+            }
+            Some(MpvTrack {
+                id: t.get("id").and_then(|v| v.as_i64()).unwrap_or(0),
+                kind: kind.to_string(),
+                lang: t
+                    .get("lang")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                title: t
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                selected: t.get("selected").and_then(|v| v.as_bool()).unwrap_or(false),
+            })
+        })
+        .collect()
 }
 
 /// Estado en vivo para el OSD: posición, duración, pausa, volumen, subs, título.

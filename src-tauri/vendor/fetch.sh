@@ -47,5 +47,23 @@ else
   chmod +x mpv
 fi
 
+echo ">> uosc (UI moderna de mpv)"
+# Scripts + fonts de uosc dentro de mpv-config/. Los .conf (mpv.conf,
+# input.conf, iptv-input.conf) son nuestros y SÍ se versionan; uosc no.
+if [ -d mpv-config/scripts/uosc ]; then
+  echo "  ya está"
+else
+  command -v unzip >/dev/null || { echo "falta unzip"; exit 1; }
+  uurl=$(curl -sSL "https://api.github.com/repos/tomasklaen/uosc/releases/latest" \
+    | grep -oE '"browser_download_url": *"[^"]*uosc\.zip"' \
+    | head -1 | sed -E 's/.*"(https[^"]+)"$/\1/')
+  if [ -z "$uurl" ]; then echo "  no encontré uosc.zip"; exit 1; fi
+  echo "  bajando: $uurl"
+  mkdir -p mpv-config
+  curl -sSL -o /tmp/uosc.zip "$uurl"
+  unzip -o -q /tmp/uosc.zip -d mpv-config
+  rm /tmp/uosc.zip
+fi
+
 echo ">> listo"
 ls -lh retroarch mpv cores/*.so

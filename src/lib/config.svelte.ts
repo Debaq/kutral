@@ -1,7 +1,10 @@
 import { getOsInfo } from "$lib/os";
+import { invoke } from "@tauri-apps/api/core";
 
 export type Lang = "es-CL" | "es-ES" | "en-US";
 export type ModeOverride = "auto" | "kiosk" | "desktop";
+// "dub" = doblado al español; "sub" = original subtitulado en español.
+export type SubMode = "dub" | "sub";
 
 export const LANGS: { id: Lang; label: string }[] = [
 	{ id: "es-CL", label: "Español (Chile)" },
@@ -91,7 +94,9 @@ export const SUB_LANGS: { id: string; label: string }[] = [
 export const config = $state({
 	lang: "es-CL" as Lang,
 	tmdbKey: "",
-	rdKey: "",
+	// Estado de vínculo Real-Debrid. El token NO vive aquí ni en localStorage:
+	// está en el store 0600 del backend. Esto es solo el indicador booleano.
+	rdLinked: false,
 	omdbKey: "",
 	modeOverride: "auto" as ModeOverride,
 	screeningConcurrency: SCREENING_DEFAULT,
@@ -99,6 +104,15 @@ export const config = $state({
 	// Sin wyzieKey: el player intenta auto-buscar en OpenSubtitles (cuota limitada).
 	subsLang: "es",
 	wyzieKey: "",
+	// Preferencia de reproducción: "dub" = audio doblado al español primero;
+	// "sub" = audio original (VO) + subtítulos en español. Ordena las fuentes y
+	// decide qué pista auto-seleccionar en mpv.
+	subMode: "dub" as SubMode,
+	// Estado de la cuenta OpenSubtitles (subs externos, 20/día con cuenta). El
+	// token NO vive aquí: está en el store 0600 del backend. Solo el indicador.
+	osLinked: false,
+	osUser: "",
+	osHasKey: false,
 	// Tamaño del subtítulo en el player. 50–200% (100 = base). El valor se
 	// inyecta al iframe via postMessage STORAGE_INIT como playerSubStyle.
 	subSize: 100,
@@ -121,7 +135,6 @@ export function loadConfig() {
 	const lang = localStorage.getItem("app_lang") as Lang | null;
 	if (lang && LANGS.some((l) => l.id === lang)) config.lang = lang;
 	config.tmdbKey = localStorage.getItem("tmdb_key") || "";
-	config.rdKey = localStorage.getItem("realdebrid_key") || "";
 	config.omdbKey = localStorage.getItem("omdb_key") || "";
 	const m = (localStorage.getItem("kiosk_mode") || "auto") as ModeOverride;
 	config.modeOverride = ["auto", "kiosk", "desktop"].includes(m) ? m : "auto";
@@ -130,6 +143,8 @@ export function loadConfig() {
 	const sl = localStorage.getItem("subs_lang") || "es";
 	config.subsLang = SUB_LANGS.some((l) => l.id === sl) ? sl : "es";
 	config.wyzieKey = localStorage.getItem("wyzie_key") || "";
+	const sm = localStorage.getItem("sub_mode");
+	config.subMode = sm === "sub" ? "sub" : "dub";
 	const ss = parseInt(localStorage.getItem("sub_size") || "", 10);
 	config.subSize = Number.isFinite(ss)
 		? Math.min(200, Math.max(50, ss))
@@ -173,7 +188,6 @@ export function saveConfig() {
 	if (typeof localStorage === "undefined") return;
 	localStorage.setItem("app_lang", config.lang);
 	localStorage.setItem("tmdb_key", config.tmdbKey);
-	localStorage.setItem("realdebrid_key", config.rdKey);
 	localStorage.setItem("omdb_key", config.omdbKey.trim());
 	localStorage.setItem("kiosk_mode", config.modeOverride);
 	localStorage.setItem(
@@ -182,6 +196,7 @@ export function saveConfig() {
 	);
 	localStorage.setItem("subs_lang", config.subsLang);
 	localStorage.setItem("wyzie_key", config.wyzieKey.trim());
+	localStorage.setItem("sub_mode", config.subMode);
 	localStorage.setItem("sub_size", String(config.subSize));
 	localStorage.setItem("web_autostart", config.webAutoStart ? "1" : "0");
 	localStorage.setItem("web_port", String(config.webPort));
@@ -191,6 +206,55 @@ export function saveConfig() {
 		.filter((l) => l.url.trim())
 		.map((l) => ({ name: (l.name || "Lista").trim(), url: l.url.trim() }));
 	localStorage.setItem("iptv_lists", JSON.stringify(listas));
+}
+
+// Migra credenciales RD del viejo localStorage (texto plano) al store 0600 del
+// backend, las borra de localStorage, y refresca el indicador rdLinked. Idempotente.
+export async function initRd() {
+	if (typeof localStorage !== "undefined") {
+		const legacy = localStorage.getItem("realdebrid_key");
+		if (legacy) {
+			try {
+				await invoke("rd_creds_save", {
+					accessToken: legacy,
+					refreshToken: localStorage.getItem("realdebrid_refresh") || "",
+					clientId: localStorage.getItem("realdebrid_client_id") || "",
+					clientSecret: localStorage.getItem("realdebrid_client_secret") || "",
+				});
+				localStorage.removeItem("realdebrid_key");
+				localStorage.removeItem("realdebrid_refresh");
+				localStorage.removeItem("realdebrid_client_id");
+				localStorage.removeItem("realdebrid_client_secret");
+			} catch {
+				// Si el backend falla, dejamos el legacy donde está para reintentar.
+			}
+		}
+	}
+	await refreshRdLinked();
+}
+
+export async function refreshRdLinked() {
+	try {
+		config.rdLinked = await invoke<boolean>("rd_creds_status");
+	} catch {
+		config.rdLinked = false;
+	}
+}
+
+type OsStatus = { linked: boolean; username: string; has_api_key: boolean };
+
+// Refresca el indicador de cuenta OpenSubtitles (sin tocar el token).
+export async function refreshOsStatus() {
+	try {
+		const s = await invoke<OsStatus>("os_status");
+		config.osLinked = s.linked;
+		config.osUser = s.username || "";
+		config.osHasKey = s.has_api_key;
+	} catch {
+		config.osLinked = false;
+		config.osUser = "";
+		config.osHasKey = false;
+	}
 }
 
 export async function initDetection() {

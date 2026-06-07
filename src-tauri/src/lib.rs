@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
 
 mod awards;
+mod creds;
 mod emu;
 mod kodios;
+mod opensubtitles;
 mod rd;
 mod player;
 mod screening;
@@ -605,10 +607,13 @@ pub struct ItemStatus {
     pub has_trailer: bool,
 }
 
+/// Respuesta combinada de `/{type}/{id}?append_to_response=external_ids,videos`.
 #[derive(Deserialize)]
-struct ExternalIdsResp {
+struct ItemStatusRaw {
     #[serde(default)]
-    imdb_id: Option<String>,
+    external_ids: Option<ExternalIds>,
+    #[serde(default)]
+    videos: Option<VideosResp>,
 }
 
 #[tauri::command]
@@ -619,37 +624,29 @@ async fn item_status(media_type: String, id: u64, api_key: String) -> Result<Ite
     if media_type != "movie" && media_type != "tv" {
         return Err("media_type inválido".into());
     }
-    let ext_url = format!(
-        "{}/{}/{}/external_ids?api_key={}",
-        TMDB_BASE, media_type, id, api_key
-    );
-    let vid_url_local = format!(
-        "{}/{}/{}/videos?api_key={}&language={}",
+    // UNA sola petición (append_to_response) en vez de 3 → 3× menos presión de
+    // rate-limit en una grilla que sondea decenas de cards a la vez.
+    //
+    // CRÍTICO: si la petición falla (429/red), PROPAGAMOS el error con `?`. El
+    // frontend entonces asume "ok" y NO oculta la card. Antes un fallo de red se
+    // tragaba (`ext_res.ok()` → None) y se confundía con "sin imdb", ocultando
+    // pelis y series enteras (todas las series desaparecían en el storm de 429).
+    let url = format!(
+        "{}/{}/{}?api_key={}&language={}&append_to_response=external_ids,videos",
         TMDB_BASE, media_type, id, api_key, LANG
     );
-    let vid_url_en = format!(
-        "{}/{}/{}/videos?api_key={}&language=en-US",
-        TMDB_BASE, media_type, id, api_key
-    );
-    // En paralelo
-    let (ext_res, vids_local, vids_en) = tokio::join!(
-        fetch_json::<ExternalIdsResp>(&ext_url),
-        fetch_json::<VideosResp>(&vid_url_local),
-        fetch_json::<VideosResp>(&vid_url_en),
-    );
-    let imdb_id = ext_res.ok().and_then(|e| e.imdb_id).filter(|s| !s.is_empty());
+    let raw: ItemStatusRaw = fetch_json(&url).await?;
+    let imdb_id = raw
+        .external_ids
+        .and_then(|e| e.imdb_id)
+        .filter(|s| !s.is_empty());
     let has_imdb = imdb_id.is_some();
-    let has_trailer = {
-        let combined: Vec<VideoItem> = vids_local
-            .map(|r| r.results)
-            .unwrap_or_default()
-            .into_iter()
-            .chain(vids_en.map(|r| r.results).unwrap_or_default())
-            .collect();
-        combined
-            .iter()
-            .any(|v| v.site == "YouTube" && (v.kind == "Trailer" || v.kind == "Teaser"))
-    };
+    let has_trailer = raw
+        .videos
+        .map(|v| v.results)
+        .unwrap_or_default()
+        .iter()
+        .any(|v| v.site == "YouTube" && (v.kind == "Trailer" || v.kind == "Teaser"));
     Ok(ItemStatus { id, has_imdb, imdb_id, has_trailer })
 }
 
@@ -1792,15 +1789,6 @@ struct RdTokenResp {
     expires_in: u64,
 }
 
-#[derive(Serialize)]
-pub struct RdLinked {
-    pub access_token: String,
-    pub refresh_token: String,
-    pub client_id: String,
-    pub client_secret: String,
-    pub expires_in: u64,
-}
-
 #[tauri::command]
 async fn rd_device_start() -> Result<RdDeviceStart, String> {
     let url = format!(
@@ -1820,10 +1808,11 @@ async fn rd_device_start() -> Result<RdDeviceStart, String> {
 
 #[tauri::command]
 async fn rd_device_poll(
+    app: tauri::AppHandle,
     device_code: String,
     interval: u64,
     expires_in: u64,
-) -> Result<RdLinked, String> {
+) -> Result<(), String> {
     if device_code.is_empty() {
         return Err("device_code vacío".into());
     }
@@ -1884,13 +1873,22 @@ async fn rd_device_poll(
             return Err(format!("RD token {}: {}", st, body));
         }
         let t: RdTokenResp = tok.json().await.map_err(|e| format!("parse token: {}", e))?;
-        return Ok(RdLinked {
-            access_token: t.access_token,
-            refresh_token: t.refresh_token,
-            client_id: creds.client_id,
-            client_secret: creds.client_secret,
-            expires_in: t.expires_in,
-        });
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        // El token NO vuelve al webview: se persiste en el store 0600 del backend.
+        crate::creds::save(
+            &app,
+            &crate::creds::RdCreds {
+                access_token: t.access_token,
+                refresh_token: t.refresh_token,
+                client_id: creds.client_id,
+                client_secret: creds.client_secret,
+                expires_at: now + t.expires_in,
+            },
+        )?;
+        return Ok(());
     }
 }
 
@@ -2490,6 +2488,9 @@ pub fn run() {
             wifi_connect,
             rd_device_start,
             rd_device_poll,
+            creds::rd_creds_save,
+            creds::rd_creds_clear,
+            creds::rd_creds_status,
             audio_get,
             audio_set,
             audio_set_mute,
@@ -2506,10 +2507,17 @@ pub fn run() {
             rd::rd_account,
             rd::rd_cleanup_torrents,
             player::mpv_play,
+            player::mpv_play_iptv,
             player::mpv_cmd,
             player::mpv_stop,
             player::mpv_running,
             player::mpv_status,
+            player::mpv_tracks,
+            opensubtitles::os_login,
+            opensubtitles::os_status,
+            opensubtitles::os_clear,
+            opensubtitles::os_search,
+            opensubtitles::subtitle_save,
             screening::screening_enqueue,
             screening::screening_get_unavailable,
             screening::screening_set_paused,

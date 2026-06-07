@@ -342,6 +342,23 @@
       webRemoteUrl = null;
     }
   }
+  // URL del teclado web (escribir/pegar/escanear la key desde el celular).
+  let webKeyboardUrl = $derived(webRemoteUrl ? `${webRemoteUrl}/api` : null);
+  // Primer arranque sin key: levanta el servidor web aunque el autostart esté
+  // apagado, para que el QR del teclado funcione y el cliente no quede atado de
+  // manos teniendo que escribir 32 chars con el control.
+  async function ensureWebServer() {
+    try {
+      let s = await invoke<{ running: boolean; url: string | null }>("web_server_status");
+      if (!s.running) {
+        const wp = parseInt(localStorage.getItem("web_port") || "8080", 10);
+        s = await invoke("web_server_start", { port: Number.isFinite(wp) ? wp : 8080 });
+      }
+      webRemoteUrl = s.url;
+    } catch {
+      // Puerto ocupado u otra falla: el QR simplemente no aparece.
+    }
+  }
 
   type AwardsSummary = { wins: number; nominations: number };
   let awardsMap = $state<Map<string, AwardsSummary | "loading">>(new Map());
@@ -468,7 +485,9 @@
     }
 
     // QR del mando remoto: refrescar estado del servidor cada 4s.
-    refreshWebStatus();
+    // Sin key (primer uso): arranca el servidor ya, para ofrecer el teclado web.
+    if (!apiKey) void ensureWebServer();
+    else refreshWebStatus();
     webStatusTimer = setInterval(refreshWebStatus, 4000);
 
     // Observar cambios de tamaño del grid para recalcular columnas (ghost slots).
@@ -1753,7 +1772,7 @@
     backdropUrl={selected.backdrop_path ? img(`${IMG}/w1280${selected.backdrop_path}`, 1280) : null}
     trailerKey={menuTrailerKey}
     appleTrailerUrl={menuApple}
-    hasRd={!!(config.rdKey || "").trim()}
+    hasRd={config.rdLinked}
     onContinue={menuContinue}
     onRestart={menuRestart}
     onRealDebrid={menuRealDebrid}
@@ -1781,7 +1800,7 @@
     episode={sourcesEpisode}
     title={selected.title}
     backdrop={selected.backdrop_path ? img(`${IMG}/w1280${selected.backdrop_path}`, 1280) : null}
-    token={(config.rdKey || "").trim()}
+    rdLinked={config.rdLinked}
     autoplay={sourcesAutoplay}
     onClose={closeSources}
     onWeb={menuWeb}
@@ -1858,7 +1877,7 @@
         <div class="key-box">
           <h3>TMDb API Key</h3>
           <p class="hint">
-            Conseguila en <code>themoviedb.org/settings/api</code> (gratis).
+            Consíguela en <code>themoviedb.org/settings/api</code> (gratis).
           </p>
           <input
             type="password"
@@ -1867,6 +1886,22 @@
             onkeydown={(e) => e.key === "Enter" && saveKey()}
           />
           <button onclick={saveKey} disabled={!keyInput.trim()}>Guardar</button>
+
+          {#if webKeyboardUrl}
+            <div class="key-phone">
+              <RemoteQr url={webKeyboardUrl} label="Teclado" size={110} />
+              <div class="key-phone-txt">
+                <strong>¿Difícil escribir con el control?</strong>
+                <span>
+                  Escanea este QR con el celular. Desde ahí puedes escribir,
+                  pegar o escanear la key con la cámara: aparece sola en el campo
+                  de arriba. Luego pulsa Guardar.
+                </span>
+              </div>
+            </div>
+          {:else}
+            <p class="key-phone-wait">Preparando teclado por celular…</p>
+          {/if}
         </div>
       {:else if detailLoading}
         <div class="empty">Cargando…</div>
@@ -2464,6 +2499,18 @@
   .key-box input { width: 100%; padding: 8px; background: #1a1a22; border: 1px solid #2a2a35; color: #eee; border-radius: 4px; margin-bottom: 8px; box-sizing: border-box; }
   .key-box button { width: 100%; padding: 8px; background: #f5c518; color: #000; border: 0; border-radius: 4px; font-weight: 700; cursor: pointer; }
   .key-box button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .key-phone {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid #23232c;
+  }
+  .key-phone-txt { display: flex; flex-direction: column; gap: 4px; }
+  .key-phone-txt strong { font-size: 13px; color: #f5c518; }
+  .key-phone-txt span { font-size: 12px; color: #9a9aa4; line-height: 1.45; }
+  .key-phone-wait { margin: 16px 0 0; font-size: 11.5px; color: #6e6e78; }
 
   .detail { position: relative; padding: 0 20px 20px; flex: 1; }
   .backdrop {

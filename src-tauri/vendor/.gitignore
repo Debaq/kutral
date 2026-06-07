@@ -9,3 +9,6 @@ cores/*.dll
 *.dll
 *.7z
 *.zip
+# uosc (UI de mpv): reproducido por fetch.sh. Los .conf de mpv-config/ SÍ se versionan.
+mpv-config/scripts/
+mpv-config/fonts/

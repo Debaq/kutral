@@ -4,6 +4,16 @@
   // Maneja su propio teclado (flechas/Enter/Esc) porque en este modo el page
   // no procesa navegación.
   import { invoke } from "@tauri-apps/api/core";
+  import { config } from "$lib/config.svelte";
+
+  // Pista real del contenedor leída de mpv (verdad del archivo).
+  type MpvTrack = {
+    id: number;
+    kind: string; // "audio" | "sub"
+    lang: string;
+    title: string;
+    selected: boolean;
+  };
 
   type Src = {
     source: string;
@@ -25,7 +35,7 @@
     episode = null,
     title,
     backdrop = null,
-    token,
+    rdLinked,
     autoplay = false,
     onClose,
     onWeb,
@@ -36,7 +46,7 @@
     episode?: number | null;
     title: string;
     backdrop?: string | null;
-    token: string;
+    rdLinked: boolean;
     autoplay?: boolean;
     onClose: () => void;
     onWeb: () => void;
@@ -68,6 +78,30 @@
     cam: 1,
     unknown: 0,
   };
+
+  // NIVEL 1 (barato, ordenar). El nombre del release es solo una PISTA, no
+  // garantía: los nombres mienten. Sirve para priorizar; la verdad se confirma
+  // al abrir el archivo (mpv_tracks, nivel 3). Devuelve un score según si el
+  // usuario quiere doblado (audio ES) o subtitulado (VO + subs ES).
+  function langScore(s: Src): number {
+    const t = (s.title || "").toLowerCase();
+    const latino = /\blatino\b|\blat\b|dual.?lat|español.?latino/.test(t);
+    const cast = /castellano|español|espanol|\besp\b|spanish/.test(t);
+    const multi = /\bmulti\b|\bdual\b/.test(t);
+    const vose = /vose|v\.?o\.?s\.?e|subtitulad|spa.?subs?|\bsubs?\b.*\b(es|spa|esp)\b/.test(t);
+    if (config.subMode === "dub") {
+      if (latino) return 5; // audio español latino: lo ideal
+      if (cast) return 4; // castellano
+      if (multi) return 3; // multi/dual suele incluir pista ES
+      if (vose) return 1; // solo subtitulado: peor para doblado
+      return 0; // VO puro
+    }
+    // modo "sub": audio original + subtítulos en español
+    if (vose) return 5; // explícitamente VOSE
+    if (multi) return 4; // multi: trae VO + subs ES
+    if (latino || cast) return 2; // doblado: menos ideal pero hay ES
+    return 3; // VO puro: audio original, subs externos si hace falta
+  }
 
   function fmtSize(b: number | null): string {
     if (!b) return "";
@@ -144,12 +178,11 @@
         title,
         season: season ?? undefined,
         episode: episode ?? undefined,
-        rdToken: token || undefined,
       });
-      if (token) {
+      if (rdLinked) {
         const hashes = srcs.map((s) => s.info_hash).filter(Boolean) as string[];
         try {
-          const cached = await invoke<string[]>("rd_instant_available", { hashes, token });
+          const cached = await invoke<string[]>("rd_instant_available", { hashes });
           const set = new Set(cached.map((h) => h.toLowerCase()));
           for (const s of srcs) {
             if (s.info_hash) s.rd_cached = set.has(s.info_hash.toLowerCase());
@@ -161,6 +194,10 @@
       srcs.sort((a, b) => {
         const c = (b.rd_cached ? 1 : 0) - (a.rd_cached ? 1 : 0);
         if (c) return c;
+        // Preferencia de idioma (doblado/subtitulado) por sobre la calidad: de
+        // nada sirve 4K si no entiendes el audio.
+        const l = langScore(b) - langScore(a);
+        if (l) return l;
         const q = (QRANK[b.quality] || 0) - (QRANK[a.quality] || 0);
         if (q) return q;
         return (b.seeders || 0) - (a.seeders || 0);
@@ -193,8 +230,8 @@
   // (bloqueadas por DMCA 451, sin video, timeout). Reproduce la primera que
   // resuelva. Así un release bloqueado en el debrid no rompe la experiencia.
   async function playFrom(startIdx: number) {
-    dbg(`playFrom start=${startIdx} n=${sources.length} token=${!!token}`);
-    if (!token) {
+    dbg(`playFrom start=${startIdx} n=${sources.length} rd=${rdLinked}`);
+    if (!rdLinked) {
       error = "Vincula tu debrid en Configuración para reproducir.";
       return;
     }
@@ -218,13 +255,16 @@
         // addMagnet del cliente (evita el 451 de RD). Si no, resuelve el magnet.
         const url = s.url
           ? s.url
-          : await invoke<string>("rd_resolve", { magnet: s.magnet, token });
+          : await invoke<string>("rd_resolve", { magnet: s.magnet });
         resolvingMsg = "Abriendo reproductor…";
         await invoke("mpv_play", { url, title });
         resolving = false;
         playing = true;
         playingTitle = s.title;
         startMpvPoll();
+        // Niveles 2-3: confirmar audio/subs REALES del archivo y elegir la
+        // pista ES; si no existe, bajar subtítulos externos. No bloquea el play.
+        void applyPreferredTracks();
         return;
       } catch (e) {
         lastErr = String(e);
@@ -260,6 +300,101 @@
       clearInterval(mpvPoll);
       mpvPoll = null;
     }
+  }
+
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  // Manda un comando JSON-IPC a mpv (set propiedad, sub-add, etc.).
+  const mpv = (args: unknown[]) => invoke("mpv_cmd", { args }).catch(() => {});
+
+  // ¿La pista es español? Mira el lang ISO (spa/es) y, de respaldo, el título.
+  function isEsTrack(t: MpvTrack): boolean {
+    const l = (t.lang || "").toLowerCase();
+    if (/^(es|spa|esp)/.test(l)) return true;
+    return /espa|spanish|latino|castellano/i.test(t.title || "");
+  }
+
+  // NIVELES 2-3: la verdad del contenedor. Lee las pistas reales de mpv y elige
+  // según la preferencia. Solo baja subs externos si el archivo NO trae ES.
+  async function applyPreferredTracks() {
+    // mpv tarda un momento en demuxear y exponer las pistas tras abrir.
+    let tracks: MpvTrack[] = [];
+    for (let i = 0; i < 15; i++) {
+      tracks = await invoke<MpvTrack[]>("mpv_tracks").catch(() => []);
+      if (tracks.some((t) => t.kind === "audio")) break;
+      await sleep(400);
+    }
+    const audios = tracks.filter((t) => t.kind === "audio");
+    const subs = tracks.filter((t) => t.kind === "sub");
+    const esAudio = audios.find(isEsTrack);
+    const esSub = subs.find(isEsTrack);
+
+    if (config.subMode === "dub" && esAudio) {
+      // Audio español embebido: selecciónalo y oculta subtítulos.
+      await mpv(["set", "aid", String(esAudio.id)]);
+      await mpv(["set", "sub-visibility", "no"]);
+      dbg(`audio ES embebido id=${esAudio.id}`);
+      return;
+    }
+    // Subtitulado (o doblado sin audio ES): audio original + subs ES.
+    if (esSub) {
+      await mpv(["set", "sid", String(esSub.id)]);
+      await mpv(["set", "sub-visibility", "yes"]);
+      dbg(`sub ES embebido id=${esSub.id}`);
+      return;
+    }
+    // El release no trae ES → subtítulos externos (Wyzie o OpenSubtitles).
+    await loadExternalSub();
+  }
+
+  // Subtítulos externos: Wyzie si hay key, si no OpenSubtitles (cuota diaria).
+  // mpv carga la URL directo con sub-add (no hace falta bajar a disco).
+  async function loadExternalSub() {
+    const lang = config.subsLang || "es";
+    if (lang === "off") return;
+    let url = "";
+    if (config.wyzieKey) {
+      try {
+        const subs = await invoke<{ url: string }[]>("wyzie_search", {
+          imdbId,
+          language: lang,
+          apiKey: config.wyzieKey,
+        });
+        if (subs.length) url = subs[0].url;
+      } catch (e) {
+        dbg(`wyzie fail: ${String(e).slice(0, 60)}`);
+      }
+    }
+    if (!url) {
+      try {
+        const os = await invoke<{ url: string; remaining: number }>("os_search", {
+          imdbId,
+          language: lang,
+        });
+        url = os.url;
+        dbg(`opensubtitles ok, quedan ${os.remaining}/día`);
+      } catch (e) {
+        dbg(`opensubtitles fail: ${String(e).slice(0, 80)}`);
+      }
+    }
+    if (!url) {
+      dbg("sin subtítulos ES (embebidos ni externos)");
+      return;
+    }
+    // Guardar el .srt en Descargas (para coleccionarlos) y cargar el archivo
+    // local en mpv. Si falla la descarga a disco, se carga la URL directa.
+    let toLoad = url;
+    try {
+      const fname = `${title} [${lang}]`;
+      const path = await invoke<string>("subtitle_save", { url, filename: fname });
+      if (path) {
+        toLoad = path;
+        dbg(`sub guardado: ${path}`);
+      }
+    } catch (e) {
+      dbg(`no se pudo guardar sub, uso URL: ${String(e).slice(0, 60)}`);
+    }
+    await mpv(["sub-add", toLoad, "select"]);
+    await mpv(["set", "sub-visibility", "yes"]);
   }
 
   async function stopMpv() {

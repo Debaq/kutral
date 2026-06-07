@@ -1,7 +1,7 @@
 <script lang="ts">
   import QRCode from "qrcode";
 
-  let { url, size = 72 }: { url: string; size?: number } = $props();
+  let { url, size = 72, label = "Mando" }: { url: string; size?: number; label?: string } = $props();
   let dataUrl = $state("");
 
   $effect(() => {
@@ -18,14 +18,14 @@
 </script>
 
 {#if dataUrl}
-  <div class="qr-badge" title="Escanea para usar tu celular como mando: {url}">
+  <div class="qr-badge" title="Escanea con el celular: {url}">
     <img
       src={dataUrl}
-      alt="QR mando"
+      alt="QR {label}"
       style:width="{size}px"
       style:height="{size}px"
     />
-    <span class="qr-label">Mando</span>
+    <span class="qr-label">{label}</span>
   </div>
 {/if}
 

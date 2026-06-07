@@ -79,12 +79,11 @@ pub async fn kodios_search(
     season: Option<u32>,
     episode: Option<u32>,
     title: Option<String>,
-    rd_token: Option<String>,
 ) -> Result<Vec<Source>, String> {
     if imdb_id.is_empty() || !imdb_id.starts_with("tt") {
         return Err("imdb_id inválido (esperado ttXXXXXXX)".into());
     }
-    Ok(aggregate(imdb_id, kind, season, episode, title.unwrap_or_default(), rd_token).await)
+    Ok(aggregate(imdb_id, kind, season, episode, title.unwrap_or_default()).await)
 }
 
 async fn aggregate(
@@ -93,15 +92,13 @@ async fn aggregate(
     season: Option<u32>,
     episode: Option<u32>,
     title: String,
-    rd_token: Option<String>,
 ) -> Vec<Source> {
-    eprintln!("[kodios] search imdb={imdb} kind={kind} s={season:?} e={episode:?} rd={}", rd_token.is_some());
+    eprintln!("[kodios] search imdb={imdb} kind={kind} s={season:?} e={episode:?}");
     let mut tasks: Vec<tokio::task::JoinHandle<Result<Vec<Source>, String>>> = Vec::new();
 
     // Torrentio SIN token (método Kodi/kodios): magnets crudos con info_hash
     // → instantAvailability marca cacheadas → resolvemos FRESCO con addMagnet+
     // unrestrict al reproducir (URLs no expiran como las pre-resueltas).
-    let _ = &rd_token; // el token se usa en el resolve, no en Torrentio
     {
         let (i, k) = (imdb.clone(), kind.clone());
         tasks.push(tokio::spawn(async move {

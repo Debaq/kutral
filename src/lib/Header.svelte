@@ -365,6 +365,8 @@
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.04em;
     color: #d8d8e0;
+    min-width: 42px;
+    text-align: center;
   }
   .net-info {
     display: flex; align-items: center;
@@ -382,10 +384,13 @@
     color: #6cd37a;
     font-size: 10px;
     line-height: 1;
+    display: inline-block;
+    width: 12px;
+    text-align: center;
   }
   .net-icon.offline { color: #c44; }
   .net-ssid {
-    max-width: 140px;
+    width: 110px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .cfg-btn {

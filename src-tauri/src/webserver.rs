@@ -11,6 +11,11 @@ use tiny_http::{Header, Method, Response, Server, StatusCode};
 
 const REMOTE_HTML: &str = include_str!("remote.html");
 
+/// jsQR (UMD) servido en GET /jsqr.js: lector de QR en JS puro, fallback de
+/// escaneo para navegadores sin BarcodeDetector (Safari iOS). Embebido para
+/// funcionar offline en la red local (sin CDN).
+const JSQR_JS: &str = include_str!("jsqr.min.js");
+
 /// Sistemas de emulador soportados (deben calzar con emu.rs).
 const SYSTEMS: [&str; 5] = ["nes", "snes", "gba", "gbc", "ds"];
 
@@ -173,6 +178,163 @@ refresh();
 </script>
 </body></html>"#;
 
+/// Teclado web (servido en GET /api): escribir, pegar o ESCANEAR con la cámara
+/// una API key larga desde el celular. El texto se manda a POST /text y el
+/// backend lo emite como `remote_text`; el frontend lo escribe en el campo que
+/// tengas enfocado en /config. Resuelve el problema de "nadie escribe esa API
+/// gigante con el control".
+const KEYBOARD_HTML: &str = r#"<!doctype html>
+<html lang="es"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Teclado — Kütral</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:system-ui,sans-serif; background:#0d0d12; color:#eee;
+         padding:24px; max-width:560px; margin:0 auto; min-height:100dvh; }
+  h1 { font-size:23px; margin:0 0 4px; }
+  h1 b { background:linear-gradient(135deg,#f3a951,#ffb86b);
+         -webkit-background-clip:text; background-clip:text; color:transparent; }
+  p.sub { color:#888; margin:0 0 20px; font-size:14px; line-height:1.5; }
+  textarea { width:100%; min-height:120px; padding:14px; border-radius:12px;
+    background:#1a1a22; border:1px solid #2a2a36; color:#eee; font-size:17px;
+    font-family:ui-monospace,monospace; resize:vertical; }
+  textarea:focus { border-color:#f3a951; outline:none; }
+  .btns { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:14px; }
+  button { padding:15px; border:none; border-radius:12px; font-size:15px;
+    font-weight:700; cursor:pointer; color:#eee; background:#1c1c26;
+    border:1px solid #2a2a36; }
+  button:active { transform:scale(.97); }
+  button.primary { grid-column:1 / -1; color:#1a1208;
+    background:linear-gradient(135deg,#f3a951,#ffb86b); border:0; font-size:17px; }
+  button:disabled { opacity:.5; }
+  #cam { margin-top:14px; display:none; }
+  #cam.on { display:block; }
+  video { width:100%; border-radius:12px; background:#000; aspect-ratio:4/3;
+    object-fit:cover; }
+  #msg { margin-top:16px; font-size:15px; min-height:22px; text-align:center; }
+  .ok { color:#4ade80; } .err { color:#f87171; } .wait { color:#fbbf24; }
+  .tip { margin-top:22px; color:#666; font-size:12.5px; line-height:1.5; }
+</style></head>
+<body>
+  <h1><b>Teclado</b> · Kütral</h1>
+  <p class="sub">Escribe, pega o escanea un QR con la clave. Al enviar, se escribe
+    en el campo seleccionado en la pantalla de Kütral.</p>
+
+  <textarea id="txt" placeholder="Pega o escribe la API key aquí…"
+    autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
+
+  <div class="btns">
+    <button id="paste">📋 Pegar</button>
+    <button id="scan">📷 Escanear QR</button>
+    <button id="send" class="primary">Enviar a Kütral →</button>
+  </div>
+
+  <div id="cam"><video id="video" playsinline muted></video></div>
+  <canvas id="cv" style="display:none"></canvas>
+  <div id="msg"></div>
+  <p class="tip">Tip: en la pantalla de Kütral toca primero el campo que quieres
+    llenar (TMDb, OMDb…) y luego envía desde aquí.</p>
+
+<script src="/jsqr.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+const txt = $('#txt'), msg = $('#msg');
+function say(t, cls){ msg.className = cls || ''; msg.textContent = t; }
+
+$('#paste').onclick = async () => {
+  try {
+    const t = await navigator.clipboard.readText();
+    if (t) { txt.value = t.trim(); say('Pegado ✓', 'ok'); }
+    else say('Portapapeles vacío', 'wait');
+  } catch {
+    say('Pega a mano (mantén pulsado el campo)', 'wait');
+    txt.focus();
+  }
+};
+
+$('#send').onclick = async () => {
+  const text = txt.value.trim();
+  if (!text) { say('Escribe o pega algo primero', 'wait'); return; }
+  try {
+    const r = await fetch('/text', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ text })
+    });
+    say(r.ok ? 'Enviado ✓ — revisa la pantalla' : 'Error al enviar', r.ok ? 'ok' : 'err');
+  } catch { say('Sin conexión con Kütral', 'err'); }
+};
+
+// --- Escaneo de QR con la cámara ---
+// Usa BarcodeDetector nativo (Chrome Android) si existe; si no, jsQR sobre un
+// canvas (fallback para Safari iOS y otros sin BarcodeDetector).
+let stream = null, scanning = false;
+function found(value) {
+  txt.value = (value || '').trim();
+  say('QR leído ✓ — pulsa Enviar', 'ok');
+  stopCam();
+}
+$('#scan').onclick = async () => {
+  if (scanning) { stopCam(); return; }
+  const hasNative = ('BarcodeDetector' in window);
+  if (!hasNative && typeof jsQR === 'undefined') {
+    say('No se pudo cargar el lector de QR. Usa Pegar o escribe a mano.', 'wait');
+    return;
+  }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment' } });
+    const v = $('#video');
+    v.srcObject = stream;
+    await v.play();
+    $('#cam').classList.add('on');
+    $('#scan').textContent = '✕ Cerrar cámara';
+    scanning = true;
+    say('Apunta al QR…', 'wait');
+
+    if (hasNative) {
+      const det = new BarcodeDetector({ formats: ['qr_code'] });
+      const tick = async () => {
+        if (!scanning) return;
+        try {
+          const codes = await det.detect(v);
+          if (codes.length && codes[0].rawValue) { found(codes[0].rawValue); return; }
+        } catch {}
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    } else {
+      const cv = $('#cv'), ctx = cv.getContext('2d', { willReadFrequently: true });
+      const tick = () => {
+        if (!scanning) return;
+        if (v.readyState === v.HAVE_ENOUGH_DATA && v.videoWidth) {
+          cv.width = v.videoWidth;
+          cv.height = v.videoHeight;
+          ctx.drawImage(v, 0, 0, cv.width, cv.height);
+          const img = ctx.getImageData(0, 0, cv.width, cv.height);
+          const code = jsQR(img.data, img.width, img.height,
+            { inversionAttempts: 'dontInvert' });
+          if (code && code.data) { found(code.data); return; }
+        }
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    }
+  } catch {
+    say('No se pudo abrir la cámara', 'err');
+  }
+};
+function stopCam(){
+  scanning = false;
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null;
+  $('#cam').classList.remove('on');
+  $('#scan').textContent = '📷 Escanear QR';
+}
+</script>
+</body></html>"#;
+
 struct ServerState {
     handle: Option<JoinHandle<()>>,
     stop: std::sync::Arc<AtomicBool>,
@@ -208,9 +370,14 @@ fn header(name: &[u8], value: &[u8]) -> Option<Header> {
 }
 
 fn parse_key_body(body: &str) -> Option<String> {
-    // JSON mínimo: {"key": "..."}
-    let needle = "\"key\"";
-    let i = body.find(needle)?;
+    parse_str_field(body, "key")
+}
+
+/// Extrae el valor string de un campo JSON: {"<field>": "..."}.
+/// Parser mínimo y tolerante (mismo enfoque que el resto del módulo, sin serde).
+fn parse_str_field(body: &str, field: &str) -> Option<String> {
+    let needle = format!("\"{}\"", field);
+    let i = body.find(&needle)?;
     let after = &body[i + needle.len()..];
     let colon = after.find(':')?;
     let after = &after[colon + 1..].trim_start();
@@ -310,6 +477,26 @@ pub fn web_server_start(
                     r = r.with_header(h);
                 }
                 if let Some(h) = header(b"Cache-Control", b"no-store") {
+                    r = r.with_header(h);
+                }
+                req.respond(r)
+            }
+            (Method::Get, "/api") => {
+                let mut r = Response::from_string(KEYBOARD_HTML);
+                if let Some(h) = header(b"Content-Type", b"text/html; charset=utf-8") {
+                    r = r.with_header(h);
+                }
+                if let Some(h) = header(b"Cache-Control", b"no-store") {
+                    r = r.with_header(h);
+                }
+                req.respond(r)
+            }
+            (Method::Get, "/jsqr.js") => {
+                let mut r = Response::from_string(JSQR_JS);
+                if let Some(h) = header(b"Content-Type", b"application/javascript; charset=utf-8") {
+                    r = r.with_header(h);
+                }
+                if let Some(h) = header(b"Cache-Control", b"max-age=86400") {
                     r = r.with_header(h);
                 }
                 req.respond(r)
@@ -435,6 +622,33 @@ pub fn web_server_start(
                                 }
                             }
                         }
+                        None => {
+                            let r = Response::from_string("bad json")
+                                .with_status_code(StatusCode(400));
+                            req.respond(r)
+                        }
+                    }
+                }
+            }
+            (Method::Post, "/text") => {
+                // Texto largo (API key) tecleado/pegado/escaneado en el celular.
+                // Se emite al frontend, que lo escribe en el input enfocado.
+                let mut body = String::new();
+                if req.as_reader().read_to_string(&mut body).is_err() {
+                    let r = Response::from_string("bad body")
+                        .with_status_code(StatusCode(400));
+                    req.respond(r)
+                } else {
+                    match parse_str_field(&body, "text") {
+                        Some(t) => match app_th.emit("remote_text", t) {
+                            Ok(_) => req.respond(Response::from_string("ok")),
+                            Err(e) => {
+                                eprintln!("[web /text] emit fail: {}", e);
+                                let r = Response::from_string(format!("err: {}", e))
+                                    .with_status_code(StatusCode(500));
+                                req.respond(r)
+                            }
+                        },
                         None => {
                             let r = Response::from_string("bad json")
                                 .with_status_code(StatusCode(400));
