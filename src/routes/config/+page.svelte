@@ -21,6 +21,7 @@
     type ModeOverride,
     type IptvList,
     type SubMode,
+    type SourceSelect,
   } from "$lib/config.svelte";
   import { setConcurrenciaScreening } from "$lib/screening.svelte";
   import { notify } from "$lib/notifStore.svelte";
@@ -114,6 +115,8 @@
   let showWyzie = $state(false);
   let subSize = $state(config.subSize);
   let subMode = $state<SubMode>(config.subMode);
+  let sourceSelect = $state<SourceSelect>(config.sourceSelect);
+  let preferredSource = $state(config.preferredSource);
   // OpenSubtitles: login de cuenta gratis (sube cuota a 20/día).
   let osUserInput = $state("");
   let osPassInput = $state("");
@@ -207,6 +210,8 @@
     wyzieKey = config.wyzieKey;
     subSize = config.subSize;
     subMode = config.subMode;
+    sourceSelect = config.sourceSelect;
+    preferredSource = config.preferredSource;
     void refreshOsStatus();
     webAuto = config.webAutoStart;
     webPortInput = config.webPort;
@@ -234,6 +239,8 @@
     wyzieKey !== config.wyzieKey ||
     subSize !== config.subSize ||
     subMode !== config.subMode ||
+    sourceSelect !== config.sourceSelect ||
+    preferredSource !== config.preferredSource ||
     webAuto !== config.webAutoStart ||
     webPortInput !== config.webPort ||
     gameRegions.join(",") !== config.gameRegions.join(",") ||
@@ -251,6 +258,8 @@
     config.wyzieKey = wyzieKey.trim();
     config.subSize = Math.min(200, Math.max(50, Math.round(subSize)));
     config.subMode = subMode;
+    config.sourceSelect = sourceSelect;
+    config.preferredSource = preferredSource.trim();
     config.webAutoStart = webAuto;
     config.webPort = Math.min(65535, Math.max(1024, Math.round(webPortInput) || 8080));
     webPortInput = config.webPort;
@@ -838,6 +847,44 @@
               </div>
             </label>
           </div>
+        </section>
+
+        <section class="block">
+          <h2>Selección de fuente</h2>
+          <p class="hint">
+            Al "Ver con debrid", cómo se elige qué fuente reproducir.
+          </p>
+          <div class="mode-group">
+            <label class="mode-card" class:sel={sourceSelect === "auto"}>
+              <input type="radio" name="sourceSelect" value="auto" bind:group={sourceSelect} />
+              <div>
+                <strong>Automática</strong>
+                <span>Reproduce la mejor al instante, sin preguntar.</span>
+              </div>
+            </label>
+            <label class="mode-card" class:sel={sourceSelect === "manual"}>
+              <input type="radio" name="sourceSelect" value="manual" bind:group={sourceSelect} />
+              <div>
+                <strong>Manual</strong>
+                <span>Siempre muestra el selector para elegir tú la fuente.</span>
+              </div>
+            </label>
+          </div>
+          <label class="field">
+            <span class="field-label">Fuente preferida (opcional)</span>
+            <input
+              type="text"
+              bind:value={preferredSource}
+              placeholder="ej. fullscrabe"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </label>
+          <p class="hint">
+            Si el nombre del release o el proveedor contiene este texto, esa fuente
+            sube al tope (en modo automático, es la que se reproduce). Útil para
+            grupos que siempre traen audio en español. Varias separadas por coma.
+          </p>
         </section>
 
         <section class="block">

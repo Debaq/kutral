@@ -5,6 +5,9 @@ export type Lang = "es-CL" | "es-ES" | "en-US";
 export type ModeOverride = "auto" | "kiosk" | "desktop";
 // "dub" = doblado al español; "sub" = original subtitulado en español.
 export type SubMode = "dub" | "sub";
+// Cómo se elige la fuente al reproducir con debrid:
+// "auto" = reproduce la mejor al instante; "manual" = siempre muestra el selector.
+export type SourceSelect = "auto" | "manual";
 
 export const LANGS: { id: Lang; label: string }[] = [
 	{ id: "es-CL", label: "Español (Chile)" },
@@ -108,6 +111,12 @@ export const config = $state({
 	// "sub" = audio original (VO) + subtítulos en español. Ordena las fuentes y
 	// decide qué pista auto-seleccionar en mpv.
 	subMode: "dub" as SubMode,
+	// Selección de fuente al "Ver con debrid": "auto" reproduce la mejor al
+	// instante; "manual" siempre muestra el selector para elegir.
+	sourceSelect: "auto" as SourceSelect,
+	// Pista de texto (nombre de release/grupo, ej. "fullscrabe") que sube esa
+	// fuente al tope del orden. En modo auto, es la que se reproduce. Vacío = off.
+	preferredSource: "",
 	// Estado de la cuenta OpenSubtitles (subs externos, 20/día con cuenta). El
 	// token NO vive aquí: está en el store 0600 del backend. Solo el indicador.
 	osLinked: false,
@@ -145,6 +154,9 @@ export function loadConfig() {
 	config.wyzieKey = localStorage.getItem("wyzie_key") || "";
 	const sm = localStorage.getItem("sub_mode");
 	config.subMode = sm === "sub" ? "sub" : "dub";
+	const ssel = localStorage.getItem("source_select");
+	config.sourceSelect = ssel === "manual" ? "manual" : "auto";
+	config.preferredSource = localStorage.getItem("preferred_source") || "";
 	const ss = parseInt(localStorage.getItem("sub_size") || "", 10);
 	config.subSize = Number.isFinite(ss)
 		? Math.min(200, Math.max(50, ss))
@@ -197,6 +209,8 @@ export function saveConfig() {
 	localStorage.setItem("subs_lang", config.subsLang);
 	localStorage.setItem("wyzie_key", config.wyzieKey.trim());
 	localStorage.setItem("sub_mode", config.subMode);
+	localStorage.setItem("source_select", config.sourceSelect);
+	localStorage.setItem("preferred_source", config.preferredSource.trim());
 	localStorage.setItem("sub_size", String(config.subSize));
 	localStorage.setItem("web_autostart", config.webAutoStart ? "1" : "0");
 	localStorage.setItem("web_port", String(config.webPort));

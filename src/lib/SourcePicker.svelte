@@ -103,6 +103,20 @@
     return 3; // VO puro: audio original, subs externos si hace falta
   }
 
+  // Fuente preferida por el usuario (config.preferredSource): una o varias
+  // palabras separadas por coma (ej. "fullscrabe, sigloxx"). Si el release o el
+  // proveedor las contiene, la fuente sube al tope del orden. Es una preferencia
+  // fuerte: gana incluso a las cacheadas, porque el usuario la eligió a propósito
+  // (p.ej. porque siempre trae pistas en español).
+  function prefScore(s: Src): number {
+    const pref = (config.preferredSource || "").toLowerCase().trim();
+    if (!pref) return 0;
+    const needles = pref.split(/[,;]/).map((x) => x.trim()).filter(Boolean);
+    if (!needles.length) return 0;
+    const hay = `${s.title || ""} ${s.source || ""}`.toLowerCase();
+    return needles.some((n) => hay.includes(n)) ? 1 : 0;
+  }
+
   function fmtSize(b: number | null): string {
     if (!b) return "";
     const gb = b / 1073741824;
@@ -192,6 +206,9 @@
         }
       }
       srcs.sort((a, b) => {
+        // Fuente preferida por el usuario: máxima prioridad (sube al tope).
+        const p = prefScore(b) - prefScore(a);
+        if (p) return p;
         const c = (b.rd_cached ? 1 : 0) - (a.rd_cached ? 1 : 0);
         if (c) return c;
         // Preferencia de idioma (doblado/subtitulado) por sobre la calidad: de
@@ -205,13 +222,15 @@
       sources = stack(srcs);
       if (!srcs.length) {
         error = "No encontramos fuentes para esta película.";
-      } else if (autoplay) {
-        // ⚡ Ver con RealDebrid: reproduce directo la mejor (ya ordenada:
-        // cacheada > calidad > seeders).
+      } else if (autoplay && config.sourceSelect === "auto") {
+        // ⚡ Ver con RealDebrid en modo automático: reproduce directo la mejor
+        // (ya ordenada: preferida > cacheada > idioma > calidad > seeders).
         loading = false;
         void playFrom(0);
         return;
       }
+      // Modo manual: aunque se haya pedido autoplay, mostramos el selector con
+      // la mejor fuente ya enfocada (focusIdx=0) para elegir con un Enter.
     } catch (e) {
       error = String(e);
     } finally {
@@ -524,6 +543,7 @@
             <div class="sp-mid">
               <span class="sp-title">{s.title}</span>
               <div class="sp-chips">
+                {#if prefScore(s)}<span class="sp-pref">★ Preferida</span>{/if}
                 {#if s.rd_cached}<span class="sp-cached">⚡ Instantáneo</span>{/if}
                 {#each infoChips(s) as c}<span class="sp-chip">{c}</span>{/each}
                 <span class="sp-prov">{s.source}</span>
@@ -718,6 +738,15 @@
     color: #ffd76b;
     background: #2e2410;
     border: 1px solid #5a4520;
+    padding: 2px 7px;
+    border-radius: 5px;
+  }
+  .sp-pref {
+    font-size: 10.5px;
+    font-weight: 700;
+    color: #9be38a;
+    background: #14271a;
+    border: 1px solid #2f5a3a;
     padding: 2px 7px;
     border-radius: 5px;
   }
