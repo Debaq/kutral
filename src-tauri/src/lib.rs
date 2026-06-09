@@ -7,6 +7,8 @@ mod kodios;
 mod opensubtitles;
 mod rd;
 mod player;
+#[cfg(target_os = "linux")]
+mod mpv_embed;
 mod screening;
 mod webserver;
 
@@ -2447,6 +2449,11 @@ pub fn run() {
                             settings.set_enable_webaudio(true);
                         }
                     });
+                    // Reproductor libmpv embebido: crea el handle y mete el
+                    // GtkGLArea en el toplevel del webview (una sola ventana).
+                    if let Err(e) = mpv_embed::init(&app.handle(), &win) {
+                        eprintln!("[mpv-embed] init falló: {e}");
+                    }
                 }
             }
             Ok(())
@@ -2506,13 +2513,13 @@ pub fn run() {
             rd::rd_refresh,
             rd::rd_account,
             rd::rd_cleanup_torrents,
-            player::mpv_play,
-            player::mpv_play_iptv,
-            player::mpv_cmd,
-            player::mpv_stop,
-            player::mpv_running,
-            player::mpv_status,
-            player::mpv_tracks,
+            player::imp::mpv_play,
+            player::imp::mpv_play_iptv,
+            player::imp::mpv_cmd,
+            player::imp::mpv_stop,
+            player::imp::mpv_running,
+            player::imp::mpv_status,
+            player::imp::mpv_tracks,
             opensubtitles::os_login,
             opensubtitles::os_status,
             opensubtitles::os_clear,
