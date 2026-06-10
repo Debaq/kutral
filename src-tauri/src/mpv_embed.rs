@@ -152,6 +152,48 @@ fn mpv_key(action: &str, key: &str) {
     }
 }
 
+/// Traduce una tecla GDK al nombre que entiende mpv (LEFT, SPACE, ESC, "m"…),
+/// con prefijos de modificador (Ctrl+/Alt+). Devuelve None si no se mapea.
+fn gdk_to_mpv_key(ev: &gtk::gdk::EventKey) -> Option<String> {
+    let gname = ev.keyval().name()?;
+    let base: String = match gname.as_str() {
+        "Left" => "LEFT".into(),
+        "Right" => "RIGHT".into(),
+        "Up" => "UP".into(),
+        "Down" => "DOWN".into(),
+        "space" => "SPACE".into(),
+        "Return" | "KP_Enter" => "ENTER".into(),
+        "Tab" => "TAB".into(),
+        "Page_Up" => "PGUP".into(),
+        "Page_Down" => "PGDWN".into(),
+        "Home" => "HOME".into(),
+        "End" => "END".into(),
+        "Delete" => "DEL".into(),
+        "Insert" => "INS".into(),
+        other => {
+            // Char imprimible único (a, M, 1, [, ]…) o Fn → tal cual.
+            let is_fn = other.len() >= 2
+                && other.starts_with('F')
+                && other[1..].chars().all(|c| c.is_ascii_digit());
+            if other.chars().count() == 1 || is_fn {
+                other.to_string()
+            } else {
+                return None;
+            }
+        }
+    };
+    let st = ev.state();
+    let mut out = String::new();
+    if st.contains(gtk::gdk::ModifierType::CONTROL_MASK) {
+        out.push_str("Ctrl+");
+    }
+    if st.contains(gtk::gdk::ModifierType::MOD1_MASK) {
+        out.push_str("Alt+");
+    }
+    out.push_str(&base);
+    Some(out)
+}
+
 /// Puntero a glGetIntegerv (cacheado) para leer el FBO destino del GLArea.
 fn gl_get_integerv() -> Option<GlGetIntegervFn> {
     if let Some(f) = GL_GET_INTEGERV.get() {
@@ -324,8 +366,26 @@ fn build_surface(vbox: &gtk::Box) {
             | gtk::gdk::EventMask::BUTTON_PRESS_MASK
             | gtk::gdk::EventMask::BUTTON_RELEASE_MASK
             | gtk::gdk::EventMask::SCROLL_MASK
-            | gtk::gdk::EventMask::LEAVE_NOTIFY_MASK,
+            | gtk::gdk::EventMask::LEAVE_NOTIFY_MASK
+            | gtk::gdk::EventMask::KEY_PRESS_MASK
+            | gtk::gdk::EventMask::KEY_RELEASE_MASK,
     );
+    // Teclado: la app es teclado-first y durante la reproducción el foco lo
+    // tiene el GLArea (no el webview), así que reenviamos las teclas a mpv para
+    // que uosc/input.conf respondan. ESC/Atrás NO van a mpv (quit mataría
+    // libmpv): cierran el video y vuelven a menús.
+    glarea.connect_key_press_event(|_area, ev| {
+        let name = ev.keyval().name();
+        let name = name.as_deref().unwrap_or("");
+        if matches!(name, "Escape" | "BackSpace") {
+            let _ = stop();
+            return glib::Propagation::Stop;
+        }
+        if let Some(k) = gdk_to_mpv_key(ev) {
+            mpv_key("keypress", &k);
+        }
+        glib::Propagation::Stop
+    });
     glarea.connect_motion_notify_event(|area, ev| {
         let (x, y) = ev.position();
         mpv_mouse_move(x, y, area.scale_factor());
@@ -411,6 +471,7 @@ fn hide_surface() {
                     surf.glarea.hide();
                     if let Some(wv) = &surf.webview {
                         wv.show();
+                        wv.grab_focus(); // teclado vuelve a navegar la UI
                     }
                 }
             });
