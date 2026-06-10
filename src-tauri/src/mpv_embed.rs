@@ -21,7 +21,7 @@ use std::ffi::{c_void, CString};
 use std::path::PathBuf;
 use std::ptr;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 use gtk::prelude::*;
@@ -36,8 +36,12 @@ const GL_DRAW_FRAMEBUFFER_BINDING: u32 = 0x8CA6;
 static MPV: OnceLock<Mpv> = OnceLock::new();
 /// AppHandle para saltar al hilo main (mostrar/ocultar superficie, emitir).
 static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
-/// libepoxy.so cargada (leak): resuelve punteros GL para mpv y para el FBO.
-static EPOXY_LIB: AtomicPtr<libloading::Library> = AtomicPtr::new(ptr::null_mut());
+/// Resolvedores de punteros GL REALES del driver (no los trampolines de
+/// libepoxy, que crashean/cuelgan al llamarse desde mpv en Arch): eglGetProc
+/// (Wayland/EGL) y glXGetProcAddressARB (X11/GLX). Se prueba EGL y luego GLX.
+type GetProcFn = unsafe extern "C" fn(*const std::os::raw::c_char) -> *mut c_void;
+static EGL_GET_PROC: OnceLock<Option<GetProcFn>> = OnceLock::new();
+static GLX_GET_PROC: OnceLock<Option<GetProcFn>> = OnceLock::new();
 /// ¿Hay algo cargado/reproduciéndose? (equivalente al "alive" del proceso).
 static RUNNING: AtomicBool = AtomicBool::new(false);
 
@@ -60,46 +64,60 @@ struct Surface {
     render: Rc<RefCell<Option<RenderContext<'static>>>>,
 }
 
-// ───────────────────────── resolución de GL (libepoxy) ─────────────────────
+// ──────────────────── resolución de GL (driver real, vía EGL/GLX) ──────────
 
-/// Carga libepoxy una vez y guarda el puntero para resolver símbolos GL.
-fn ensure_epoxy() {
+/// Carga libEGL/libGL una vez y cachea eglGetProcAddress y glXGetProcAddressARB.
+/// Devuelven punteros a las funciones GL REALES del driver para el contexto
+/// current (lo que mpv necesita), evitando los trampolines de libepoxy.
+fn ensure_gl_loaders() {
     use std::sync::Once;
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        let lib = unsafe {
-            libloading::Library::new("libepoxy.so.0")
-                .or_else(|_| libloading::Library::new("libepoxy.so"))
-        }
-        .expect("no se pudo cargar libepoxy.so");
-        let leaked: &'static libloading::Library = Box::leak(Box::new(lib));
-        EPOXY_LIB.store(leaked as *const _ as *mut _, Ordering::Release);
+        // EGL (Wayland y también X11 moderno).
+        let egl = unsafe { libloading::Library::new("libEGL.so.1") }
+            .ok()
+            .and_then(|lib| {
+                let lib: &'static libloading::Library = Box::leak(Box::new(lib));
+                unsafe {
+                    lib.get::<GetProcFn>(b"eglGetProcAddress\0")
+                        .ok()
+                        .map(|s| *s)
+                }
+            });
+        let _ = EGL_GET_PROC.set(egl);
+
+        // GLX (X11 clásico) como fallback.
+        let glx = unsafe { libloading::Library::new("libGL.so.1") }
+            .ok()
+            .and_then(|lib| {
+                let lib: &'static libloading::Library = Box::leak(Box::new(lib));
+                unsafe {
+                    lib.get::<GetProcFn>(b"glXGetProcAddressARB\0")
+                        .ok()
+                        .map(|s| *s)
+                }
+            });
+        let _ = GLX_GET_PROC.set(glx);
+
+        eprintln!(
+            "[mpv-embed] GL loaders: egl={} glx={}",
+            EGL_GET_PROC.get().map(|o| o.is_some()).unwrap_or(false),
+            GLX_GET_PROC.get().map(|o| o.is_some()).unwrap_or(false),
+        );
     });
 }
 
-/// get_proc_address que pide libmpv: resuelve `name` (ej "glActiveTexture") en
-/// libepoxy. Plain fn (no closure) porque OpenGLInitParams exige `fn`.
-///
-/// libepoxy NO exporta los símbolos GL planos (`glGetString`): exporta los
-/// dispatchers como variables-puntero `epoxy_glGetString`. Así que buscamos
-/// `epoxy_<name>` y devolvemos el valor del puntero (el trampolín que resuelve
-/// la función real del contexto GL actual en la primera llamada).
+/// get_proc_address que pide libmpv: resuelve `name` a la función GL real del
+/// driver. Prueba EGL y luego GLX. Plain fn porque OpenGLInitParams exige `fn`.
 fn gl_get_proc(_ctx: &(), name: &str) -> *mut c_void {
-    let lib = EPOXY_LIB.load(Ordering::Acquire);
-    if lib.is_null() {
+    let Ok(cname) = CString::new(name) else {
         return ptr::null_mut();
-    }
-    let lib: &libloading::Library = unsafe { &*lib };
-    // 1) nombre plano (por si alguna build de epoxy sí lo exporta).
-    // 2) fallback: epoxy_<name> (lo normal en Linux).
-    for candidate in [name.to_string(), format!("epoxy_{name}")] {
-        let Ok(cname) = CString::new(candidate) else {
-            continue;
-        };
-        if let Ok(sym) = unsafe { lib.get::<*const c_void>(cname.as_bytes_with_nul()) } {
-            let p = *sym;
+    };
+    for slot in [EGL_GET_PROC.get(), GLX_GET_PROC.get()] {
+        if let Some(Some(getproc)) = slot {
+            let p = unsafe { getproc(cname.as_ptr()) };
             if !p.is_null() {
-                return p as *mut c_void;
+                return p;
             }
         }
     }
@@ -142,7 +160,7 @@ fn config_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
 /// Inicializa el reproductor embebido. Debe llamarse en el hilo main (setup()).
 /// Crea el handle mpv, reparenta el webview en un Overlay y mete el GtkGLArea.
 pub fn init(app: &tauri::AppHandle, window: &tauri::WebviewWindow) -> Result<(), String> {
-    ensure_epoxy();
+    ensure_gl_loaders();
 
     // libmpv exige LC_NUMERIC="C" (decimal con punto). GTK ya fijó el locale del
     // usuario (es_CL → coma) y eso hace que mpv_create() devuelva NULL. Reseteamos
@@ -197,9 +215,6 @@ fn build_surface(vbox: &gtk::Box) {
     let glarea = gtk::GLArea::new();
     glarea.set_hexpand(true);
     glarea.set_vexpand(true);
-    // auto_render(true): GTK emite ::render al mapear/exponer → ahí creamos el
-    // render context de forma perezosa (contexto GL garantizado current). Los
-    // frames nuevos de mpv los empujamos con queue_render.
     glarea.set_auto_render(true);
     glarea.set_use_es(false);
     glarea.set_has_stencil_buffer(true);
@@ -216,40 +231,64 @@ fn build_surface(vbox: &gtk::Box) {
         });
     }
 
-    // render: crea el RenderContext en la PRIMERA llamada (contexto GL current,
-    // a diferencia de realize donde mpv→glGetString crasheaba) y dibuja el
-    // frame de mpv en el FBO del GLArea (tamaño en px reales = lógico * scale,
-    // arregla el escalado HiDPI de raíz).
+    // realize: crea el RenderContext de mpv EAGER, al arrancar (forzamos
+    // realize() abajo), ANTES de cualquier loadfile. Si se crea perezoso tras
+    // loadfile hay deadlock: mpv (vo=libmpv) espera el render context ↔ el
+    // render espera a mpv. Aquí el contexto GL ya es current (make_current).
     {
         let render = render.clone();
         let tx = tx.clone();
-        glarea.connect_render(move |area, _gl| {
-            let need_init = render.borrow().is_none();
-            if need_init {
-                if let Some(mpv) = MPV.get() {
-                    let params = [
-                        RenderParam::ApiType(RenderParamApiType::OpenGl),
-                        RenderParam::InitParams(OpenGLInitParams {
-                            get_proc_address: gl_get_proc,
-                            ctx: (),
-                        }),
-                    ];
-                    match mpv.create_render_context(params) {
-                        Ok(mut ctx) => {
-                            let tx = tx.clone();
-                            ctx.set_update_callback(move || {
-                                let _ = tx.send(());
-                            });
-                            *render.borrow_mut() = Some(ctx);
-                            eprintln!("[mpv-embed] render context creado");
-                        }
-                        Err(e) => {
-                            eprintln!("[mpv-embed] create_render_context: {e}");
-                            return glib::Propagation::Proceed;
-                        }
+        glarea.connect_realize(move |area| {
+            area.make_current();
+            if let Some(err) = area.error() {
+                eprintln!("[mpv-embed] GLArea realize error: {err}");
+                return;
+            }
+            // DIAGNÓSTICO: ¿el contexto GL está realmente current? Llamamos
+            // glGetString(GL_VERSION) nosotros. Si crashea aquí → no hay contexto
+            // current (el problema no es mpv). Si imprime versión → contexto OK.
+            {
+                let p = gl_get_proc(&(), "glGetString");
+                eprintln!("[mpv-embed] DIAG glGetString ptr={:?}", p);
+                if !p.is_null() {
+                    type GetStr = unsafe extern "C" fn(u32) -> *const std::os::raw::c_char;
+                    let f: GetStr = unsafe { std::mem::transmute(p) };
+                    let s = unsafe { f(0x1F02) }; // GL_VERSION
+                    if s.is_null() {
+                        eprintln!("[mpv-embed] DIAG GL_VERSION = NULL (contexto no current)");
+                    } else {
+                        let v = unsafe { std::ffi::CStr::from_ptr(s) };
+                        eprintln!("[mpv-embed] DIAG GL_VERSION = {:?}", v);
                     }
                 }
             }
+            let Some(mpv) = MPV.get() else { return };
+            let params = [
+                RenderParam::ApiType(RenderParamApiType::OpenGl),
+                RenderParam::InitParams(OpenGLInitParams {
+                    get_proc_address: gl_get_proc,
+                    ctx: (),
+                }),
+            ];
+            match mpv.create_render_context(params) {
+                Ok(mut ctx) => {
+                    let tx = tx.clone();
+                    ctx.set_update_callback(move || {
+                        let _ = tx.send(());
+                    });
+                    *render.borrow_mut() = Some(ctx);
+                    eprintln!("[mpv-embed] render context creado");
+                }
+                Err(e) => eprintln!("[mpv-embed] create_render_context: {e}"),
+            }
+        });
+    }
+
+    // render: dibuja el frame de mpv en el FBO del GLArea (px reales = lógico *
+    // scale → arregla HiDPI). El contexto ya existe (creado en realize).
+    {
+        let render = render.clone();
+        glarea.connect_render(move |area, _gl| {
             let scale = area.scale_factor();
             let w = (area.allocated_width() * scale).max(1);
             let h = (area.allocated_height() * scale).max(1);
@@ -267,7 +306,10 @@ fn build_surface(vbox: &gtk::Box) {
     // Segundo hijo del box, expandido. Solo uno (webview o glarea) visible a la
     // vez → el visible ocupa todo el box.
     vbox.pack_start(&glarea, true, true, 0);
-    glarea.hide(); // arranca oculto; se muestra al reproducir
+    // Forzar realize YA (sin mostrar) para crear el render context al arranque,
+    // antes del primer loadfile → evita el deadlock. El window ya está realizado.
+    glarea.realize();
+    glarea.hide(); // realizado pero oculto; se muestra al reproducir
 
     SURFACE.with(|s| {
         *s.borrow_mut() = Some(Surface { glarea, webview, render });
