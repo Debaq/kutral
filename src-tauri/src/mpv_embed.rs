@@ -158,26 +158,70 @@ fn mpv_key(action: &str, key: &str) {
 // dibujamos NUESTRO bar de acciones con un osd-overlay ASS y manejamos el foco
 // en Rust: reproduciendo ←/→ = seek; pausado ←/→ = mover foco, OK = activar.
 
-/// Acciones del bar pausado (orden = posición horizontal).
-const ACTIONS: [&str; 6] = [
-    "« 10s",
-    "Reanudar",
-    "10s »",
-    "Subtítulos",
-    "Audio",
-    "Salir",
-];
+/// Acciones del bar pausado. La lista es DINÁMICA: "Video" solo aparece si el
+/// archivo trae 2+ pistas de video (ver build_bar_actions).
+#[derive(Clone, Copy, PartialEq)]
+enum BarAction {
+    SeekBack,
+    Resume,
+    SeekFwd,
+    Subs,
+    Audio,
+    Video,
+    Exit,
+}
+
+impl BarAction {
+    fn label(self) -> &'static str {
+        match self {
+            BarAction::SeekBack => "« 10s",
+            BarAction::Resume => "Reanudar",
+            BarAction::SeekFwd => "10s »",
+            BarAction::Subs => "Subtítulos",
+            BarAction::Audio => "Audio",
+            BarAction::Video => "Video",
+            BarAction::Exit => "Salir",
+        }
+    }
+}
 
 struct PlayerUi {
     paused: bool,
     focus: usize,
+    /// Acciones visibles del bar (se reconstruyen al pausar según las pistas).
+    bar: Vec<BarAction>,
 }
 
 thread_local! {
     static PLAYER_UI: RefCell<PlayerUi> =
-        const { RefCell::new(PlayerUi { paused: false, focus: 1 }) };
+        const { RefCell::new(PlayerUi { paused: false, focus: 1, bar: Vec::new() }) };
     /// Menú de pistas abierto (audio/subs). None = no hay menú (modo bar).
     static MENU: RefCell<Option<Menu>> = const { RefCell::new(None) };
+}
+
+/// Cuenta pistas de un tipo ("video"/"audio"/"sub").
+fn count_tracks(kind: &str) -> i64 {
+    let Some(mpv) = MPV.get() else { return 0 };
+    let count = mpv.get_property::<i64>("track-list/count").unwrap_or(0);
+    (0..count)
+        .filter(|i| get_string(&format!("track-list/{i}/type")) == kind)
+        .count() as i64
+}
+
+/// Construye la lista de acciones del bar. "Video" solo con 2+ pistas de video.
+fn build_bar_actions() -> Vec<BarAction> {
+    let mut v = vec![
+        BarAction::SeekBack,
+        BarAction::Resume,
+        BarAction::SeekFwd,
+        BarAction::Subs,
+        BarAction::Audio,
+    ];
+    if count_tracks("video") >= 2 {
+        v.push(BarAction::Video);
+    }
+    v.push(BarAction::Exit);
+    v
 }
 
 /// Acción al elegir un ítem del menú.
@@ -185,6 +229,7 @@ thread_local! {
 enum MenuAct {
     Aid(i64),
     Sid(i64),
+    Vid(i64),
     SubOff,
     Download,
     /// Ítem de un picker provisto por el frontend: al elegir emite
@@ -227,11 +272,13 @@ fn build_bar_bg() -> String {
 /// tenues. Sombra para legibilidad sobre el video.
 fn build_bar_ass(focus: usize) -> String {
     // Colores ASS = &HBBGGRR&. Naranja f97316 → &H1673F9&. Cream → &HE8E0D0&.
+    let bar = PLAYER_UI.with(|u| u.borrow().bar.clone());
     let mut s = String::from("{\\an5\\pos(640,586)\\fs30\\bord0\\shad1.2\\4c&H000000&}");
-    for (i, label) in ACTIONS.iter().enumerate() {
+    for (i, act) in bar.iter().enumerate() {
         if i > 0 {
             s.push_str("{\\1c&H6B6256&\\b0}   ·   ");
         }
+        let label = act.label();
         if i == focus {
             s.push_str(&format!("{{\\1c&H1673F9&\\b1}}{label}"));
         } else {
@@ -256,12 +303,15 @@ fn clear_bar() {
     mpv_cmd2("osd-overlay", &[BAR_FG_ID, "none", "", "1280", "720", "0", "no", "no"]);
 }
 
-/// Pausa y muestra el bar (foco en Reanudar).
+/// Pausa y muestra el bar (foco en Reanudar). Reconstruye las acciones según
+/// las pistas actuales (ej. añade "Video" si hay 2+).
 fn enter_paused() {
+    let bar = build_bar_actions();
     PLAYER_UI.with(|u| {
         let mut b = u.borrow_mut();
         b.paused = true;
         b.focus = 1;
+        b.bar = bar;
     });
     if let Some(mpv) = MPV.get() {
         let _ = mpv.set_property("pause", true);
@@ -290,33 +340,39 @@ fn toggle_pause() {
 
 /// Mueve el foco del bar (con wrap) y redibuja.
 fn move_focus(delta: i32) {
-    let n = ACTIONS.len() as i32;
     PLAYER_UI.with(|u| {
         let mut b = u.borrow_mut();
-        b.focus = (((b.focus as i32 + delta) % n + n) % n) as usize;
+        let n = b.bar.len() as i32;
+        if n > 0 {
+            b.focus = (((b.focus as i32 + delta) % n + n) % n) as usize;
+        }
     });
     draw_bar();
 }
 
 /// Activa la acción enfocada (con feedback OSD visible).
 fn activate_focus() {
-    let f = PLAYER_UI.with(|u| u.borrow().focus);
-    match f {
-        0 => {
+    let act = PLAYER_UI.with(|u| {
+        let b = u.borrow();
+        b.bar.get(b.focus).copied()
+    });
+    match act {
+        Some(BarAction::SeekBack) => {
             mpv_cmd2("seek", &["-10"]);
             mpv_cmd2("show-text", &["⏪ -10s   ${time-pos}", "1200"]);
         }
-        1 => resume_play(),
-        2 => {
+        Some(BarAction::Resume) => resume_play(),
+        Some(BarAction::SeekFwd) => {
             mpv_cmd2("seek", &["10"]);
             mpv_cmd2("show-text", &["⏩ +10s   ${time-pos}", "1200"]);
         }
-        3 => open_sub_menu(),
-        4 => open_audio_menu(),
-        5 => {
+        Some(BarAction::Subs) => open_sub_menu(),
+        Some(BarAction::Audio) => open_audio_menu(),
+        Some(BarAction::Video) => open_video_menu(),
+        Some(BarAction::Exit) => {
             let _ = stop();
         }
-        _ => {}
+        None => {}
     }
 }
 
@@ -373,14 +429,22 @@ fn build_track_items(want: &str) -> Vec<MenuItem> {
             format!("{mark}{head}  ·  {}", extra.join(" · "))
         };
 
-        let act = if want == "audio" {
-            MenuAct::Aid(id)
-        } else {
-            MenuAct::Sid(id)
+        let act = match want {
+            "audio" => MenuAct::Aid(id),
+            "video" => MenuAct::Vid(id),
+            _ => MenuAct::Sid(id),
         };
         items.push(MenuItem { label, act });
     }
     items
+}
+
+fn open_video_menu() {
+    let mut items = build_track_items("video");
+    if items.is_empty() {
+        items.push(MenuItem { label: "(sin pistas de video)".into(), act: MenuAct::SubOff });
+    }
+    open_menu("Video", items);
 }
 
 fn open_audio_menu() {
@@ -448,6 +512,10 @@ fn menu_activate() {
         Some(MenuAct::Sid(id)) => {
             mpv_cmd2("set", &["sid", &id.to_string()]);
             mpv_cmd2("set", &["sub-visibility", "yes"]);
+            close_menu();
+        }
+        Some(MenuAct::Vid(id)) => {
+            mpv_cmd2("set", &["vid", &id.to_string()]);
             close_menu();
         }
         Some(MenuAct::SubOff) => {
