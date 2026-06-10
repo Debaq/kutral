@@ -368,9 +368,9 @@
 
   // Subtítulos externos: Wyzie si hay key, si no OpenSubtitles (cuota diaria).
   // mpv carga la URL directo con sub-add (no hace falta bajar a disco).
-  async function loadExternalSub() {
+  async function loadExternalSub(): Promise<boolean> {
     const lang = config.subsLang || "es";
-    if (lang === "off") return;
+    if (lang === "off") return false;
     let url = "";
     if (config.wyzieKey) {
       try {
@@ -398,7 +398,7 @@
     }
     if (!url) {
       dbg("sin subtítulos ES (embebidos ni externos)");
-      return;
+      return false;
     }
     // Guardar el .srt en Descargas (para coleccionarlos) y cargar el archivo
     // local en mpv. Si falla la descarga a disco, se carga la URL directa.
@@ -415,6 +415,7 @@
     }
     await mpv(["sub-add", toLoad, "select"]);
     await mpv(["set", "sub-visibility", "yes"]);
+    return true;
   }
 
   async function stopMpv() {
@@ -439,6 +440,29 @@
       if (e.payload === false) {
         stopMpvPoll();
         onClose();
+      }
+    }).then((u) => (un = u));
+    return () => {
+      if (un) un();
+    };
+  });
+
+  // "Descargar subtítulos…" desde el menú del reproductor (bar pausa). El
+  // backend emite el evento; buscamos/bajamos ES (Wyzie→OpenSubtitles), lo
+  // guardamos en Descargas y lo cargamos en mpv. Feedback por OSD del video.
+  $effect(() => {
+    let un: UnlistenFn | undefined;
+    void listen("player:download-subs", async () => {
+      await mpv(["show-text", "Buscando subtítulos…", "4000"]);
+      try {
+        const ok = await loadExternalSub();
+        await mpv([
+          "show-text",
+          ok ? "✓ Subtítulos cargados" : "No se encontraron subtítulos",
+          "2500",
+        ]);
+      } catch {
+        await mpv(["show-text", "Error al descargar subtítulos", "2500"]);
       }
     }).then((u) => (un = u));
     return () => {
