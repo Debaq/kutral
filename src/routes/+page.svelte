@@ -12,7 +12,7 @@
   import SourcePicker from "$lib/SourcePicker.svelte";
   import PlayMenu from "$lib/PlayMenu.svelte";
   import EpisodePicker from "$lib/EpisodePicker.svelte";
-  import { ANIME_GENRES, ANILIST_SORTS, anilistGenresCSV } from "$lib/anime";
+  import { ANIME_GENRES, ANILIST_SORTS, anilistGenresCSV, animeSeasonOptions } from "$lib/anime";
   import RemoteQr from "$lib/RemoteQr.svelte";
   import {
     cargarNoDisponiblesIniciales,
@@ -302,9 +302,23 @@
     { id: "az",        label: "A → Z",           movie: "original_title.asc",        tv: "name.asc" },
     { id: "za",        label: "Z → A",           movie: "original_title.desc",       tv: "name.desc" },
   ];
+  // Orden extra solo-anime: TRENDING_DESC de AniList. Útil con temporada en
+  // curso, donde el score aún no estabiliza. movie/tv son dummies (no se usan).
+  const ANIME_SORTS: SortOpt[] = [
+    { id: "trending", label: "Tendencia", movie: "popularity.desc", tv: "popularity.desc" },
+  ];
   function currentMediaTypeForSort(): "movie" | "tv" { return tabToMediaType(tab); }
   let sortId = $state<string>("popular");
   let sortOpen = $state(false);
+  const sortOptions = $derived(
+    tab === "anime" ? [SORTS[0], ...ANIME_SORTS, ...SORTS.slice(1)] : SORTS,
+  );
+
+  // Temporada anime (cour AniList). "" = todas. Lista fija al montar.
+  const SEASON_OPTS = animeSeasonOptions();
+  let seasonId = $state<string>("");
+  let seasonOpen = $state(false);
+  const seasonSel = $derived(SEASON_OPTS.find((s) => s.id === seasonId) ?? null);
 
   let genres = $state<{ id: number; name: string }[]>([]);
   let selectedGenres = $state<Set<number>>(new Set());
@@ -889,6 +903,9 @@
     tab = t;
     selected = null;
     selectedGenres = new Set();
+    seasonId = "";
+    // "Tendencia" solo existe en anime; al salir, volver a un orden válido.
+    if (t !== "anime" && sortId === "trending") sortId = "popular";
     statusMap = new Map();
     loadGenres();
     resetAndLoad();
@@ -896,6 +913,11 @@
 
   function changeSort(id: string) {
     sortId = id;
+    resetAndLoad();
+  }
+
+  function changeSeason(id: string) {
+    seasonId = id;
     resetAndLoad();
   }
 
@@ -971,6 +993,9 @@
             sort: ANILIST_SORTS[sortId] ?? "POPULARITY_DESC",
             genres: anilistGenresCSV(selectedGenres) || undefined,
             search: debouncedQ || undefined,
+            // Temporada fuera durante búsqueda, igual que sort/géneros.
+            season: !isSearch && seasonSel ? seasonSel.season : undefined,
+            seasonYear: !isSearch && seasonSel ? seasonSel.year : undefined,
           })
         : isSearch
         ? await invoke("tmdb_search", { mediaType: mt, query: debouncedQ, page, apiKey })
@@ -2310,10 +2335,6 @@
                   {:else}
                     <div class="no-poster ep-noimg">E{ep.episode_number}</div>
                   {/if}
-                  <div class="card-meta">
-                    <span class="card-title">E{ep.episode_number} · {ep.name}</span>
-                    {#if ep.overview}<span class="card-sub ep-ov">{ep.overview}</span>{/if}
-                  </div>
                 </button>
               {/each}
               {#if !seriesEpisodes.length}
@@ -2356,12 +2377,12 @@
               disabled={!apiKey || !!debouncedQ}
               title={debouncedQ ? "Orden no disponible durante búsqueda" : "Ordenar por…"}
             >
-              <span>{SORTS.find(s => s.id === sortId)?.label || "Orden"}</span>
+              <span>{sortOptions.find(s => s.id === sortId)?.label || "Orden"}</span>
               <svg class="chev" viewBox="0 0 10 6" width="10" height="6"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
             </button>
             {#if sortOpen}
               <ul class="dropdown-menu" role="menu" use:autofocusFirst>
-                {#each SORTS as s}
+                {#each sortOptions as s}
                   <li>
                     <button
                       data-nav
@@ -2376,6 +2397,46 @@
               </ul>
             {/if}
           </div>
+          {#if tab === "anime"}
+            <div class="dropdown">
+              <button
+                data-nav
+                class="dropdown-trigger"
+                onclick={() => (seasonOpen = !seasonOpen)}
+                disabled={!!debouncedQ}
+                title={debouncedQ ? "Temporada no disponible durante búsqueda" : "Filtrar por temporada…"}
+              >
+                <span>{seasonSel?.label || "Temporada"}</span>
+                <svg class="chev" viewBox="0 0 10 6" width="10" height="6"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              </button>
+              {#if seasonOpen}
+                <ul class="dropdown-menu" role="menu" use:autofocusFirst>
+                  <li>
+                    <button
+                      data-nav
+                      class:active={seasonId === ""}
+                      onclick={() => { changeSeason(""); seasonOpen = false; }}
+                    >
+                      Todas
+                      {#if seasonId === ""}<span class="dot">●</span>{/if}
+                    </button>
+                  </li>
+                  {#each SEASON_OPTS as s}
+                    <li>
+                      <button
+                        data-nav
+                        class:active={s.id === seasonId}
+                        onclick={() => { changeSeason(s.id); seasonOpen = false; }}
+                      >
+                        {s.label}
+                        {#if s.id === seasonId}<span class="dot">●</span>{/if}
+                      </button>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+            </div>
+          {/if}
         </div>
         {#if genres.length && !debouncedQ}
           <div class="genres">
@@ -2412,10 +2473,6 @@
                   <em>and Chill</em>
                 </div>
               </div>
-              <div class="card-meta">
-                <span class="card-title vera-icon-title">✦</span>
-                <span class="card-sub">¿Qué ver hoy?</span>
-              </div>
             </a>
 
             <div
@@ -2431,10 +2488,6 @@
                   <em class="sepa-em">trivia</em>
                 </div>
               </div>
-              <div class="card-meta">
-                <span class="card-title sepa-icon-title">✧</span>
-                <span class="card-sub">Compite. El que gana elige peli.</span>
-              </div>
             </div>
 
             <a class="card juegos-card" data-nav href="/juegos" title="Jugar">
@@ -2444,10 +2497,6 @@
                   <em>retro</em>
                 </div>
               </div>
-              <div class="card-meta">
-                <span class="card-title juegos-icon-title">🎮</span>
-                <span class="card-sub">NES · SNES · GBC · DS</span>
-              </div>
             </a>
 
             <a class="card iptv-card" data-nav href="/iptv" title="TV en vivo">
@@ -2456,10 +2505,6 @@
                   <span class="iptv-marca">IPTV</span>
                   <em>en vivo</em>
                 </div>
-              </div>
-              <div class="card-meta">
-                <span class="card-title iptv-icon-title">📡</span>
-                <span class="card-sub">Canales en directo</span>
               </div>
             </a>
 
@@ -2471,10 +2516,6 @@
                     <em>cine</em>
                   </div>
                 </div>
-                <div class="card-meta">
-                  <span class="card-title cat-icon-title">🎬</span>
-                  <span class="card-sub">Películas</span>
-                </div>
               </button>
             {/if}
             {#if tab !== "tv"}
@@ -2485,10 +2526,6 @@
                     <em>tv</em>
                   </div>
                 </div>
-                <div class="card-meta">
-                  <span class="card-title cat-icon-title">📺</span>
-                  <span class="card-sub">Series</span>
-                </div>
               </button>
             {/if}
             {#if tab !== "anime"}
@@ -2498,10 +2535,6 @@
                     <span class="cat-marca">Anime</span>
                     <em>日本</em>
                   </div>
-                </div>
-                <div class="card-meta">
-                  <span class="card-title cat-icon-title">🌸</span>
-                  <span class="card-sub">Anime</span>
                 </div>
               </button>
             {/if}
@@ -2560,10 +2593,6 @@
                       </div>
                     {/if}
                   {/if}
-                  <div class="card-meta">
-                    <span class="card-title">{title}</span>
-                    <span class="card-sub">{year} · ★ {it.vote_average.toFixed(1)}</span>
-                  </div>
                 </button>
               {/if}
             {/each}

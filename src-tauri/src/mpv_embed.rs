@@ -16,7 +16,7 @@
 
 #![cfg(target_os = "linux")]
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ffi::{c_void, CString};
 use std::path::PathBuf;
 use std::ptr;
@@ -125,6 +125,40 @@ fn gl_get_proc(_ctx: &(), name: &str) -> *mut c_void {
 }
 
 // ───────────────────────── helpers de input (uosc) ────────────────────────
+
+// ── Auto-ocultar el cursor durante la reproducción ──
+thread_local! {
+    static CURSOR_GEN: Cell<u64> = const { Cell::new(0) };
+}
+
+fn set_cursor_hidden(area: &gtk::GLArea, hidden: bool) {
+    if let Some(win) = area.window() {
+        let cursor = if hidden {
+            gtk::gdk::Cursor::from_name(&win.display(), "none")
+        } else {
+            None // None = cursor por defecto (visible)
+        };
+        win.set_cursor(cursor.as_ref());
+    }
+}
+
+/// Muestra el cursor y programa ocultarlo tras 1.5s sin movimiento (generación:
+/// cada movimiento invalida el timer anterior sin tener que cancelarlo).
+fn cursor_activity(area: &gtk::GLArea) {
+    set_cursor_hidden(area, false);
+    let gen = CURSOR_GEN.with(|g| {
+        let n = g.get().wrapping_add(1);
+        g.set(n);
+        n
+    });
+    let area = area.clone();
+    glib::timeout_add_local(std::time::Duration::from_millis(1500), move || {
+        if CURSOR_GEN.with(|g| g.get()) == gen {
+            set_cursor_hidden(&area, true);
+        }
+        glib::ControlFlow::Break
+    });
+}
 
 /// Manda la posición del mouse a mpv en coords OSD (px reales = lógico×scale).
 fn mpv_mouse_move(x: f64, y: f64, scale: i32) {
@@ -962,6 +996,7 @@ fn build_surface(vbox: &gtk::Box) {
     glarea.connect_motion_notify_event(|area, ev| {
         let (x, y) = ev.position();
         mpv_mouse_move(x, y, area.scale_factor());
+        cursor_activity(area); // muestra cursor y reprograma el autohide
         glib::Propagation::Proceed
     });
     glarea.connect_button_press_event(|area, ev| {
@@ -1029,6 +1064,7 @@ fn show_surface() {
                     surf.glarea.show();
                     surf.glarea.grab_focus();
                     surf.glarea.queue_render();
+                    set_cursor_hidden(&surf.glarea, true); // arranca sin cursor
                     eprintln!("[mpv-embed] glarea.show + queue_render hechos");
                 }
             });
@@ -1042,6 +1078,7 @@ fn hide_surface() {
             SURFACE.with(|s| {
                 if let Some(surf) = s.borrow().as_ref() {
                     // Oculta el video y vuelve a mostrar el webview (menús).
+                    set_cursor_hidden(&surf.glarea, false); // restaura cursor
                     surf.glarea.hide();
                     if let Some(wv) = &surf.webview {
                         wv.show();

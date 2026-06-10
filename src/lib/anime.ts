@@ -27,6 +27,7 @@ export const ANIME_GENRES: AnimeGenre[] = [
 // Orden TMDb (sortId local) → MediaSort de AniList.
 export const ANILIST_SORTS: Record<string, string> = {
   popular: "POPULARITY_DESC",
+  trending: "TRENDING_DESC",
   top: "SCORE_DESC",
   voted: "FAVOURITES_DESC",
   new: "START_DATE_DESC",
@@ -40,4 +41,46 @@ export function anilistGenresCSV(selected: Set<number>): string {
   return ANIME_GENRES.filter((g) => selected.has(g.id))
     .map((g) => g.anilist)
     .join(",");
+}
+
+// ========================================================================
+// Temporadas (cours): convención japonesa, hemisferio norte.
+// WINTER ene-mar, SPRING abr-jun, SUMMER jul-sep, FALL oct-dic.
+// ========================================================================
+
+export type AnimeSeasonOpt = {
+  id: string; // "SPRING-2026"
+  label: string;
+  season: string; // enum MediaSeason de AniList
+  year: number;
+};
+
+const SEASON_ORDER = ["WINTER", "SPRING", "SUMMER", "FALL"] as const;
+const SEASON_ES: Record<string, string> = {
+  WINTER: "Invierno",
+  SPRING: "Primavera",
+  SUMMER: "Verano",
+  FALL: "Otoño",
+};
+
+/**
+ * Opciones de temporada para el dropdown: próxima, actual y `past`
+ * anteriores, de más nueva a más vieja.
+ */
+export function animeSeasonOptions(now: Date = new Date(), past = 6): AnimeSeasonOpt[] {
+  // Índice lineal año*4+cour para iterar cruzando años sin casos borde.
+  const base = now.getFullYear() * 4 + Math.floor(now.getMonth() / 3);
+  const out: AnimeSeasonOpt[] = [];
+  for (let i = base + 1; i >= base - past; i--) {
+    const year = Math.floor(i / 4);
+    const season = SEASON_ORDER[i % 4];
+    const extra = i === base ? " · actual" : i === base + 1 ? " · próxima" : "";
+    out.push({
+      id: `${season}-${year}`,
+      label: `${SEASON_ES[season]} ${year}${extra}`,
+      season,
+      year,
+    });
+  }
+  return out;
 }

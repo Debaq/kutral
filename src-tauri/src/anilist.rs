@@ -108,12 +108,16 @@ fn media_to_item(m: &serde_json::Value) -> TmdbItem {
 /// (POPULARITY_DESC, SCORE_DESC, TRENDING_DESC, START_DATE_DESC, …).
 /// `genres` es CSV de géneros AniList en inglés ("Action,Romance").
 /// Con `search`, AniList ordena por relevancia y se ignora `sort`.
+/// `season` (WINTER/SPRING/SUMMER/FALL) + `season_year` filtran por cour;
+/// solo aplican si vienen ambos.
 #[tauri::command]
 pub async fn anilist_discover(
     page: u32,
     sort: Option<String>,
     genres: Option<String>,
     search: Option<String>,
+    season: Option<String>,
+    season_year: Option<u32>,
 ) -> Result<TmdbListResp, String> {
     let search = search.filter(|q| !q.trim().is_empty());
     let genre_list: Vec<String> = genres
@@ -141,6 +145,12 @@ pub async fn anilist_discover(
         defs.push_str(", $genres: [String]");
         args.push_str(", genre_in: $genres");
         vars["genres"] = serde_json::json!(genre_list);
+    }
+    if let (Some(se), Some(sy)) = (season.filter(|s| !s.trim().is_empty()), season_year) {
+        defs.push_str(", $season: MediaSeason, $seasonYear: Int");
+        args.push_str(", season: $season, seasonYear: $seasonYear");
+        vars["season"] = serde_json::json!(se.trim());
+        vars["seasonYear"] = serde_json::json!(sy);
     }
 
     let query = format!(
