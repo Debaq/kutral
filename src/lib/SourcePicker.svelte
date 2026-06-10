@@ -447,23 +447,82 @@
     };
   });
 
-  // "Descargar subtítulos…" desde el menú del reproductor (bar pausa). El
-  // backend emite el evento; buscamos/bajamos ES (Wyzie→OpenSubtitles), lo
-  // guardamos en Descargas y lo cargamos en mpv. Feedback por OSD del video.
+  // Opciones de subtítulos descargables de la última búsqueda (las indexa el
+  // picker in-video por id = posición).
+  let subOptions: { url: string; label: string; lang: string }[] = [];
+
+  // Busca subtítulos (Wyzie lista + OpenSubtitles 1) para el título actual.
+  async function searchSubOptions() {
+    const lang = config.subsLang && config.subsLang !== "off" ? config.subsLang : "es";
+    const opts: { url: string; label: string; lang: string }[] = [];
+    if (config.wyzieKey) {
+      try {
+        const subs = await invoke<{ url: string; label: string; lang: string }[]>(
+          "wyzie_search",
+          { imdbId, language: lang, apiKey: config.wyzieKey },
+        );
+        for (const s of subs)
+          opts.push({ url: s.url, label: s.label || s.lang || "Subtítulo", lang: s.lang || lang });
+      } catch (e) {
+        dbg(`wyzie list fail: ${String(e).slice(0, 60)}`);
+      }
+    }
+    try {
+      const os = await invoke<{ url: string; remaining: number }>("os_search", {
+        imdbId,
+        language: lang,
+      });
+      if (os?.url)
+        opts.push({ url: os.url, label: `OpenSubtitles (${lang.toUpperCase()})`, lang });
+    } catch (e) {
+      dbg(`os list fail: ${String(e).slice(0, 60)}`);
+    }
+    return opts;
+  }
+
+  // "Descargar subtítulos…" del menú del reproductor → buscamos y abrimos un
+  // PICKER in-video para que el usuario ELIJA cuál bajar.
   $effect(() => {
     let un: UnlistenFn | undefined;
     void listen("player:download-subs", async () => {
-      await mpv(["show-text", "Buscando subtítulos…", "4000"]);
-      try {
-        const ok = await loadExternalSub();
-        await mpv([
-          "show-text",
-          ok ? "✓ Subtítulos cargados" : "No se encontraron subtítulos",
-          "2500",
-        ]);
-      } catch {
-        await mpv(["show-text", "Error al descargar subtítulos", "2500"]);
+      await mpv(["show-text", "Buscando subtítulos…", "5000"]);
+      const opts = await searchSubOptions();
+      if (opts.length === 0) {
+        await mpv(["show-text", "No se encontraron subtítulos", "2500"]);
+        return;
       }
+      subOptions = opts;
+      await invoke("mpv_open_picker", {
+        title: "Elegí un subtítulo",
+        items: opts.map((o, i) => ({ label: o.label, id: String(i) })),
+      });
+    }).then((u) => (un = u));
+    return () => {
+      if (un) un();
+    };
+  });
+
+  // El usuario eligió un subtítulo en el picker in-video → lo descargamos,
+  // guardamos en Descargas y cargamos en mpv.
+  $effect(() => {
+    let un: UnlistenFn | undefined;
+    void listen<string>("player:menu-pick", async (e) => {
+      const o = subOptions[Number(e.payload)];
+      if (!o) return;
+      await mpv(["show-text", "Descargando subtítulo…", "5000"]);
+      let toLoad = o.url;
+      try {
+        const path = await invoke<string>("subtitle_save", {
+          url: o.url,
+          filename: `${title} [${o.lang}]`,
+        });
+        if (path) toLoad = path;
+      } catch (err) {
+        dbg(`save fail, uso URL: ${String(err).slice(0, 60)}`);
+      }
+      await mpv(["sub-add", toLoad, "select"]);
+      await mpv(["set", "sub-visibility", "yes"]);
+      await mpv(["show-text", "✓ Subtítulo cargado", "2000"]);
     }).then((u) => (un = u));
     return () => {
       if (un) un();

@@ -328,6 +328,8 @@
   type CardStatus = "checking" | "ok" | "trailer" | "none";
   let statusMap = $state<Map<number, CardStatus>>(new Map());
   let imdbIdMap = $state<Map<number, string>>(new Map());
+  // Nº de temporadas por id (solo series). Llega gratis en item_status.
+  let seasonsMap = $state<Map<number, number>>(new Map());
 
   // URL del servidor web (si está activo) para mostrar QR del mando remoto
   // sobre la carátula del título seleccionado. Poll periódico para reflejar
@@ -1005,12 +1007,17 @@
     next.set(id, "checking");
     statusMap = next;
     try {
-      const s: { id: number; has_imdb: boolean; imdb_id: string | null; has_trailer: boolean } =
+      const s: { id: number; has_imdb: boolean; imdb_id: string | null; has_trailer: boolean; number_of_seasons: number | null } =
         await invoke("item_status", { mediaType: tabToMediaType(tab), id, apiKey });
       const status: CardStatus = s.has_imdb ? "ok" : s.has_trailer ? "trailer" : "none";
       const m = new Map(statusMap);
       m.set(id, status);
       statusMap = m;
+      if (s.number_of_seasons && s.number_of_seasons > 0) {
+        const sm = new Map(seasonsMap);
+        sm.set(id, s.number_of_seasons);
+        seasonsMap = sm;
+      }
       if (s.imdb_id) {
         const im = new Map(imdbIdMap);
         im.set(id, s.imdb_id);
@@ -2258,6 +2265,7 @@
               {@const st = statusMap.get(it.id)}
               {@const itImdb = imdbIdMap.get(it.id)}
               {@const unavail = itImdb ? unavailableSet.has(itImdb) : false}
+              {@const nseasons = seasonsMap.get(it.id)}
               {#if st !== "none"}
                 <button
                   data-nav
@@ -2278,6 +2286,11 @@
                   {/if}
                   {#if st === "trailer"}
                     <span class="card-badge badge-trailer">TRAILER</span>
+                  {/if}
+                  {#if nseasons}
+                    <span class="card-badge badge-seasons" class:stacked={st === "trailer"}
+                      >{nseasons} {nseasons === 1 ? "temporada" : "temporadas"}</span
+                    >
                   {/if}
                   {#if unavail}
                     <span class="card-stamp">NO DISPONIBLE</span>
@@ -3249,6 +3262,14 @@
   .badge-trailer {
     background: #f5c518; color: #0d0d12;
   }
+  .badge-seasons {
+    background: rgba(13, 13, 18, 0.82);
+    color: #fff;
+    letter-spacing: 0.5px;
+    backdrop-filter: blur(2px);
+  }
+  /* Cuando la card también muestra el badge TRAILER (top-right), bajamos. */
+  .badge-seasons.stacked { top: 38px; }
   .card-stamp {
     position: absolute; top: 50%; left: 50%;
     transform: translate(-50%, -50%) rotate(-15deg);

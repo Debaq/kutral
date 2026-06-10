@@ -187,6 +187,9 @@ enum MenuAct {
     Sid(i64),
     SubOff,
     Download,
+    /// Ítem de un picker provisto por el frontend: al elegir emite
+    /// "player:menu-pick" con este id para que el front actúe (ej. descargar).
+    Pick(String),
 }
 
 struct MenuItem {
@@ -426,7 +429,47 @@ fn menu_activate() {
             }
             close_menu();
         }
+        Some(MenuAct::Pick(id)) => {
+            if let Some(app) = APP.get() {
+                use tauri::Emitter;
+                let _ = app.emit("player:menu-pick", id);
+            }
+            close_menu();
+        }
         None => {}
+    }
+}
+
+/// Abre un picker provisto por el frontend (lista de (label, id)). Al elegir,
+/// se emite "player:menu-pick" con el id. Llamable desde un comando (hilo
+/// worker) → salta al hilo main.
+pub fn open_picker(title: String, items: Vec<(String, String)>) {
+    if let Some(app) = APP.get() {
+        let _ = app.run_on_main_thread(move || {
+            let menu_items = items
+                .into_iter()
+                .map(|(label, id)| MenuItem {
+                    label,
+                    act: MenuAct::Pick(id),
+                })
+                .collect::<Vec<_>>();
+            if menu_items.is_empty() {
+                return;
+            }
+            // Mostrar el video pausado + el picker encima.
+            PLAYER_UI.with(|u| u.borrow_mut().paused = true);
+            if let Some(mpv) = MPV.get() {
+                let _ = mpv.set_property("pause", true);
+            }
+            MENU.with(|m| {
+                *m.borrow_mut() = Some(Menu {
+                    title,
+                    items: menu_items,
+                    sel: 0,
+                })
+            });
+            draw_menu();
+        });
     }
 }
 

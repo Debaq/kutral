@@ -626,6 +626,8 @@ pub struct ItemStatus {
     pub has_imdb: bool,
     pub imdb_id: Option<String>,
     pub has_trailer: bool,
+    #[serde(default)]
+    pub number_of_seasons: Option<u32>,
 }
 
 /// Respuesta combinada de `/{type}/{id}?append_to_response=external_ids,videos`.
@@ -635,6 +637,9 @@ struct ItemStatusRaw {
     external_ids: Option<ExternalIds>,
     #[serde(default)]
     videos: Option<VideosResp>,
+    // Solo presente en respuestas de series (/tv/{id}); gratis en el mismo fetch.
+    #[serde(default)]
+    number_of_seasons: Option<u32>,
 }
 
 #[tauri::command]
@@ -668,7 +673,7 @@ async fn item_status(media_type: String, id: u64, api_key: String) -> Result<Ite
         .unwrap_or_default()
         .iter()
         .any(|v| v.site == "YouTube" && (v.kind == "Trailer" || v.kind == "Teaser"));
-    Ok(ItemStatus { id, has_imdb, imdb_id, has_trailer })
+    Ok(ItemStatus { id, has_imdb, imdb_id, has_trailer, number_of_seasons: raw.number_of_seasons })
 }
 
 #[tauri::command]
@@ -2535,6 +2540,7 @@ pub fn run() {
             player::imp::mpv_play,
             player::imp::mpv_play_iptv,
             player::imp::mpv_cmd,
+            player::imp::mpv_open_picker,
             player::imp::mpv_stop,
             player::imp::mpv_running,
             player::imp::mpv_status,

@@ -33,6 +33,14 @@ pub struct IptvItem {
     pub title: Option<String>,
 }
 
+/// Ítem de un picker in-video provisto por el frontend (ej. lista de subtítulos
+/// descargables). Al elegirlo, el backend emite "player:menu-pick" con `id`.
+#[derive(serde::Deserialize)]
+pub struct PickerItem {
+    pub label: String,
+    pub id: String,
+}
+
 /// Estado en vivo de mpv para el OSD.
 #[derive(serde::Serialize, Default)]
 pub struct MpvStatus {
@@ -110,6 +118,15 @@ pub mod imp {
     #[tauri::command]
     pub fn mpv_cmd(args: Vec<serde_json::Value>) -> Result<(), String> {
         mpv_embed::run_command(&args)
+    }
+
+    #[tauri::command]
+    pub fn mpv_open_picker(title: String, items: Vec<PickerItem>) -> Result<(), String> {
+        mpv_embed::open_picker(
+            title,
+            items.into_iter().map(|i| (i.label, i.id)).collect(),
+        );
+        Ok(())
     }
 
     #[tauri::command]
@@ -397,6 +414,12 @@ pub mod imp {
         line.push('\n');
         conn.write_all(line.as_bytes())
             .map_err(|e| format!("ipc write: {e}"))?;
+        Ok(())
+    }
+
+    // El picker in-video solo existe con libmpv embebido (Linux). Stub no-op.
+    #[tauri::command]
+    pub fn mpv_open_picker(_title: String, _items: Vec<PickerItem>) -> Result<(), String> {
         Ok(())
     }
 
