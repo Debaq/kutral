@@ -4,6 +4,7 @@
   // Maneja su propio teclado (flechas/Enter/Esc) porque en este modo el page
   // no procesa navegación.
   import { invoke } from "@tauri-apps/api/core";
+  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { config } from "$lib/config.svelte";
 
   // Pista real del contenedor leída de mpv (verdad del archivo).
@@ -427,6 +428,23 @@
   }
 
   $effect(() => () => stopMpvPoll());
+
+  // Con libmpv embebido el video se cierra desde DENTRO (Esc en el reproductor
+  // → backend hace stop() y emite "mpv:state"=false). El webview estuvo oculto
+  // y su timer de poll pudo quedar suspendido, así que NO dependemos del poll:
+  // escuchamos el evento y volvemos al menú al recibir false.
+  $effect(() => {
+    let un: UnlistenFn | undefined;
+    void listen<boolean>("mpv:state", (e) => {
+      if (e.payload === false) {
+        stopMpvPoll();
+        onClose();
+      }
+    }).then((u) => (un = u));
+    return () => {
+      if (un) un();
+    };
+  });
 
   function move(d: number) {
     if (!total) return;

@@ -152,6 +152,145 @@ fn mpv_key(action: &str, key: &str) {
     }
 }
 
+// ───────────────── modo dual: bar de acciones (teclado-first) ──────────────
+//
+// uosc es mouse-first (sus botones no se navegan con d-pad). Para teclado-first
+// dibujamos NUESTRO bar de acciones con un osd-overlay ASS y manejamos el foco
+// en Rust: reproduciendo ←/→ = seek; pausado ←/→ = mover foco, OK = activar.
+
+/// Acciones del bar pausado (orden = posición horizontal).
+const ACTIONS: [&str; 6] = [
+    "« 10s",
+    "Reanudar",
+    "10s »",
+    "Subtítulos",
+    "Audio",
+    "Salir",
+];
+
+struct PlayerUi {
+    paused: bool,
+    focus: usize,
+}
+
+thread_local! {
+    static PLAYER_UI: RefCell<PlayerUi> =
+        const { RefCell::new(PlayerUi { paused: false, focus: 1 }) };
+}
+
+/// Ejecuta un comando mpv (helper corto).
+fn mpv_cmd2(name: &str, args: &[&str]) {
+    if let Some(mpv) = MPV.get() {
+        let _ = mpv.command(name, args);
+    }
+}
+
+/// Construye el ASS del bar con la acción enfocada resaltada (naranja marca).
+fn build_bar_ass(focus: usize) -> String {
+    // Colores ASS = &HBBGGRR&. Naranja f97316 → &H1673F9&. Texto cream c8c8c8.
+    let mut s =
+        String::from("{\\an5\\pos(640,664)\\fs26\\bord1.4\\3c&H221A1A&\\1c&HC8C8C8&}");
+    for (i, label) in ACTIONS.iter().enumerate() {
+        if i > 0 {
+            s.push_str("     ");
+        }
+        if i == focus {
+            s.push_str("{\\1c&H1673F9&\\b1\\fs30}");
+            s.push_str(label);
+            s.push_str("{\\1c&HC8C8C8&\\b0\\fs26}");
+        } else {
+            s.push_str(label);
+        }
+    }
+    s
+}
+
+/// Dibuja/actualiza el bar (osd-overlay id=47, canvas 1280×720).
+fn draw_bar() {
+    let focus = PLAYER_UI.with(|u| u.borrow().focus);
+    let ass = build_bar_ass(focus);
+    mpv_cmd2(
+        "osd-overlay",
+        &["47", "ass-events", &ass, "1280", "720", "0", "no", "no"],
+    );
+}
+
+/// Quita el bar.
+fn clear_bar() {
+    mpv_cmd2(
+        "osd-overlay",
+        &["47", "none", "", "1280", "720", "0", "no", "no"],
+    );
+}
+
+/// Pausa y muestra el bar (foco en Reanudar).
+fn enter_paused() {
+    PLAYER_UI.with(|u| {
+        let mut b = u.borrow_mut();
+        b.paused = true;
+        b.focus = 1;
+    });
+    if let Some(mpv) = MPV.get() {
+        let _ = mpv.set_property("pause", true);
+    }
+    draw_bar();
+}
+
+/// Reanuda y oculta el bar.
+fn resume_play() {
+    PLAYER_UI.with(|u| u.borrow_mut().paused = false);
+    if let Some(mpv) = MPV.get() {
+        let _ = mpv.set_property("pause", false);
+    }
+    clear_bar();
+}
+
+/// Space: alterna pausa/reanudar (y el bar).
+fn toggle_pause() {
+    let paused = PLAYER_UI.with(|u| u.borrow().paused);
+    if paused {
+        resume_play();
+    } else {
+        enter_paused();
+    }
+}
+
+/// Mueve el foco del bar (con wrap) y redibuja.
+fn move_focus(delta: i32) {
+    let n = ACTIONS.len() as i32;
+    PLAYER_UI.with(|u| {
+        let mut b = u.borrow_mut();
+        b.focus = (((b.focus as i32 + delta) % n + n) % n) as usize;
+    });
+    draw_bar();
+}
+
+/// Activa la acción enfocada.
+fn activate_focus() {
+    let f = PLAYER_UI.with(|u| u.borrow().focus);
+    match f {
+        0 => mpv_cmd2("seek", &["-10"]),
+        1 => resume_play(),
+        2 => mpv_cmd2("seek", &["10"]),
+        3 => mpv_cmd2("cycle", &["sub"]),
+        4 => mpv_cmd2("cycle", &["audio"]),
+        5 => {
+            let _ = stop();
+        }
+        _ => {}
+    }
+}
+
+/// Resetea el estado del bar al empezar una reproducción (hilo main).
+fn reset_player_ui() {
+    PLAYER_UI.with(|u| {
+        let mut b = u.borrow_mut();
+        b.paused = false;
+        b.focus = 1;
+    });
+    clear_bar();
+}
+
 /// Traduce una tecla GDK al nombre que entiende mpv (LEFT, SPACE, ESC, "m"…),
 /// con prefijos de modificador (Ctrl+/Alt+). Devuelve None si no se mapea.
 fn gdk_to_mpv_key(ev: &gtk::gdk::EventKey) -> Option<String> {
@@ -375,14 +514,47 @@ fn build_surface(vbox: &gtk::Box) {
     // que uosc/input.conf respondan. ESC/Atrás NO van a mpv (quit mataría
     // libmpv): cierran el video y vuelven a menús.
     glarea.connect_key_press_event(|_area, ev| {
-        let name = ev.keyval().name();
-        let name = name.as_deref().unwrap_or("");
-        if matches!(name, "Escape" | "BackSpace") {
+        let kn = ev.keyval().name();
+        let kn = kn.as_deref().unwrap_or("");
+        // Esc/Backspace: salir del video a menús (no van a mpv → no lo matan).
+        if matches!(kn, "Escape" | "BackSpace") {
             let _ = stop();
             return glib::Propagation::Stop;
         }
-        if let Some(k) = gdk_to_mpv_key(ev) {
-            mpv_key("keypress", &k);
+        // Espacio: alterna pausa/bar en cualquier modo.
+        if kn == "space" {
+            toggle_pause();
+            return glib::Propagation::Stop;
+        }
+        let paused = PLAYER_UI.with(|u| u.borrow().paused);
+        if !paused {
+            // REPRODUCIENDO: flechas = seek/volumen, OK = pausar + bar.
+            match kn {
+                "Left" => mpv_cmd2("seek", &["-10"]),
+                "Right" => mpv_cmd2("seek", &["10"]),
+                "Up" => mpv_cmd2("add", &["volume", "5"]),
+                "Down" => mpv_cmd2("add", &["volume", "-5"]),
+                "Return" | "KP_Enter" => enter_paused(),
+                _ => {
+                    if let Some(k) = gdk_to_mpv_key(ev) {
+                        mpv_key("keypress", &k);
+                    }
+                }
+            }
+        } else {
+            // PAUSADO: ←/→ navegan el bar, OK activa (↑/↓ siguen volumen).
+            match kn {
+                "Left" => move_focus(-1),
+                "Right" => move_focus(1),
+                "Up" => mpv_cmd2("add", &["volume", "5"]),
+                "Down" => mpv_cmd2("add", &["volume", "-5"]),
+                "Return" | "KP_Enter" => activate_focus(),
+                _ => {
+                    if let Some(k) = gdk_to_mpv_key(ev) {
+                        mpv_key("keypress", &k);
+                    }
+                }
+            }
         }
         glib::Propagation::Stop
     });
@@ -446,6 +618,7 @@ fn show_surface() {
     if let Some(app) = APP.get() {
         let _ = app.run_on_main_thread(|| {
             eprintln!("[mpv-embed] show_surface (main thread)");
+            reset_player_ui(); // arranca reproduciendo, bar oculto
             SURFACE.with(|s| {
                 if let Some(surf) = s.borrow().as_ref() {
                     // Oculta el webview y muestra el video (ocupa todo el box).

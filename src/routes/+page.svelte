@@ -947,17 +947,30 @@
       totalPages = Math.min(resp.total_pages, 500);
       const newItems = resp.results;
       if (append) {
-        items = [...items, ...newItems];
-        cardEls = [...cardEls, ...new Array(newItems.length).fill(null)];
+        // TMDb repite títulos entre páginas consecutivas (la popularidad
+        // cambia entre requests). Sin dedup, la key duplicada en {#each}
+        // rompe el render y el grid deja de actualizarse.
+        const seen = new Set(items.map((x) => x.id));
+        const fresh = newItems.filter((x) => !seen.has(x.id));
+        items = [...items, ...fresh];
+        cardEls = [...cardEls, ...new Array(fresh.length).fill(null)];
       } else {
         items = newItems;
         cardEls = new Array(newItems.length).fill(null);
       }
+      // hasMore mira newItems (crudo), no fresh: una página 100% duplicada
+      // no significa fin de lista.
       hasMore = page < totalPages && newItems.length > 0;
     } catch (e) {
       listError = String(e);
-      if (!append) items = [];
-      hasMore = false;
+      if (append) {
+        // Error transitorio (429/red): revertir página y dejar hasMore
+        // intacto para que el próximo scroll reintente.
+        page -= 1;
+      } else {
+        items = [];
+        hasMore = false;
+      }
     } finally {
       listLoading = false;
       loadingMore = false;
