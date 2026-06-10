@@ -51,6 +51,9 @@ thread_local! {
 
 struct Surface {
     glarea: gtk::GLArea,
+    /// El webview (hijo original del box). Lo ocultamos al reproducir y lo
+    /// mostramos al volver a menús (no lo reparentamos: eso lo rompe).
+    webview: Option<gtk::Widget>,
     /// RenderContext de mpv; se crea en "realize" (cuando hay GL current).
     /// Mantiene viva una referencia fuerte (las closures tienen otras clones).
     #[allow(dead_code)]
@@ -174,16 +177,18 @@ pub fn init(app: &tauri::AppHandle, window: &tauri::WebviewWindow) -> Result<(),
     Ok(())
 }
 
-/// Reparenta lo que haya en el vbox (el webview) dentro de un GtkOverlay y le
-/// superpone el GtkGLArea (oculto hasta reproducir).
+/// Mete el GtkGLArea como segundo hijo del MISMO GtkBox del webview y alterna
+/// visibilidad (no reparenta nada).
+///
+/// CLAVE: Tauri (con decorations:false) tiene un resize-handler que EXIGE la
+/// jerarquía `webview → GtkBox → GtkWindow` (hace `webview.parent().parent()`
+/// y downcast a Window). Cualquier reparent (mover el webview, o insertar un
+/// Overlay entre box y window) revienta ese downcast → panic. Por eso NO
+/// tocamos la jerarquía: solo añadimos el GLArea al box y mostramos uno u otro.
 #[allow(deprecated)] // glib::MainContext::channel está deprecado pero vigente en 0.18
 fn build_surface(vbox: &gtk::Box) {
-    let overlay = gtk::Overlay::new();
-    // Sacar al webview del vbox → hijo base del overlay.
-    for child in vbox.children() {
-        vbox.remove(&child);
-        overlay.add(&child);
-    }
+    // El webview es el hijo actual del box (lo capturamos ANTES de añadir nada).
+    let webview: Option<gtk::Widget> = vbox.children().into_iter().next();
 
     let glarea = gtk::GLArea::new();
     glarea.set_hexpand(true);
@@ -255,13 +260,13 @@ fn build_surface(vbox: &gtk::Box) {
         });
     }
 
-    vbox.add(&overlay);
-    overlay.add_overlay(&glarea);
-    overlay.show_all();
+    // Segundo hijo del box, expandido. Solo uno (webview o glarea) visible a la
+    // vez → el visible ocupa todo el box.
+    vbox.pack_start(&glarea, true, true, 0);
     glarea.hide(); // arranca oculto; se muestra al reproducir
 
     SURFACE.with(|s| {
-        *s.borrow_mut() = Some(Surface { glarea, render });
+        *s.borrow_mut() = Some(Surface { glarea, webview, render });
     });
 }
 
@@ -272,6 +277,10 @@ fn show_surface() {
         let _ = app.run_on_main_thread(|| {
             SURFACE.with(|s| {
                 if let Some(surf) = s.borrow().as_ref() {
+                    // Oculta el webview y muestra el video (ocupa todo el box).
+                    if let Some(wv) = &surf.webview {
+                        wv.hide();
+                    }
                     surf.glarea.show();
                     surf.glarea.grab_focus();
                     surf.glarea.queue_render();
@@ -286,7 +295,11 @@ fn hide_surface() {
         let _ = app.run_on_main_thread(|| {
             SURFACE.with(|s| {
                 if let Some(surf) = s.borrow().as_ref() {
+                    // Oculta el video y vuelve a mostrar el webview (menús).
                     surf.glarea.hide();
+                    if let Some(wv) = &surf.webview {
+                        wv.show();
+                    }
                 }
             });
         });
