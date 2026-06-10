@@ -176,6 +176,28 @@ struct PlayerUi {
 thread_local! {
     static PLAYER_UI: RefCell<PlayerUi> =
         const { RefCell::new(PlayerUi { paused: false, focus: 1 }) };
+    /// Menú de pistas abierto (audio/subs). None = no hay menú (modo bar).
+    static MENU: RefCell<Option<Menu>> = const { RefCell::new(None) };
+}
+
+/// Acción al elegir un ítem del menú.
+#[derive(Clone)]
+enum MenuAct {
+    Aid(i64),
+    Sid(i64),
+    SubOff,
+    Download,
+}
+
+struct MenuItem {
+    label: String,
+    act: MenuAct,
+}
+
+struct Menu {
+    title: String,
+    items: Vec<MenuItem>,
+    sel: usize,
 }
 
 /// Ejecuta un comando mpv (helper corto).
@@ -286,18 +308,166 @@ fn activate_focus() {
             mpv_cmd2("seek", &["10"]);
             mpv_cmd2("show-text", &["⏩ +10s   ${time-pos}", "1200"]);
         }
-        3 => {
-            mpv_cmd2("cycle", &["sub"]);
-            mpv_cmd2("show-text", &["Subtítulo: ${sub} / ${track-list/count}", "1500"]);
-        }
-        4 => {
-            mpv_cmd2("cycle", &["audio"]);
-            mpv_cmd2("show-text", &["Audio: ${audio} — ${current-tracks/audio/title}", "1500"]);
-        }
+        3 => open_sub_menu(),
+        4 => open_audio_menu(),
         5 => {
             let _ = stop();
         }
         _ => {}
+    }
+}
+
+/// Etiqueta legible de una pista (lang + título).
+fn track_label(lang: &str, title: &str) -> String {
+    let l = lang.trim().to_uppercase();
+    let t = title.trim();
+    match (l.is_empty(), t.is_empty()) {
+        (false, false) => format!("{l} — {t}"),
+        (false, true) => l,
+        (true, false) => t.to_string(),
+        (true, true) => "Pista".to_string(),
+    }
+}
+
+fn open_audio_menu() {
+    let mut items = Vec::new();
+    for (id, kind, lang, title, sel) in tracks() {
+        if kind != "audio" {
+            continue;
+        }
+        let mark = if sel { "● " } else { "    " };
+        items.push(MenuItem {
+            label: format!("{mark}{}", track_label(&lang, &title)),
+            act: MenuAct::Aid(id),
+        });
+    }
+    if items.is_empty() {
+        items.push(MenuItem { label: "(sin pistas de audio)".into(), act: MenuAct::SubOff });
+    }
+    open_menu("Audio", items);
+}
+
+fn open_sub_menu() {
+    let mut items = vec![MenuItem {
+        label: "Desactivar subtítulos".into(),
+        act: MenuAct::SubOff,
+    }];
+    for (id, kind, lang, title, sel) in tracks() {
+        if kind != "sub" {
+            continue;
+        }
+        let mark = if sel { "● " } else { "    " };
+        items.push(MenuItem {
+            label: format!("{mark}{}", track_label(&lang, &title)),
+            act: MenuAct::Sid(id),
+        });
+    }
+    items.push(MenuItem {
+        label: "⬇  Descargar subtítulos…".into(),
+        act: MenuAct::Download,
+    });
+    open_menu("Subtítulos", items);
+}
+
+fn open_menu(title: &str, items: Vec<MenuItem>) {
+    // Por defecto, foco en el ítem activo (●) si lo hay.
+    let sel = items.iter().position(|i| i.label.starts_with("● ")).unwrap_or(0);
+    MENU.with(|m| {
+        *m.borrow_mut() = Some(Menu {
+            title: title.to_string(),
+            items,
+            sel,
+        })
+    });
+    draw_menu();
+}
+
+fn close_menu() {
+    MENU.with(|m| *m.borrow_mut() = None);
+    draw_bar(); // volvemos al bar (seguimos pausados)
+}
+
+fn menu_move(delta: i32) {
+    MENU.with(|m| {
+        if let Some(menu) = m.borrow_mut().as_mut() {
+            let n = menu.items.len() as i32;
+            if n > 0 {
+                menu.sel = (((menu.sel as i32 + delta) % n + n) % n) as usize;
+            }
+        }
+    });
+    draw_menu();
+}
+
+fn menu_activate() {
+    let act = MENU.with(|m| {
+        m.borrow()
+            .as_ref()
+            .and_then(|menu| menu.items.get(menu.sel).map(|it| it.act.clone()))
+    });
+    match act {
+        Some(MenuAct::Aid(id)) => {
+            mpv_cmd2("set", &["aid", &id.to_string()]);
+            close_menu();
+        }
+        Some(MenuAct::Sid(id)) => {
+            mpv_cmd2("set", &["sid", &id.to_string()]);
+            mpv_cmd2("set", &["sub-visibility", "yes"]);
+            close_menu();
+        }
+        Some(MenuAct::SubOff) => {
+            mpv_cmd2("set", &["sid", "no"]);
+            close_menu();
+        }
+        Some(MenuAct::Download) => {
+            if let Some(app) = APP.get() {
+                use tauri::Emitter;
+                let _ = app.emit("player:download-subs", ());
+            }
+            close_menu();
+        }
+        None => {}
+    }
+}
+
+/// Fondo del menú: panel centrado, alto según nº de ítems.
+fn build_menu_bg(n: usize) -> String {
+    let h = ((n as i32 + 2) * 44).clamp(140, 620);
+    let cy = 360;
+    let top = cy - h / 2;
+    let bot = cy + h / 2;
+    format!(
+        "{{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H120F0A&\\1a&H22&\\p1}}\
+         m 330 {top} l 950 {top} 950 {bot} 330 {bot}{{\\p0}}"
+    )
+}
+
+/// Texto del menú: título + lista vertical, ítem seleccionado en naranja.
+fn build_menu_ass(menu: &Menu) -> String {
+    let mut s = String::from("{\\an5\\pos(640,360)\\bord0\\shad1.2\\4c&H000000&}");
+    s.push_str(&format!("{{\\fs34\\1c&H3BA1F9&\\b1}}{}\\N\\N", menu.title));
+    for (i, it) in menu.items.iter().enumerate() {
+        if i > 0 {
+            s.push_str("\\N");
+        }
+        if i == menu.sel {
+            s.push_str(&format!("{{\\fs30\\1c&H1673F9&\\b1}}▸  {}", it.label));
+        } else {
+            s.push_str(&format!("{{\\fs30\\1c&HE8E0D0&\\b0}}    {}", it.label));
+        }
+    }
+    s
+}
+
+fn draw_menu() {
+    let drawn = MENU.with(|m| {
+        m.borrow().as_ref().map(|menu| {
+            (build_menu_bg(menu.items.len()), build_menu_ass(menu))
+        })
+    });
+    if let Some((bg, fg)) = drawn {
+        mpv_cmd2("osd-overlay", &[BAR_BG_ID, "ass-events", &bg, "1280", "720", "0", "no", "no"]);
+        mpv_cmd2("osd-overlay", &[BAR_FG_ID, "ass-events", &fg, "1280", "720", "0", "no", "no"]);
     }
 }
 
@@ -308,6 +478,7 @@ fn reset_player_ui() {
         b.paused = false;
         b.focus = 1;
     });
+    MENU.with(|m| *m.borrow_mut() = None);
     clear_bar();
 }
 
@@ -536,6 +707,19 @@ fn build_surface(vbox: &gtk::Box) {
     glarea.connect_key_press_event(|_area, ev| {
         let kn = ev.keyval().name();
         let kn = kn.as_deref().unwrap_or("");
+        // Si hay un menú de pistas abierto, las teclas lo navegan (↑/↓/Enter),
+        // y Esc/←/Backspace lo CIERRAN (vuelven al bar, sin salir del video).
+        let menu_open = MENU.with(|m| m.borrow().is_some());
+        if menu_open {
+            match kn {
+                "Up" => menu_move(-1),
+                "Down" => menu_move(1),
+                "Return" | "KP_Enter" => menu_activate(),
+                "Escape" | "BackSpace" | "Left" => close_menu(),
+                _ => {}
+            }
+            return glib::Propagation::Stop;
+        }
         // Esc/Backspace: salir del video a menús (no van a mpv → no lo matan).
         if matches!(kn, "Escape" | "BackSpace") {
             let _ = stop();

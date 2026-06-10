@@ -925,6 +925,18 @@
     return tabToMediaType(tab) === "movie" ? s.movie : s.tv;
   }
 
+  // Fecha local YYYY-MM-DD. Tope para discover: si no se estrenó, no existe.
+  function hoyISO(): string {
+    const d = new Date();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const dia = String(d.getDate()).padStart(2, "0");
+    return `${d.getFullYear()}-${m}-${dia}`;
+  }
+
+  // Tipos de release TMDb que cuentan como "salió": 2|3 cine, 4 digital,
+  // 5 físico, 6 TV. Excluye 1 (premiere de festival). Solo aplica a movie.
+  const RELEASE_TYPES_DISPONIBLES = "2|3|4|5|6";
+
   async function loadList(append: boolean) {
     if (!apiKey) return;
     if (append) loadingMore = true; else listLoading = true;
@@ -943,6 +955,9 @@
             withGenres: Array.from(selectedGenres).join(","),
             originCountry: ext.originCountry,
             forceGenres: ext.forceGenres,
+            // Sin estreno (cine/digital/físico/TV) hasta hoy → fuera.
+            primaryReleaseDateLte: hoyISO(),
+            withReleaseType: mt === "movie" ? RELEASE_TYPES_DISPONIBLES : undefined,
           });
       totalPages = Math.min(resp.total_pages, 500);
       const newItems = resp.results;
@@ -2980,7 +2995,7 @@
 
   .vera-card { text-decoration: none; }
   .vera-poster {
-    aspect-ratio: 2 / 3;
+    aspect-ratio: 2 / 1;
     background:
       radial-gradient(ellipse at 50% 35%, #1a1326 0%, #0c0810 65%, #050307 100%);
     position: relative; overflow: hidden;
@@ -3008,7 +3023,7 @@
     letter-spacing: -0.5px;
   }
   .vera-title-poster .vera-marca {
-    font-size: clamp(28px, 4.2vw, 44px);
+    font-size: clamp(16px, 2.2vw, 24px);
     font-weight: 700;
     background: linear-gradient(
       90deg,
@@ -3044,7 +3059,7 @@
     text-decoration: none;
   }
   .sepa-poster {
-    aspect-ratio: 2 / 3;
+    aspect-ratio: 2 / 1;
     background:
       radial-gradient(ellipse at 50% 35%, #0d1530 0%, #060916 65%, #03030a 100%);
     position: relative; overflow: hidden;
@@ -3058,7 +3073,7 @@
     pointer-events: none;
   }
   .sepa-marca {
-    font-size: clamp(28px, 4.2vw, 44px);
+    font-size: clamp(16px, 2.2vw, 24px);
     font-weight: 700;
     background: linear-gradient(90deg, #4a8ed8, #6ec1ff, #b3d9ff, #6ec1ff, #4a8ed8);
     -webkit-background-clip: text;
@@ -3080,7 +3095,7 @@
     text-decoration: none;
   }
   .juegos-poster {
-    aspect-ratio: 2 / 3;
+    aspect-ratio: 2 / 1;
     background:
       radial-gradient(ellipse at 50% 35%, #1a0f3d 0%, #0a0820 65%, #050310 100%);
     position: relative; overflow: hidden;
@@ -3094,7 +3109,7 @@
     pointer-events: none;
   }
   .juegos-marca {
-    font-size: clamp(28px, 4.2vw, 44px);
+    font-size: clamp(16px, 2.2vw, 24px);
     font-weight: 800;
     background: linear-gradient(90deg, #7d4fff, #9c7bff, #2b6cff, #9c7bff, #7d4fff);
     -webkit-background-clip: text;
@@ -3111,7 +3126,7 @@
   /* IPTV — rojo/naranjo señal en vivo. */
   .iptv-card { text-decoration: none; }
   .iptv-poster {
-    aspect-ratio: 2 / 3;
+    aspect-ratio: 2 / 1;
     background: radial-gradient(ellipse at 50% 35%, #2a0d08 0%, #160806 65%, #0a0303 100%);
     position: relative; overflow: hidden;
     display: flex; align-items: center; justify-content: center;
@@ -3123,7 +3138,7 @@
       radial-gradient(circle at 70% 80%, rgba(249, 115, 22, 0.14), transparent 55%);
   }
   .iptv-marca {
-    font-size: clamp(28px, 4.2vw, 44px);
+    font-size: clamp(16px, 2.2vw, 24px);
     font-weight: 800;
     background-image: linear-gradient(90deg, #ef4444, #f97316, #fbbf24, #f97316, #ef4444);
     -webkit-background-clip: text;
@@ -3149,7 +3164,7 @@
     text-align: left;
   }
   .cat-poster {
-    aspect-ratio: 2 / 3;
+    aspect-ratio: 2 / 1;
     position: relative; overflow: hidden;
     display: flex; align-items: center; justify-content: center;
   }
@@ -3158,7 +3173,7 @@
     pointer-events: none;
   }
   .cat-marca {
-    font-size: clamp(28px, 4.2vw, 44px);
+    font-size: clamp(16px, 2.2vw, 24px);
     font-weight: 800;
     -webkit-background-clip: text;
     background-clip: text;

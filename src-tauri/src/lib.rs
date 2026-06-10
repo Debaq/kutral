@@ -332,6 +332,10 @@ async fn tmdb_discover(
     with_original_language: Option<String>,
     // B5: keywords TMDb (ej. 158718 para LGBT+). Acepta coma=AND o pipe=OR.
     with_keywords: Option<String>,
+    // Solo movie: tipos de release TMDb (1 premiere, 2/3 cine, 4 digital,
+    // 5 físico, 6 TV). Pipe=OR. Con esto seteado, las fechas filtran sobre
+    // release_date (la fecha de ESOS tipos), no primary_release_date.
+    with_release_type: Option<String>,
 ) -> Result<TmdbListResp, String> {
     if api_key.is_empty() {
         return Err("falta api key".into());
@@ -372,11 +376,26 @@ async fn tmdb_discover(
     if let Some(v) = vote_average_gte {
         url.push_str(&format!("&vote_average.gte={}", v));
     }
+    let release_type = with_release_type
+        .filter(|s| !s.is_empty() && media_type == "movie");
+    // Campo de fecha según contexto: tv usa first_air_date; movie con
+    // with_release_type debe usar release_date (TMDb filtra sobre las fechas
+    // de esos tipos); movie a secas usa primary_release_date.
+    let date_field = if media_type == "tv" {
+        "first_air_date"
+    } else if release_type.is_some() {
+        "release_date"
+    } else {
+        "primary_release_date"
+    };
     if let Some(d) = primary_release_date_gte.filter(|s| !s.is_empty()) {
-        url.push_str(&format!("&primary_release_date.gte={}", d));
+        url.push_str(&format!("&{}.gte={}", date_field, d));
     }
     if let Some(d) = primary_release_date_lte.filter(|s| !s.is_empty()) {
-        url.push_str(&format!("&primary_release_date.lte={}", d));
+        url.push_str(&format!("&{}.lte={}", date_field, d));
+    }
+    if let Some(t) = release_type {
+        url.push_str(&format!("&with_release_type={}", t));
     }
     if let Some(l) = with_original_language.filter(|s| !s.is_empty()) {
         url.push_str(&format!("&with_original_language={}", l));
