@@ -320,30 +320,71 @@ fn activate_focus() {
     }
 }
 
-/// Etiqueta legible de una pista (lang + título).
-fn track_label(lang: &str, title: &str) -> String {
-    let l = lang.trim().to_uppercase();
-    let t = title.trim();
-    match (l.is_empty(), t.is_empty()) {
-        (false, false) => format!("{l} — {t}"),
-        (false, true) => l,
-        (true, false) => t.to_string(),
-        (true, true) => "Pista".to_string(),
+/// Construye los ítems del menú leyendo la track-list real con etiquetas ricas:
+/// numera cada pista y muestra idioma + título + códec + forzado/default, para
+/// distinguirlas aunque NO traigan código de idioma.
+fn build_track_items(want: &str) -> Vec<MenuItem> {
+    let mpv = match MPV.get() {
+        Some(m) => m,
+        None => return Vec::new(),
+    };
+    let count = mpv.get_property::<i64>("track-list/count").unwrap_or(0);
+    let mut items = Vec::new();
+    let mut n = 0;
+    for i in 0..count {
+        if get_string(&format!("track-list/{i}/type")) != want {
+            continue;
+        }
+        n += 1;
+        let id = get_i64(&format!("track-list/{i}/id"));
+        let lang = get_string(&format!("track-list/{i}/lang"));
+        let title = get_string(&format!("track-list/{i}/title"));
+        let codec = get_string(&format!("track-list/{i}/codec"));
+        let forced = get_bool(&format!("track-list/{i}/forced"));
+        let default = get_bool(&format!("track-list/{i}/default"));
+        let sel = get_bool(&format!("track-list/{i}/selected"));
+
+        let mark = if sel { "● " } else { "    " };
+        let lang_u = lang.trim().to_uppercase();
+        let mut head = if lang_u.is_empty() {
+            format!("Pista {n}")
+        } else {
+            lang_u
+        };
+        let t = title.trim();
+        if !t.is_empty() {
+            head.push_str(" — ");
+            head.push_str(t);
+        }
+        let mut extra: Vec<String> = Vec::new();
+        let c = codec.trim();
+        if !c.is_empty() {
+            extra.push(c.to_string());
+        }
+        if forced {
+            extra.push("forzado".into());
+        }
+        if default {
+            extra.push("default".into());
+        }
+        let label = if extra.is_empty() {
+            format!("{mark}{head}")
+        } else {
+            format!("{mark}{head}  ·  {}", extra.join(" · "))
+        };
+
+        let act = if want == "audio" {
+            MenuAct::Aid(id)
+        } else {
+            MenuAct::Sid(id)
+        };
+        items.push(MenuItem { label, act });
     }
+    items
 }
 
 fn open_audio_menu() {
-    let mut items = Vec::new();
-    for (id, kind, lang, title, sel) in tracks() {
-        if kind != "audio" {
-            continue;
-        }
-        let mark = if sel { "● " } else { "    " };
-        items.push(MenuItem {
-            label: format!("{mark}{}", track_label(&lang, &title)),
-            act: MenuAct::Aid(id),
-        });
-    }
+    let mut items = build_track_items("audio");
     if items.is_empty() {
         items.push(MenuItem { label: "(sin pistas de audio)".into(), act: MenuAct::SubOff });
     }
@@ -355,16 +396,7 @@ fn open_sub_menu() {
         label: "Desactivar subtítulos".into(),
         act: MenuAct::SubOff,
     }];
-    for (id, kind, lang, title, sel) in tracks() {
-        if kind != "sub" {
-            continue;
-        }
-        let mark = if sel { "● " } else { "    " };
-        items.push(MenuItem {
-            label: format!("{mark}{}", track_label(&lang, &title)),
-            act: MenuAct::Sid(id),
-        });
-    }
+    items.extend(build_track_items("sub"));
     items.push(MenuItem {
         label: "⬇  Descargar subtítulos…".into(),
         act: MenuAct::Download,

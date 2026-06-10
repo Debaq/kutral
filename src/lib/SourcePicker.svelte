@@ -36,6 +36,7 @@
     episode = null,
     title,
     backdrop = null,
+    kitsuId = null,
     rdLinked,
     autoplay = false,
     onClose,
@@ -47,6 +48,9 @@
     episode?: number | null;
     title: string;
     backdrop?: string | null;
+    // ID Kitsu (anime, mapeado vía ani.zip): habilita Torrentio kitsu:{id}:{ep}
+    // en kodios. Permite reproducir anime SIN imdb_id.
+    kitsuId?: number | null;
     rdLinked: boolean;
     autoplay?: boolean;
     onClose: () => void;
@@ -183,7 +187,9 @@
     loading = true;
     error = "";
     try {
-      if (kind !== "movie" && (season == null || episode == null)) {
+      // Anime sin temporada/episodio = película anime (formato MOVIE):
+      // kodios usa la forma movie (kitsu:{id} / título sin nº de episodio).
+      if (kind === "series" && (season == null || episode == null)) {
         error = "Falta temporada/episodio.";
         return;
       }
@@ -193,6 +199,7 @@
         title,
         season: season ?? undefined,
         episode: episode ?? undefined,
+        kitsuId: kitsuId ?? undefined,
       });
       if (rdLinked) {
         const hashes = srcs.map((s) => s.info_hash).filter(Boolean) as string[];

@@ -29,6 +29,7 @@
     stillBase,
     seasons,
     apiKey,
+    animeId = null,
     onPick,
     onWeb,
     onClose,
@@ -39,6 +40,9 @@
     stillBase: string; // prefijo para still_path (ej. https://image.tmdb.org/t/p/w300)
     seasons: Season[];
     apiKey: string;
+    // ID AniList: si viene, los episodios salen de ani.zip (no TMDb) y
+    // still_path llega como URL completa.
+    animeId?: number | null;
     onPick: (season: number, episode: number) => void;
     onWeb: () => void;
     onClose: () => void;
@@ -62,11 +66,13 @@
     epError = "";
     episodes = [];
     try {
-      const eps = await invoke<Episode[]>("tmdb_season", {
-        id: seriesId,
-        seasonNumber,
-        apiKey,
-      });
+      const eps = animeId
+        ? await invoke<Episode[]>("anizip_episodes", { anilistId: animeId })
+        : await invoke<Episode[]>("tmdb_season", {
+            id: seriesId,
+            seasonNumber,
+            apiKey,
+          });
       cache.set(seasonNumber, eps);
       episodes = eps;
     } catch (e) {
@@ -205,7 +211,7 @@
               onmouseenter={() => (epIdx = i)}
             >
               {#if ep.still_path}
-                <img class="ep-still" src={`${stillBase}${ep.still_path}`} alt="" loading="lazy" />
+                <img class="ep-still" src={ep.still_path.startsWith("http") ? ep.still_path : `${stillBase}${ep.still_path}`} alt="" loading="lazy" />
               {:else}
                 <div class="ep-still ep-still-empty">{ep.episode_number}</div>
               {/if}

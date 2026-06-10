@@ -12,6 +12,7 @@
   import SourcePicker from "$lib/SourcePicker.svelte";
   import PlayMenu from "$lib/PlayMenu.svelte";
   import EpisodePicker from "$lib/EpisodePicker.svelte";
+  import { ANIME_GENRES, ANILIST_SORTS, anilistGenresCSV } from "$lib/anime";
   import RemoteQr from "$lib/RemoteQr.svelte";
   import {
     cargarNoDisponiblesIniciales,
@@ -145,6 +146,13 @@
     images?: string[];
     number_of_seasons?: number | null;
     seasons?: SeasonMini[];
+    // --- extras anime (solo cuando la fuente es AniList) ---
+    is_anime?: boolean;
+    mal_id?: number | null;
+    kitsu_id?: number | null;
+    anidb_id?: number | null;
+    trailer_youtube?: string | null;
+    format?: string | null;
   };
   type SeasonMini = {
     season_number: number;
@@ -202,6 +210,12 @@
     if (cached) return cached;
     ensureCached(url, maxW);
     return url;
+  }
+  // Como img() pero acepta fragmento TMDb ("/abc.jpg") O URL completa:
+  // AniList/ani.zip mandan https://… directo, sin base TMDb.
+  function art(path: string | null | undefined, size: string, maxW: number): string {
+    if (!path) return "";
+    return path.startsWith("http") ? img(path, maxW) : img(`${IMG}/${size}${path}`, maxW);
   }
   const REF = "hm_tpks_i_2_pd_tp1_pbr_ic";
 
@@ -908,14 +922,18 @@
   }
 
   async function loadGenres() {
+    // Anime: géneros fijos de AniList (strings estables, etiqueta en español).
+    if (tab === "anime") {
+      genres = ANIME_GENRES.map((g) => ({ id: g.id, name: g.name }));
+      return;
+    }
     if (!apiKey) return;
     try {
       const list = await invoke<{ id: number; name: string }[]>("tmdb_genres", {
         mediaType: tabToMediaType(tab),
         apiKey,
       });
-      // En anime, sacar "Animación" del listado (ya está forzado)
-      genres = tab === "anime" ? list.filter((g) => g.id !== 16) : list;
+      genres = list;
     } catch (e) {
       console.warn("genres falló", e);
       genres = [];
@@ -940,14 +958,21 @@
   const RELEASE_TYPES_DISPONIBLES = "2|3|4|5|6";
 
   async function loadList(append: boolean) {
-    if (!apiKey) return;
+    if (!apiKey && tab !== "anime") return;
     if (append) loadingMore = true; else listLoading = true;
     listError = "";
     try {
       const isSearch = !!debouncedQ;
       const mt = tabToMediaType(tab);
       const ext = tabExtras(tab);
-      const resp: ListResp = isSearch
+      const resp: ListResp = tab === "anime"
+        ? await invoke("anilist_discover", {
+            page,
+            sort: ANILIST_SORTS[sortId] ?? "POPULARITY_DESC",
+            genres: anilistGenresCSV(selectedGenres) || undefined,
+            search: debouncedQ || undefined,
+          })
+        : isSearch
         ? await invoke("tmdb_search", { mediaType: mt, query: debouncedQ, page, apiKey })
         : await invoke("tmdb_discover", {
             mediaType: mt,
@@ -1001,6 +1026,16 @@
   }
 
   async function checkItemStatus(id: number) {
+    // Anime (AniList): no hay item_status TMDb ni screening por imdb — la
+    // disponibilidad la da la ruta debrid vía kitsu. Todo se marca ok.
+    if (tab === "anime") {
+      if (!statusMap.has(id)) {
+        const m = new Map(statusMap);
+        m.set(id, "ok");
+        statusMap = m;
+      }
+      return;
+    }
     if (statusMap.has(id) || statusInflight.has(id)) return;
     statusInflight.add(id);
     const next = new Map(statusMap);
@@ -1083,6 +1118,8 @@
   }
 
   async function openPerson(id: number) {
+    // Cast anime (AniList): sin ficha TMDb de persona (id 0).
+    if (!id) return;
     if (!apiKey) return;
     personLoading = true;
     personOpen = null;
@@ -1172,12 +1209,14 @@
   let pickPromise: { id: number; promise: Promise<Detail> } | null = null;
 
   async function pick(it: ListItem): Promise<Detail | null> {
-    if (!apiKey) return null;
+    if (!apiKey && tab !== "anime") return null;
     if (pickPromise && pickPromise.id === it.id) return pickPromise.promise;
     detailLoading = true;
     const p = (async () => {
       try {
-        const d = await invoke<Detail>("tmdb_detail", { mediaType: tabToMediaType(tab), id: it.id, apiKey });
+        const d = tab === "anime"
+          ? await invoke<Detail>("anilist_detail", { id: it.id })
+          : await invoke<Detail>("tmdb_detail", { mediaType: tabToMediaType(tab), id: it.id, apiKey });
         selected = d;
         // Nuevo título → resetear vista de capítulos y episodio elegido.
         seriesSeason = null;
@@ -1201,7 +1240,7 @@
   async function pickAndDiscover(it: ListItem) {
     try {
       const d = await pick(it);
-      if (d?.imdb_id) goDescubrir();
+      if (d?.imdb_id || d?.kitsu_id) goDescubrir();
     } catch { /* error ya seteado en pick */ }
   }
 
@@ -1227,7 +1266,7 @@
       }, 60);
       return;
     }
-    if (d.imdb_id) goDescubrir();
+    if (d.imdb_id || d.kitsu_id) goDescubrir();
   }
 
   // URL de subtítulo precargada por startDiscover antes de cambiar a mode=discover.
@@ -1379,11 +1418,13 @@
     episodesLoading = true;
     seriesEpisodes = [];
     try {
-      const eps = await invoke<EpisodeMini[]>("tmdb_season", {
-        id: selected.id,
-        seasonNumber,
-        apiKey,
-      });
+      const eps = selected.is_anime
+        ? await invoke<EpisodeMini[]>("anizip_episodes", { anilistId: selected.id })
+        : await invoke<EpisodeMini[]>("tmdb_season", {
+            id: selected.id,
+            seasonNumber,
+            apiKey,
+          });
       seasonEpCache.set(key, eps);
       seriesEpisodes = eps;
     } catch (e) {
@@ -1399,6 +1440,8 @@
     seriesSeason = null;
     seriesEpisodes = [];
     episodesError = "";
+    sourcesSeason = null;
+    sourcesEpisode = null;
     setTimeout(() => {
       document
         .querySelector<HTMLElement>('[data-section="info"] .season-item')
@@ -1434,7 +1477,8 @@
 
   // "Descubrir" abre el menú contextual de reproducción.
   function goDescubrir() {
-    if (!selected?.imdb_id) {
+    // Anime puede no tener imdb pero sí kitsu (ruta debrid vía Torrentio).
+    if (!selected?.imdb_id && !selected?.kitsu_id) {
       void startDiscover();
       return;
     }
@@ -1449,6 +1493,14 @@
   // Bajamos OMDb (premios/ratings/plot largo) + trailer en paralelo cuando se
   // abre el PlayMenu. No bloquea: la UI ya mostró todo lo que tiene de TMDb.
   async function prefetchMenuExtras() {
+    // Anime: el trailer ya viene de AniList (YouTube). OMDb/Apple/TMDb no
+    // aplican — el id es de AniList, no de TMDb.
+    if (selected?.is_anime) {
+      menuOmdb = null;
+      menuApple = "";
+      menuTrailerKey = selected.trailer_youtube || "";
+      return;
+    }
     if (!selected?.imdb_id) {
       menuOmdb = null;
       menuTrailerKey = "";
@@ -1634,6 +1686,21 @@
     trailerMsg = "";
     appleTrailerUrl = "";
     trailerKey = "";
+
+    // Anime: trailer de AniList (YouTube key) — Apple/TMDb no aplican.
+    if (selected.is_anime) {
+      if (selected.trailer_youtube) {
+        trailerKey = selected.trailer_youtube;
+        mode = "trailer";
+        setFs(true);
+        registerBackShortcuts(true);
+        setTimeout(() => document.querySelector<HTMLElement>(".trailer-bar .bar-btn")?.focus(), 50);
+      } else {
+        trailerMsg = `Sin trailer disponible para "${selected.title}".`;
+        setTimeout(() => (trailerMsg = ""), 4000);
+      }
+      return;
+    }
 
     // 1) Apple primero (mp4 directo, sin embed YouTube → no error 153).
     try {
@@ -1890,7 +1957,7 @@
   <div class="unavail-screen">
     <div class="unavail-card">
       {#if selected.poster_path}
-        <img class="unavail-poster" src={`${IMG}/w342${selected.poster_path}`} alt="" />
+        <img class="unavail-poster" src={art(selected.poster_path, "w342", 342)} alt="" />
       {/if}
       <h2>Lo sentimos muchísimo</h2>
       <p>
@@ -1913,13 +1980,13 @@
       </div>
     </div>
   </div>
-{:else if mode === "playmenu" && selected?.imdb_id}
+{:else if mode === "playmenu" && (selected?.imdb_id || selected?.kitsu_id)}
   <PlayMenu
     detail={selected}
     omdb={menuOmdb}
     progressLabel={progressLabelFor()}
-    posterUrl={selected.poster_path ? img(`${IMG}/w342${selected.poster_path}`, 342) : null}
-    backdropUrl={selected.backdrop_path ? img(`${IMG}/w1280${selected.backdrop_path}`, 1280) : null}
+    posterUrl={selected.poster_path ? art(selected.poster_path, "w342", 342) : null}
+    backdropUrl={selected.backdrop_path ? art(selected.backdrop_path, "w1280", 1280) : null}
     trailerKey={menuTrailerKey}
     appleTrailerUrl={menuApple}
     hasRd={config.rdLinked}
@@ -1930,26 +1997,28 @@
     onTrailer={menuTrailer}
     onClose={closeSources}
   />
-{:else if mode === "episodes" && selected?.imdb_id}
+{:else if mode === "episodes" && (selected?.imdb_id || selected?.kitsu_id)}
   <EpisodePicker
     seriesId={selected.id}
     title={selected.title}
-    backdrop={selected.backdrop_path ? img(`${IMG}/w1280${selected.backdrop_path}`, 1280) : null}
+    backdrop={selected.backdrop_path ? art(selected.backdrop_path, "w1280", 1280) : null}
     stillBase={`${IMG}/w300`}
     seasons={selected.seasons ?? []}
     apiKey={apiKey}
+    animeId={selected.is_anime ? selected.id : null}
     onPick={onPickEpisode}
     onWeb={menuWeb}
     onClose={closeSources}
   />
-{:else if mode === "sources" && selected?.imdb_id}
+{:else if mode === "sources" && (selected?.imdb_id || selected?.kitsu_id)}
   <SourcePicker
-    imdbId={selected.imdb_id}
+    imdbId={selected.imdb_id ?? ""}
     kind={currentKind()}
     season={sourcesSeason}
     episode={sourcesEpisode}
     title={selected.title}
-    backdrop={selected.backdrop_path ? img(`${IMG}/w1280${selected.backdrop_path}`, 1280) : null}
+    backdrop={selected.backdrop_path ? art(selected.backdrop_path, "w1280", 1280) : null}
+    kitsuId={selected.kitsu_id ?? null}
     rdLinked={config.rdLinked}
     autoplay={sourcesAutoplay}
     onClose={closeSources}
@@ -2058,11 +2127,11 @@
       {:else if selected}
         <div class="detail">
           {#if selected.backdrop_path}
-            <div class="backdrop" style:background-image="url({img(`${IMG}/w780${selected.backdrop_path}`, 780)})"></div>
+            <div class="backdrop" style:background-image="url({art(selected.backdrop_path, "w780", 780)})"></div>
           {/if}
           {#if selected.poster_path}
             <div class="poster-wrap">
-              <img class="poster" src={img(`${IMG}/w342${selected.poster_path}`, 342)} alt="" />
+              <img class="poster" src={art(selected.poster_path, "w342", 342)} alt="" />
               {#if !selected.imdb_id}
                 <span class="poster-stamp">NO DISPONIBLE</span>
               {/if}
@@ -2076,32 +2145,40 @@
           </div>
           <p class="overview">{selected.overview || "(sin sinopsis)"}</p>
           {#if selected.imdb_id && !unavailableSet.has(selected.imdb_id)}
-            {@const prog = progressForSelected}
-            {@const pct = prog && prog.runtime_seconds && prog.runtime_seconds > 0
-              ? Math.min(100, Math.round((prog.progress_real ?? prog.watched_seconds / prog.runtime_seconds) * 100))
-              : null}
-            {@const watchedMin = prog ? Math.floor(prog.watched_seconds / 60) : 0}
-            {@const watchedSec = prog ? prog.watched_seconds % 60 : 0}
-            {#if prog && prog.completed}
-              <div class="watched-note">✓ Ya la viste</div>
-            {:else if prog && prog.watched_seconds > 5 && pct != null}
-              <div class="progress-bar"><div class="progress-fill" style:width="{pct}%"></div></div>
-            {/if}
-            <div class="action-row">
+            {#if selected.media_type === "tv"}
+              <!-- Series: la reproducción es por capítulo (lista de Temporadas
+                   abajo). No hay "Descubrir" de título; solo Trailer. -->
+              <div class="action-row">
+                <button data-nav class="trailer-btn trailer-btn-row" onclick={watchTrailer}>🎬 Trailer</button>
+              </div>
+            {:else}
+              {@const prog = progressForSelected}
+              {@const pct = prog && prog.runtime_seconds && prog.runtime_seconds > 0
+                ? Math.min(100, Math.round((prog.progress_real ?? prog.watched_seconds / prog.runtime_seconds) * 100))
+                : null}
+              {@const watchedMin = prog ? Math.floor(prog.watched_seconds / 60) : 0}
+              {@const watchedSec = prog ? prog.watched_seconds % 60 : 0}
               {#if prog && prog.completed}
-                <button data-nav class="discover-btn discover-btn-row" onclick={goDescubrir}>▶ Descubrir de nuevo</button>
-              {:else if prog && prog.watched_seconds > 5}
-                <button data-nav class="discover-btn discover-btn-row" onclick={goDescubrir} title="Opciones de reproducción">
-                  ↻ Desde el inicio
-                </button>
-                <button data-nav class="discover-btn discover-btn-row" onclick={goDescubrir}>
-                  ▶ Continuar {pct != null ? `(${pct}%)` : `(${watchedMin}m ${watchedSec}s)`}
-                </button>
-              {:else}
-                <button data-nav class="discover-btn discover-btn-row" onclick={goDescubrir}>▶ Descubrir</button>
+                <div class="watched-note">✓ Ya la viste</div>
+              {:else if prog && prog.watched_seconds > 5 && pct != null}
+                <div class="progress-bar"><div class="progress-fill" style:width="{pct}%"></div></div>
               {/if}
-              <button data-nav class="trailer-btn trailer-btn-row" onclick={watchTrailer}>🎬 Trailer</button>
-            </div>
+              <div class="action-row">
+                {#if prog && prog.completed}
+                  <button data-nav class="discover-btn discover-btn-row" onclick={goDescubrir}>▶ Descubrir de nuevo</button>
+                {:else if prog && prog.watched_seconds > 5}
+                  <button data-nav class="discover-btn discover-btn-row" onclick={goDescubrir} title="Opciones de reproducción">
+                    ↻ Desde el inicio
+                  </button>
+                  <button data-nav class="discover-btn discover-btn-row" onclick={goDescubrir}>
+                    ▶ Continuar {pct != null ? `(${pct}%)` : `(${watchedMin}m ${watchedSec}s)`}
+                  </button>
+                {:else}
+                  <button data-nav class="discover-btn discover-btn-row" onclick={goDescubrir}>▶ Descubrir</button>
+                {/if}
+                <button data-nav class="trailer-btn trailer-btn-row" onclick={watchTrailer}>🎬 Trailer</button>
+              </div>
+            {/if}
           {:else}
             <div class="unavail-note">
               Este título no está disponible para reproducir.
@@ -2147,7 +2224,7 @@
                 {#each selected.directors as p}
                   <button data-nav class="person-chip" onclick={() => openPerson(p.id)} title={p.name}>
                     {#if p.profile_path}
-                      <img src={img(`${IMG}/w185${p.profile_path}`, 185)} alt={p.name} loading="lazy" />
+                      <img src={art(p.profile_path, "w185", 185)} alt={p.name} loading="lazy" />
                     {:else}
                       <div class="person-noimg">{p.name.charAt(0)}</div>
                     {/if}
@@ -2164,7 +2241,7 @@
                 {#each selected.cast as p}
                   <button data-nav class="person-chip" onclick={() => openPerson(p.id)} title={p.name}>
                     {#if p.profile_path}
-                      <img src={img(`${IMG}/w185${p.profile_path}`, 185)} alt={p.name} loading="lazy" />
+                      <img src={art(p.profile_path, "w185", 185)} alt={p.name} loading="lazy" />
                     {:else}
                       <div class="person-noimg">{p.name.charAt(0)}</div>
                     {/if}
@@ -2229,7 +2306,7 @@
                   title={ep.name}
                 >
                   {#if ep.still_path}
-                    <img src={img(`${IMG}/w300${ep.still_path}`, 300)} alt={ep.name} loading="lazy" />
+                    <img src={art(ep.still_path, "w300", 300)} alt={ep.name} loading="lazy" />
                   {:else}
                     <div class="no-poster ep-noimg">E{ep.episode_number}</div>
                   {/if}
@@ -2451,7 +2528,7 @@
                   onfocus={() => { focusedIdx = i; triggerAutoPick(i); }}
                 >
                   {#if it.poster_path}
-                    <img src={img(`${IMG}/w342${it.poster_path}`, 342)} alt={title} loading="lazy" />
+                    <img src={art(it.poster_path, "w342", 342)} alt={title} loading="lazy" />
                   {:else}
                     <div class="no-poster">sin poster</div>
                   {/if}

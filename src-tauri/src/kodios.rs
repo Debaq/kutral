@@ -5,9 +5,11 @@
 //
 // Fuentes:
 //   - Torrentio    (Stremio addon, IMDb)  → movie/series/anime
+//   - Torrentio    (Stremio addon, Kitsu) → anime (kitsu:{id}:{ep}, preciso)
 //   - MediaFusion  (Stremio addon, IMDb)  → movie/series/anime  [best-effort]
 //   - YTS          (API, IMDb)            → movie
 //   - EZTV         (API, IMDb)            → series
+//   - AnimeTosho   (JSON feed, título)    → anime
 //   - Nyaa         (RSS, por título)      → anime
 //
 // POLÍTICA: solo magnets CRUDOS. La resolución magnet→URL directa la hace
@@ -71,7 +73,9 @@ fn http() -> Result<reqwest::Client, String> {
 // ========================================================================
 
 /// Busca fuentes para reproducir, agregando todas las fuentes relevantes.
-/// `kind`: "movie" | "series" | "anime". `title` se usa para Nyaa (anime).
+/// `kind`: "movie" | "series" | "anime". `title` se usa para Nyaa/AnimeTosho.
+/// `kitsu_id` (anime, vía ani.zip): habilita Torrentio por ID Kitsu, que es
+/// exacto por episodio — los anime suelen no tener IMDb o numerar distinto.
 #[tauri::command]
 pub async fn kodios_search(
     imdb_id: String,
@@ -79,11 +83,13 @@ pub async fn kodios_search(
     season: Option<u32>,
     episode: Option<u32>,
     title: Option<String>,
+    kitsu_id: Option<u64>,
 ) -> Result<Vec<Source>, String> {
-    if imdb_id.is_empty() || !imdb_id.starts_with("tt") {
+    let imdb_ok = imdb_id.starts_with("tt");
+    if !imdb_ok && !(kind == "anime" && (kitsu_id.is_some() || title.is_some())) {
         return Err("imdb_id inválido (esperado ttXXXXXXX)".into());
     }
-    Ok(aggregate(imdb_id, kind, season, episode, title.unwrap_or_default()).await)
+    Ok(aggregate(imdb_id, kind, season, episode, title.unwrap_or_default(), kitsu_id).await)
 }
 
 async fn aggregate(
@@ -92,20 +98,20 @@ async fn aggregate(
     season: Option<u32>,
     episode: Option<u32>,
     title: String,
+    kitsu_id: Option<u64>,
 ) -> Vec<Source> {
-    eprintln!("[kodios] search imdb={imdb} kind={kind} s={season:?} e={episode:?}");
+    eprintln!("[kodios] search imdb={imdb} kind={kind} s={season:?} e={episode:?} kitsu={kitsu_id:?}");
     let mut tasks: Vec<tokio::task::JoinHandle<Result<Vec<Source>, String>>> = Vec::new();
+    let imdb_ok = imdb.starts_with("tt");
 
     // Torrentio SIN token (método Kodi/kodios): magnets crudos con info_hash
     // → instantAvailability marca cacheadas → resolvemos FRESCO con addMagnet+
     // unrestrict al reproducir (URLs no expiran como las pre-resueltas).
-    {
+    if imdb_ok {
         let (i, k) = (imdb.clone(), kind.clone());
         tasks.push(tokio::spawn(async move {
             torrentio_search(&i, &k, season, episode, None).await
         }));
-    }
-    {
         let (i, k) = (imdb.clone(), kind.clone());
         tasks.push(tokio::spawn(async move { mediafusion_search(&i, &k, season, episode).await }));
     }
@@ -120,8 +126,19 @@ async fn aggregate(
             tasks.push(tokio::spawn(async move { eztv_search(&i, season, episode).await }));
         }
         "anime" => {
-            let t = title.clone();
-            tasks.push(tokio::spawn(async move { nyaa_search(&t, episode).await }));
+            // Torrentio por Kitsu (patrón Otaku): episodio exacto, sin
+            // depender de cómo nombró el release el fansub.
+            if let Some(kid) = kitsu_id {
+                tasks.push(tokio::spawn(async move {
+                    torrentio_kitsu_search(kid, episode).await
+                }));
+            }
+            if !title.trim().is_empty() {
+                let t = title.clone();
+                tasks.push(tokio::spawn(async move { animetosho_search(&t, episode).await }));
+                let t = title.clone();
+                tasks.push(tokio::spawn(async move { nyaa_search(&t, episode).await }));
+            }
         }
         _ => {}
     }
@@ -322,6 +339,44 @@ pub async fn torrentio_search(
     .await
 }
 
+/// Torrentio por ID Kitsu (anime). Con episodio → forma serie
+/// `kitsu:{id}:{ep}`; sin episodio (película) → `kitsu:{id}` tipo movie.
+async fn torrentio_kitsu_search(kitsu_id: u64, episode: Option<u32>) -> Result<Vec<Source>, String> {
+    let (typ, id) = match episode {
+        Some(e) => ("series", format!("kitsu:{kitsu_id}:{e}")),
+        None => ("movie", format!("kitsu:{kitsu_id}")),
+    };
+    let url = format!(
+        "https://torrentio.strem.fun/qualityfilter=cam,scr,480p|sort=quality/stream/{typ}/{id}.json"
+    );
+    let resp = http()?.get(&url).send().await.map_err(|e| format!("torrentio-kitsu red: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("torrentio-kitsu {}", resp.status()));
+    }
+    let r: StremioResp = resp.json().await.map_err(|e| format!("torrentio-kitsu parse: {e}"))?;
+    let mut out = Vec::with_capacity(r.streams.len().min(PER_SOURCE_CAP));
+    for s in r.streams.into_iter().take(PER_SOURCE_CAP) {
+        let title = s.title.clone().or_else(|| s.name.clone()).unwrap_or_default();
+        let (seeders, size_bytes) = parse_meta(&title);
+        let magnet = s
+            .info_hash
+            .as_ref()
+            .map(|h| build_magnet(h, &title, s.sources.as_deref()));
+        out.push(Source {
+            source: "torrentio-kitsu".into(),
+            quality: detect_quality(&title),
+            title,
+            magnet,
+            url: s.url,
+            info_hash: s.info_hash,
+            size_bytes,
+            seeders,
+            rd_cached: None,
+        });
+    }
+    Ok(out)
+}
+
 /// MediaFusion: instancia pública. Best-effort (puede requerir config → 401).
 async fn mediafusion_search(
     imdb: &str,
@@ -467,6 +522,66 @@ async fn eztv_search(
             seeders: Some(t.seeds),
             rd_cached: None,
             title: t.title,
+        });
+    }
+    Ok(out)
+}
+
+// ========================================================================
+// AnimeTosho (anime, por título — JSON feed)
+// ========================================================================
+
+#[derive(serde::Deserialize)]
+struct ToshoItem {
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    torrent_name: Option<String>,
+    #[serde(default)]
+    info_hash: Option<String>,
+    #[serde(default)]
+    magnet_uri: Option<String>,
+    #[serde(default)]
+    seeders: Option<u32>,
+    #[serde(default)]
+    total_size: Option<u64>,
+}
+
+async fn animetosho_search(title: &str, episode: Option<u32>) -> Result<Vec<Source>, String> {
+    let mut q = title.trim().to_string();
+    if let Some(e) = episode {
+        q.push_str(&format!(" {e:02}"));
+    }
+    let url = format!(
+        "https://feed.animetosho.org/json?qx=1&q={}",
+        urlencoding::encode(&q)
+    );
+    let resp = http()?.get(&url).send().await.map_err(|e| format!("tosho red: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("tosho {}", resp.status()));
+    }
+    let items: Vec<ToshoItem> = resp.json().await.map_err(|e| format!("tosho parse: {e}"))?;
+    let mut out = Vec::new();
+    for it in items.into_iter().take(PER_SOURCE_CAP) {
+        let name = it.title.or(it.torrent_name).unwrap_or_default();
+        let hash = match it.info_hash {
+            Some(h) if !h.is_empty() => h,
+            _ => continue,
+        };
+        let magnet = it
+            .magnet_uri
+            .filter(|m| m.starts_with("magnet:"))
+            .unwrap_or_else(|| build_magnet(&hash, &name, None));
+        out.push(Source {
+            source: "animetosho".into(),
+            quality: detect_quality(&name),
+            magnet: Some(magnet),
+            url: None,
+            info_hash: Some(hash),
+            size_bytes: it.total_size.filter(|n| *n > 0),
+            seeders: it.seeders,
+            rd_cached: None,
+            title: name,
         });
     }
     Ok(out)

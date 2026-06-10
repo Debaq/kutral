@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+mod anilist;
 mod awards;
 mod creds;
 mod emu;
@@ -2532,6 +2533,9 @@ pub fn run() {
             webserver::web_server_status,
             ui_log,
             kodios::kodios_search,
+            anilist::anilist_discover,
+            anilist::anilist_detail,
+            anilist::anizip_episodes,
             rd::rd_resolve,
             rd::rd_instant_available,
             rd::rd_refresh,
