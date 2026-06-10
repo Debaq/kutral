@@ -6,6 +6,7 @@ mod creds;
 mod emu;
 mod kodios;
 mod opensubtitles;
+mod probe;
 mod rd;
 mod player;
 #[cfg(target_os = "linux")]
@@ -2536,6 +2537,7 @@ pub fn run() {
             anilist::anilist_discover,
             anilist::anilist_detail,
             anilist::anizip_episodes,
+            probe::ffprobe_tracks,
             rd::rd_resolve,
             rd::rd_instant_available,
             rd::rd_refresh,

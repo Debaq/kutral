@@ -116,9 +116,13 @@
   let subSize = $state(config.subSize);
   let subMode = $state<SubMode>(config.subMode);
   let sourceSelect = $state<SourceSelect>(config.sourceSelect);
+  let verifyEsTracks = $state(config.verifyEsTracks);
   let preferredSourceMovie = $state(config.preferredSourceMovie);
   let preferredSourceSeries = $state(config.preferredSourceSeries);
   let preferredSourceAnime = $state(config.preferredSourceAnime);
+  let blockedSourceMovie = $state(config.blockedSourceMovie);
+  let blockedSourceSeries = $state(config.blockedSourceSeries);
+  let blockedSourceAnime = $state(config.blockedSourceAnime);
   // OpenSubtitles: login de cuenta gratis (sube cuota a 20/día).
   let osUserInput = $state("");
   let osPassInput = $state("");
@@ -213,9 +217,13 @@
     subSize = config.subSize;
     subMode = config.subMode;
     sourceSelect = config.sourceSelect;
+    verifyEsTracks = config.verifyEsTracks;
     preferredSourceMovie = config.preferredSourceMovie;
     preferredSourceSeries = config.preferredSourceSeries;
     preferredSourceAnime = config.preferredSourceAnime;
+    blockedSourceMovie = config.blockedSourceMovie;
+    blockedSourceSeries = config.blockedSourceSeries;
+    blockedSourceAnime = config.blockedSourceAnime;
     void refreshOsStatus();
     webAuto = config.webAutoStart;
     webPortInput = config.webPort;
@@ -244,9 +252,13 @@
     subSize !== config.subSize ||
     subMode !== config.subMode ||
     sourceSelect !== config.sourceSelect ||
+    verifyEsTracks !== config.verifyEsTracks ||
     preferredSourceMovie !== config.preferredSourceMovie ||
     preferredSourceSeries !== config.preferredSourceSeries ||
     preferredSourceAnime !== config.preferredSourceAnime ||
+    blockedSourceMovie !== config.blockedSourceMovie ||
+    blockedSourceSeries !== config.blockedSourceSeries ||
+    blockedSourceAnime !== config.blockedSourceAnime ||
     webAuto !== config.webAutoStart ||
     webPortInput !== config.webPort ||
     gameRegions.join(",") !== config.gameRegions.join(",") ||
@@ -265,9 +277,13 @@
     config.subSize = Math.min(200, Math.max(50, Math.round(subSize)));
     config.subMode = subMode;
     config.sourceSelect = sourceSelect;
+    config.verifyEsTracks = verifyEsTracks;
     config.preferredSourceMovie = preferredSourceMovie.trim();
     config.preferredSourceSeries = preferredSourceSeries.trim();
     config.preferredSourceAnime = preferredSourceAnime.trim();
+    config.blockedSourceMovie = blockedSourceMovie.trim();
+    config.blockedSourceSeries = blockedSourceSeries.trim();
+    config.blockedSourceAnime = blockedSourceAnime.trim();
     config.webAutoStart = webAuto;
     config.webPort = Math.min(65535, Math.max(1024, Math.round(webPortInput) || 8080));
     webPortInput = config.webPort;
@@ -855,6 +871,15 @@
               </div>
             </label>
           </div>
+          <label class="toggle-row">
+            <input type="checkbox" bind:checked={verifyEsTracks} />
+            <span>Verificar español real antes de reproducir</span>
+          </label>
+          <p class="hint">
+            Inspecciona las pistas del archivo (sin descargarlo) y confirma si
+            trae audio o subtítulos en español. Si no trae, prueba la siguiente
+            fuente. Agrega unos segundos por fuente inspeccionada.
+          </p>
         </section>
 
         <section class="block">
@@ -910,6 +935,43 @@
               type="text"
               bind:value={preferredSourceAnime}
               placeholder="ej. Erai-raws, SubsPlease"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </label>
+
+          <h3 class="subhead">Lista negra (opcional)</h3>
+          <p class="hint">
+            Texto que NO quieres. Si el nombre del torrent o el proveedor lo contiene,
+            esa fuente se hunde al fondo del orden (nunca se auto-reproduce salvo que
+            no haya otra). Varias separadas por coma. Se configura por tipo.
+          </p>
+          <label class="field">
+            <span class="field-label">Películas</span>
+            <input
+              type="text"
+              bind:value={blockedSourceMovie}
+              placeholder="ej. CAM, HDTS, TELESYNC"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </label>
+          <label class="field">
+            <span class="field-label">Series</span>
+            <input
+              type="text"
+              bind:value={blockedSourceSeries}
+              placeholder="ej. HDTV, x265"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </label>
+          <label class="field">
+            <span class="field-label">Anime</span>
+            <input
+              type="text"
+              bind:value={blockedSourceAnime}
+              placeholder="ej. HEVC, 480p"
               autocomplete="off"
               spellcheck="false"
             />
@@ -1238,6 +1300,14 @@
     font-size: 14px;
     font-weight: 600;
     color: #f3a951;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .subhead {
+    margin: 16px 0 4px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #c98a8a;
     text-transform: uppercase;
     letter-spacing: 0.06em;
   }

@@ -174,16 +174,32 @@ enum BarAction {
 impl BarAction {
     fn label(self) -> &'static str {
         match self {
-            BarAction::SeekBack => "« 10s",
+            BarAction::SeekBack => "Retroceder 10s",
             BarAction::Resume => "Reanudar",
-            BarAction::SeekFwd => "10s »",
+            BarAction::SeekFwd => "Avanzar 10s",
             BarAction::Subs => "Subtítulos",
             BarAction::Audio => "Audio",
             BarAction::Video => "Video",
             BarAction::Exit => "Salir",
         }
     }
+
+    /// Nombre de ligadura Material Icons Round (la fuente lo convierte a icono).
+    fn icon(self) -> &'static str {
+        match self {
+            BarAction::SeekBack => "replay_10",
+            BarAction::Resume => "play_arrow",
+            BarAction::SeekFwd => "forward_10",
+            BarAction::Subs => "subtitles",
+            BarAction::Audio => "graphic_eq",
+            BarAction::Video => "movie",
+            BarAction::Exit => "close",
+        }
+    }
 }
+
+/// Nombre de la fuente de iconos (Material Icons Round, en vendor/fonts).
+const ICON_FONT: &str = "Material Icons Round";
 
 struct PlayerUi {
     paused: bool,
@@ -262,30 +278,40 @@ const BAR_FG_ID: &str = "47";
 /// Fondo: pill inferior oscuro semi-transparente (ASS drawing con esquinas).
 fn build_bar_bg() -> String {
     // \1a = transparencia (00 opaco … FF transp). Dark #0A0F12 → &H120F0A&.
-    "{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H120F0A&\\1a&H35&\\p1}\
-     m 150 560 b 150 542 164 528 182 528 l 1098 528 b 1116 528 1130 542 1130 560 \
-     l 1130 612 b 1130 630 1116 644 1098 644 l 182 644 b 164 644 150 630 150 612{\\p0}"
+    "{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H120F0A&\\1a&H30&\\p1}\
+     m 170 540 b 170 520 184 506 204 506 l 1076 506 b 1096 506 1110 520 1110 540 \
+     l 1110 632 b 1110 652 1096 666 1076 666 l 204 666 b 184 666 170 652 170 632{\\p0}"
         .to_string()
 }
 
-/// Textos del bar: acción enfocada en naranja+negrita, resto cream. Separadores
-/// tenues. Sombra para legibilidad sobre el video.
+/// Bar con ICONOS (fuente Material Icons Round, igual que uosc): fila de iconos
+/// con el enfocado en naranja+grande, y debajo la etiqueta del enfocado.
 fn build_bar_ass(focus: usize) -> String {
     // Colores ASS = &HBBGGRR&. Naranja f97316 → &H1673F9&. Cream → &HE8E0D0&.
     let bar = PLAYER_UI.with(|u| u.borrow().bar.clone());
-    let mut s = String::from("{\\an5\\pos(640,586)\\fs30\\bord0\\shad1.2\\4c&H000000&}");
+    let mut row = String::new();
     for (i, act) in bar.iter().enumerate() {
         if i > 0 {
-            s.push_str("{\\1c&H6B6256&\\b0}   ·   ");
+            // Espaciador en fuente normal (no liga con el icono siguiente).
+            row.push_str("{\\rDefault\\fs50}    ");
         }
-        let label = act.label();
         if i == focus {
-            s.push_str(&format!("{{\\1c&H1673F9&\\b1}}{label}"));
+            row.push_str(&format!(
+                "{{\\fn{ICON_FONT}\\fs58\\1c&H1673F9&\\bord0\\shad1.5\\4c&H000000&}}{}",
+                act.icon()
+            ));
         } else {
-            s.push_str(&format!("{{\\1c&HE8E0D0&\\b0}}{label}"));
+            row.push_str(&format!(
+                "{{\\fn{ICON_FONT}\\fs42\\1c&HB9B3A6&\\bord0\\shad1.5\\4c&H000000&}}{}",
+                act.icon()
+            ));
         }
     }
-    s
+    let label = bar.get(focus).map(|a| a.label()).unwrap_or("");
+    format!(
+        "{{\\an5\\pos(640,572)\\bord0\\shad1.5\\4c&H000000&}}{row}\
+         \\N{{\\rDefault\\fs26\\1c&HE8E0D0&\\b1}}{label}"
+    )
 }
 
 /// Dibuja/actualiza el bar (fondo + textos).

@@ -114,11 +114,22 @@ export const config = $state({
 	// Selección de fuente al "Ver con debrid": "auto" reproduce la mejor al
 	// instante; "manual" siempre muestra el selector para elegir.
 	sourceSelect: "auto" as SourceSelect,
+	// Verificación REAL de pistas antes de reproducir: ffprobe abre el header
+	// del torrent ya resuelto (sin bajarlo) y confirma si trae audio/subtítulos
+	// en español. Si no trae, salta a la siguiente fuente. Cuesta unos segundos
+	// extra por fuente inspeccionada. Requiere ffprobe instalado.
+	verifyEsTracks: false,
 	// Pista de texto (nombre de release/grupo, ej. "fullscrabe") que sube esa
 	// fuente al tope del orden. En modo auto, es la que se reproduce. Vacío = off.
 	preferredSourceMovie: "",
 	preferredSourceSeries: "",
 	preferredSourceAnime: "",
+	// Lista negra por tipo (ej. "CAM", "HDTS"): si el nombre del release o el
+	// proveedor la contiene, esa fuente se HUNDE al fondo del orden (nunca se
+	// auto-reproduce salvo que no haya otra). Varias por coma. Vacío = off.
+	blockedSourceMovie: "",
+	blockedSourceSeries: "",
+	blockedSourceAnime: "",
 	// Estado de la cuenta OpenSubtitles (subs externos, 20/día con cuenta). El
 	// token NO vive aquí: está en el store 0600 del backend. Solo el indicador.
 	osLinked: false,
@@ -156,6 +167,7 @@ export function loadConfig() {
 	config.wyzieKey = localStorage.getItem("wyzie_key") || "";
 	const sm = localStorage.getItem("sub_mode");
 	config.subMode = sm === "sub" ? "sub" : "dub";
+	config.verifyEsTracks = localStorage.getItem("verify_es_tracks") === "1";
 	const ssel = localStorage.getItem("source_select");
 	config.sourceSelect = ssel === "manual" ? "manual" : "auto";
 	// Fuente preferida por tipo. Migra desde el viejo `preferred_source`
@@ -164,6 +176,9 @@ export function loadConfig() {
 	config.preferredSourceMovie = localStorage.getItem("preferred_source_movie") ?? legacyPref;
 	config.preferredSourceSeries = localStorage.getItem("preferred_source_series") ?? legacyPref;
 	config.preferredSourceAnime = localStorage.getItem("preferred_source_anime") ?? legacyPref;
+	config.blockedSourceMovie = localStorage.getItem("blocked_source_movie") || "";
+	config.blockedSourceSeries = localStorage.getItem("blocked_source_series") || "";
+	config.blockedSourceAnime = localStorage.getItem("blocked_source_anime") || "";
 	const ss = parseInt(localStorage.getItem("sub_size") || "", 10);
 	config.subSize = Number.isFinite(ss)
 		? Math.min(200, Math.max(50, ss))
@@ -217,9 +232,13 @@ export function saveConfig() {
 	localStorage.setItem("wyzie_key", config.wyzieKey.trim());
 	localStorage.setItem("sub_mode", config.subMode);
 	localStorage.setItem("source_select", config.sourceSelect);
+	localStorage.setItem("verify_es_tracks", config.verifyEsTracks ? "1" : "0");
 	localStorage.setItem("preferred_source_movie", config.preferredSourceMovie.trim());
 	localStorage.setItem("preferred_source_series", config.preferredSourceSeries.trim());
 	localStorage.setItem("preferred_source_anime", config.preferredSourceAnime.trim());
+	localStorage.setItem("blocked_source_movie", config.blockedSourceMovie.trim());
+	localStorage.setItem("blocked_source_series", config.blockedSourceSeries.trim());
+	localStorage.setItem("blocked_source_anime", config.blockedSourceAnime.trim());
 	localStorage.setItem("sub_size", String(config.subSize));
 	localStorage.setItem("web_autostart", config.webAutoStart ? "1" : "0");
 	localStorage.setItem("web_port", String(config.webPort));

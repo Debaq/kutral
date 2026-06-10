@@ -27,7 +27,13 @@
     quality: string;
     rd_cached: boolean | null;
     _count?: number; // cuántas fuentes equivalentes se apilaron en esta
+    // Veredicto de la verificación REAL de pistas (ffprobe sobre la URL
+    // resuelta): qué español embebido trae el archivo de verdad.
+    _es?: "audio" | "subs" | "none" | "unknown";
   };
+
+  // Pista reportada por ffprobe (header del contenedor, sin descargar).
+  type ProbeTrack = { kind: string; codec: string; lang: string; title: string };
 
   let {
     imdbId,
@@ -127,6 +133,22 @@
     return needles.some((n) => hay.includes(n)) ? 1 : 0;
   }
 
+  // Lista negra por tipo (config.blockedSource*): si el release o el proveedor
+  // contiene alguna palabra, la fuente se HUNDE al fondo del orden. No se elimina
+  // (sigue elegible si no hay nada más), pero nunca se auto-reproduce de primera.
+  function blockScore(s: Src): number {
+    const raw =
+      kind === "movie" ? config.blockedSourceMovie
+      : kind === "anime" ? config.blockedSourceAnime
+      : config.blockedSourceSeries;
+    const blk = (raw || "").toLowerCase().trim();
+    if (!blk) return 0;
+    const needles = blk.split(/[,;]/).map((x) => x.trim()).filter(Boolean);
+    if (!needles.length) return 0;
+    const hay = `${s.title || ""} ${s.source || ""}`.toLowerCase();
+    return needles.some((n) => hay.includes(n)) ? 1 : 0;
+  }
+
   function fmtSize(b: number | null): string {
     if (!b) return "";
     const gb = b / 1073741824;
@@ -219,6 +241,9 @@
         }
       }
       srcs.sort((a, b) => {
+        // Lista negra: las fuentes bloqueadas se hunden al fondo, pase lo que pase.
+        const blk = blockScore(a) - blockScore(b);
+        if (blk) return blk;
         // Fuente preferida por el usuario: máxima prioridad (sube al tope).
         const p = prefScore(b) - prefScore(a);
         if (p) return p;
@@ -257,12 +282,57 @@
   }
 
   const MAX_TRIES = 12;
+  // Tope de fuentes inspeccionadas con ffprobe por intento de reproducción:
+  // cada inspección cuesta resolver el magnet + leer el header (~5-15s).
+  const MAX_PROBES = 4;
+
+  // ¿La pista del probe es español? lang ISO (spa/es/es-419…) o título
+  // ("Latino", "Español (España)", "Spanish [LAS]"…).
+  function isEsProbe(t: ProbeTrack): boolean {
+    if (/^(es|spa)/i.test(t.lang || "")) return true;
+    return /espa|spanish|latino|castellano|\blat\b/i.test(t.title || "");
+  }
+
+  // NIVEL 2: verdad del archivo ANTES de reproducir. ffprobe lee el header de
+  // la URL resuelta (sin descargar) y dice qué pistas trae de verdad.
+  // "unknown" = no se pudo inspeccionar (sin ffprobe, timeout) → no bloquear.
+  async function probeEs(url: string): Promise<"audio" | "subs" | "none" | "unknown"> {
+    try {
+      const tracks = await invoke<ProbeTrack[]>("ffprobe_tracks", { url });
+      if (!tracks.length) return "unknown";
+      const audio = tracks.some((t) => t.kind === "audio" && isEsProbe(t));
+      const subs = tracks.some((t) => t.kind === "subtitle" && isEsProbe(t));
+      dbg(`probe: ${tracks.length} pistas, audioES=${audio} subsES=${subs}`);
+      if (audio) return "audio";
+      if (subs) return "subs";
+      return "none";
+    } catch (e) {
+      dbg(`probe fail (no bloquea): ${String(e).slice(0, 60)}`);
+      return "unknown";
+    }
+  }
+
+  // Lanza mpv con una URL ya resuelta y deja el picker en estado "playing".
+  async function launch(url: string, s: Src) {
+    resolvingMsg = "Abriendo reproductor…";
+    await invoke("mpv_play", { url, title });
+    resolving = false;
+    playing = true;
+    playingTitle = s.title;
+    startMpvPoll();
+    // Niveles 2-3: confirmar audio/subs REALES del archivo y elegir la
+    // pista ES; si no existe, bajar subtítulos externos. No bloquea el play.
+    void applyPreferredTracks();
+  }
 
   // Intenta reproducir desde `startIdx`, saltando fuentes que fallan
   // (bloqueadas por DMCA 451, sin video, timeout). Reproduce la primera que
   // resuelva. Así un release bloqueado en el debrid no rompe la experiencia.
+  // Con config.verifyEsTracks: además INSPECCIONA las pistas reales (ffprobe)
+  // y salta las fuentes sin español embebido; si ninguna de las inspeccionadas
+  // trae, reproduce la mejor igual (los subs externos siguen de respaldo).
   async function playFrom(startIdx: number) {
-    dbg(`playFrom start=${startIdx} n=${sources.length} rd=${rdLinked}`);
+    dbg(`playFrom start=${startIdx} n=${sources.length} rd=${rdLinked} verify=${config.verifyEsTracks}`);
     if (!rdLinked) {
       error = "Vincula tu debrid en Configuración para reproducir.";
       return;
@@ -271,7 +341,11 @@
     error = "";
     let blocked = 0;
     let tried = 0;
+    let probes = 0;
+    let sinEs = 0;
     let lastErr = "";
+    // Mejor fuente que resolvió pero NO trae español: respaldo si ninguna trae.
+    let fallback: { url: string; s: Src } | null = null;
 
     for (let i = startIdx; i < sources.length && tried < MAX_TRIES; i++) {
       const s = sources[i];
@@ -281,22 +355,29 @@
       focusIdx = i;
       resolvingMsg =
         `Probando fuente ${i + 1}/${sources.length}${s.rd_cached ? " ⚡" : ""}…` +
-        (blocked ? ` (${blocked} bloqueada${blocked > 1 ? "s" : ""})` : "");
+        (blocked ? ` (${blocked} bloqueada${blocked > 1 ? "s" : ""})` : "") +
+        (sinEs ? ` (${sinEs} sin español)` : "");
       try {
         // URL pre-resuelta (Torrentio+RD, método Kodi) → directo a mpv, sin
         // addMagnet del cliente (evita el 451 de RD). Si no, resuelve el magnet.
         const url = s.url
           ? s.url
           : await invoke<string>("rd_resolve", { magnet: s.magnet });
-        resolvingMsg = "Abriendo reproductor…";
-        await invoke("mpv_play", { url, title });
-        resolving = false;
-        playing = true;
-        playingTitle = s.title;
-        startMpvPoll();
-        // Niveles 2-3: confirmar audio/subs REALES del archivo y elegir la
-        // pista ES; si no existe, bajar subtítulos externos. No bloquea el play.
-        void applyPreferredTracks();
+
+        // Verificación de español real (activable en Configuración).
+        if (config.verifyEsTracks && probes < MAX_PROBES) {
+          probes++;
+          resolvingMsg = `Inspeccionando pistas de la fuente ${i + 1}… 🔎`;
+          const verdict = await probeEs(url);
+          s._es = verdict; // badge en la lista ($state es reactivo profundo)
+          if (verdict === "none") {
+            sinEs++;
+            if (!fallback) fallback = { url, s };
+            dbg(`#${i} sin español embebido → siguiente`);
+            continue;
+          }
+        }
+        await launch(url, s);
         return;
       } catch (e) {
         lastErr = String(e);
@@ -305,11 +386,24 @@
       }
     }
 
+    // Nada con español embebido entre lo inspeccionado: reproducir la mejor
+    // que SÍ resolvió. Los subtítulos externos (Wyzie/OpenSubtitles) cubren.
+    if (fallback) {
+      dbg(`sin ES embebido en ${sinEs} fuentes → fallback a la mejor`);
+      try {
+        await launch(fallback.url, fallback.s);
+        void mpv(["show-text", "Sin español embebido en las fuentes: usando subtítulos externos", "4000"]);
+        return;
+      } catch (e) {
+        lastErr = String(e);
+      }
+    }
+
     resolving = false;
-    dbg(`fin: tried=${tried} blocked=${blocked} lastErr=${lastErr.slice(0, 60)}`);
+    dbg(`fin: tried=${tried} blocked=${blocked} sinEs=${sinEs} lastErr=${lastErr.slice(0, 60)}`);
     error =
       blocked > 0
-        ? `Sin fuentes reproducibles: ${blocked} bloqueada(s) por el debrid (DMCA). Probá "🔄 Rebuscar fuentes" u otra calidad.`
+        ? `Sin fuentes reproducibles: ${blocked} bloqueada(s) por el debrid (DMCA). Prueba "🔄 Rebuscar fuentes" u otra calidad.`
         : `No se pudo reproducir ninguna fuente. ${lastErr}`;
   }
 
@@ -680,6 +774,9 @@
               <div class="sp-chips">
                 {#if prefScore(s)}<span class="sp-pref">★ Preferida</span>{/if}
                 {#if s.rd_cached}<span class="sp-cached">⚡ Instantáneo</span>{/if}
+                {#if s._es === "audio"}<span class="sp-es-ok">🗣 Audio ES ✓</span>
+                {:else if s._es === "subs"}<span class="sp-es-ok">💬 Subs ES ✓</span>
+                {:else if s._es === "none"}<span class="sp-es-no">Sin español</span>{/if}
                 {#each infoChips(s) as c}<span class="sp-chip">{c}</span>{/each}
                 <span class="sp-prov">{s.source}</span>
               </div>
@@ -873,6 +970,25 @@
     color: #ffd76b;
     background: #2e2410;
     border: 1px solid #5a4520;
+    padding: 2px 7px;
+    border-radius: 5px;
+  }
+  /* Veredicto de la inspección real de pistas (ffprobe). */
+  .sp-es-ok {
+    font-size: 10.5px;
+    font-weight: 700;
+    color: #8ad1ff;
+    background: #102230;
+    border: 1px solid #2a4a62;
+    padding: 2px 7px;
+    border-radius: 5px;
+  }
+  .sp-es-no {
+    font-size: 10.5px;
+    font-weight: 700;
+    color: #ff9a9a;
+    background: #2b1414;
+    border: 1px solid #5a2a2a;
     padding: 2px 7px;
     border-radius: 5px;
   }
