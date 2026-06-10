@@ -124,6 +124,34 @@ fn gl_get_proc(_ctx: &(), name: &str) -> *mut c_void {
     ptr::null_mut()
 }
 
+// ───────────────────────── helpers de input (uosc) ────────────────────────
+
+/// Manda la posición del mouse a mpv en coords OSD (px reales = lógico×scale).
+fn mpv_mouse_move(x: f64, y: f64, scale: i32) {
+    if let Some(mpv) = MPV.get() {
+        let xs = ((x * scale as f64).round() as i64).to_string();
+        let ys = ((y * scale as f64).round() as i64).to_string();
+        let _ = mpv.command("mouse", &[xs.as_str(), ys.as_str()]);
+    }
+}
+
+/// Nombre de botón mpv para un botón GDK (1=izq, 2=medio, 3=der).
+fn mpv_btn_name(button: u32) -> Option<&'static str> {
+    match button {
+        1 => Some("MBTN_LEFT"),
+        2 => Some("MBTN_MID"),
+        3 => Some("MBTN_RIGHT"),
+        _ => None,
+    }
+}
+
+/// Manda un evento de tecla/botón a mpv (action = keydown/keyup/keypress).
+fn mpv_key(action: &str, key: &str) {
+    if let Some(mpv) = MPV.get() {
+        let _ = mpv.command(action, &[key]);
+    }
+}
+
 /// Puntero a glGetIntegerv (cacheado) para leer el FBO destino del GLArea.
 fn gl_get_integerv() -> Option<GlGetIntegervFn> {
     if let Some(f) = GL_GET_INTEGERV.get() {
@@ -244,24 +272,6 @@ fn build_surface(vbox: &gtk::Box) {
                 eprintln!("[mpv-embed] GLArea realize error: {err}");
                 return;
             }
-            // DIAGNÓSTICO: ¿el contexto GL está realmente current? Llamamos
-            // glGetString(GL_VERSION) nosotros. Si crashea aquí → no hay contexto
-            // current (el problema no es mpv). Si imprime versión → contexto OK.
-            {
-                let p = gl_get_proc(&(), "glGetString");
-                eprintln!("[mpv-embed] DIAG glGetString ptr={:?}", p);
-                if !p.is_null() {
-                    type GetStr = unsafe extern "C" fn(u32) -> *const std::os::raw::c_char;
-                    let f: GetStr = unsafe { std::mem::transmute(p) };
-                    let s = unsafe { f(0x1F02) }; // GL_VERSION
-                    if s.is_null() {
-                        eprintln!("[mpv-embed] DIAG GL_VERSION = NULL (contexto no current)");
-                    } else {
-                        let v = unsafe { std::ffi::CStr::from_ptr(s) };
-                        eprintln!("[mpv-embed] DIAG GL_VERSION = {:?}", v);
-                    }
-                }
-            }
             let Some(mpv) = MPV.get() else { return };
             let params = [
                 RenderParam::ApiType(RenderParamApiType::OpenGl),
@@ -302,6 +312,60 @@ fn build_surface(vbox: &gtk::Box) {
             glib::Propagation::Proceed
         });
     }
+
+    // ── Forward de input a mpv/uosc ──
+    // Con la Render API mpv NO recibe eventos del SO: se los pasamos nosotros
+    // desde el GLArea para que uosc se esconda/expanda, haga seek en la
+    // timeline, abra menús, etc. Coordenadas en px reales (× scale) = espacio
+    // OSD de mpv (igual que el FBO que renderizamos).
+    glarea.set_can_focus(true);
+    glarea.add_events(
+        gtk::gdk::EventMask::POINTER_MOTION_MASK
+            | gtk::gdk::EventMask::BUTTON_PRESS_MASK
+            | gtk::gdk::EventMask::BUTTON_RELEASE_MASK
+            | gtk::gdk::EventMask::SCROLL_MASK
+            | gtk::gdk::EventMask::LEAVE_NOTIFY_MASK,
+    );
+    glarea.connect_motion_notify_event(|area, ev| {
+        let (x, y) = ev.position();
+        mpv_mouse_move(x, y, area.scale_factor());
+        glib::Propagation::Proceed
+    });
+    glarea.connect_button_press_event(|area, ev| {
+        let (x, y) = ev.position();
+        mpv_mouse_move(x, y, area.scale_factor());
+        if let Some(btn) = mpv_btn_name(ev.button()) {
+            mpv_key("keydown", btn);
+        }
+        area.grab_focus();
+        glib::Propagation::Proceed
+    });
+    glarea.connect_button_release_event(|_area, ev| {
+        if let Some(btn) = mpv_btn_name(ev.button()) {
+            mpv_key("keyup", btn);
+        }
+        glib::Propagation::Proceed
+    });
+    glarea.connect_scroll_event(|_area, ev| {
+        let key = match ev.direction() {
+            gtk::gdk::ScrollDirection::Up => Some("WHEEL_UP"),
+            gtk::gdk::ScrollDirection::Down => Some("WHEEL_DOWN"),
+            gtk::gdk::ScrollDirection::Left => Some("WHEEL_LEFT"),
+            gtk::gdk::ScrollDirection::Right => Some("WHEEL_RIGHT"),
+            _ => None,
+        };
+        if let Some(k) = key {
+            mpv_key("keypress", k);
+        }
+        glib::Propagation::Proceed
+    });
+    glarea.connect_leave_notify_event(|_area, _ev| {
+        // Saca el cursor del OSD → uosc se esconde.
+        if let Some(mpv) = MPV.get() {
+            let _ = mpv.command("mouse", &["-1", "-1"]);
+        }
+        glib::Propagation::Proceed
+    });
 
     // Segundo hijo del box, expandido. Solo uno (webview o glarea) visible a la
     // vez → el visible ocupa todo el box.
