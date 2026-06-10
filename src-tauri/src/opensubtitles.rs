@@ -342,3 +342,112 @@ pub async fn os_search(
         remaining: d.remaining,
     })
 }
+
+/// Un candidato de la lista de OpenSubtitles (sin resolver el link aún).
+#[derive(Serialize)]
+pub struct OsListItem {
+    pub file_id: i64,
+    pub label: String,
+    pub lang: String,
+    pub downloads: i64,
+    pub hi: bool,
+}
+
+/// Lista VARIOS subtítulos para `imdb_id` (no resuelve links → NO gasta cuota).
+/// El frontend muestra esto en el picker; al elegir llama `os_download`.
+#[tauri::command]
+pub async fn os_list(
+    app: tauri::AppHandle,
+    imdb_id: String,
+    language: String,
+) -> Result<Vec<OsListItem>, String> {
+    if OS_API_KEY.is_empty() {
+        return Err("Falta API key de OpenSubtitles.".into());
+    }
+    let imdb_num = imdb_id.trim_start_matches("tt").trim_start_matches('0');
+    if imdb_num.is_empty() {
+        return Err("imdb_id vacío".into());
+    }
+    let lang = if language.is_empty() { "es" } else { &language };
+    let cli = client()?;
+    let token = valid_token(&app);
+
+    let url =
+        format!("{OS_BASE}/subtitles?imdb_id={imdb_num}&languages={lang}&order_by=download_count");
+    let mut req = cli
+        .get(&url)
+        .header("Api-Key", OS_API_KEY)
+        .header("Accept", "application/json");
+    if let Some(t) = &token {
+        req = req.header("Authorization", format!("Bearer {t}"));
+    }
+    let r = req.send().await.map_err(|e| format!("search red: {e}"))?;
+    if !r.status().is_success() {
+        let st = r.status();
+        let b = r.text().await.unwrap_or_default();
+        return Err(format!("OS search {st}: {b}"));
+    }
+    let sr: SearchResp = r.json().await.map_err(|e| format!("search parse: {e}"))?;
+    let mut items: Vec<OsListItem> = sr
+        .data
+        .into_iter()
+        .filter(|it| !it.attributes.files.is_empty())
+        .map(|it| {
+            let file = it.attributes.files[0].clone();
+            let label = it
+                .attributes
+                .release
+                .clone()
+                .or_else(|| file.file_name.clone())
+                .unwrap_or_else(|| "Subtítulo".into());
+            OsListItem {
+                file_id: file.file_id,
+                label,
+                lang: it
+                    .attributes
+                    .language
+                    .clone()
+                    .unwrap_or_else(|| lang.to_string()),
+                downloads: it.attributes.download_count,
+                hi: it.attributes.hearing_impaired,
+            }
+        })
+        .collect();
+    items.sort_by(|a, b| b.downloads.cmp(&a.downloads));
+    items.truncate(25);
+    Ok(items)
+}
+
+/// Resuelve el link directo de un `file_id` (POST /download). Gasta 1 de cuota.
+#[tauri::command]
+pub async fn os_download(app: tauri::AppHandle, file_id: i64) -> Result<OsSubtitle, String> {
+    if OS_API_KEY.is_empty() {
+        return Err("Falta API key de OpenSubtitles.".into());
+    }
+    let cli = client()?;
+    let token = valid_token(&app);
+    let dl_body = serde_json::json!({ "file_id": file_id });
+    let mut dreq = cli
+        .post(format!("{OS_BASE}/download"))
+        .header("Api-Key", OS_API_KEY)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json")
+        .json(&dl_body);
+    if let Some(t) = &token {
+        dreq = dreq.header("Authorization", format!("Bearer {t}"));
+    }
+    let dr = dreq.send().await.map_err(|e| format!("download red: {e}"))?;
+    if !dr.status().is_success() {
+        let st = dr.status();
+        let b = dr.text().await.unwrap_or_default();
+        return Err(format!("OS download {st}: {b}"));
+    }
+    let d: DownloadResp = dr.json().await.map_err(|e| format!("download parse: {e}"))?;
+    let link = d.link.filter(|s| !s.is_empty()).ok_or("OS sin link de descarga")?;
+    Ok(OsSubtitle {
+        url: link,
+        label: d.file_name.unwrap_or_default(),
+        lang: String::new(),
+        remaining: d.remaining,
+    })
+}

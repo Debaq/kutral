@@ -2549,6 +2549,8 @@ pub fn run() {
             opensubtitles::os_status,
             opensubtitles::os_clear,
             opensubtitles::os_search,
+            opensubtitles::os_list,
+            opensubtitles::os_download,
             opensubtitles::subtitle_save,
             screening::screening_enqueue,
             screening::screening_get_unavailable,

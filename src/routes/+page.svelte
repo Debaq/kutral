@@ -1179,6 +1179,11 @@
       try {
         const d = await invoke<Detail>("tmdb_detail", { mediaType: tabToMediaType(tab), id: it.id, apiKey });
         selected = d;
+        // Nuevo título → resetear vista de capítulos y episodio elegido.
+        seriesSeason = null;
+        seriesEpisodes = [];
+        sourcesSeason = null;
+        sourcesEpisode = null;
         loadProgressForSelected();
         return d;
       } catch (e) {
@@ -1210,7 +1215,19 @@
       if (d) await watchTrailer();
       return;
     }
-    await pickAndDiscover(it);
+    const d = await pick(it);
+    if (!d) return;
+    // Series con temporadas: drill-in in-place → enfocar la lista de
+    // temporadas del panel derecho (el grid mostrará los capítulos).
+    if (d.media_type === "tv" && d.seasons && d.seasons.length) {
+      setTimeout(() => {
+        document
+          .querySelector<HTMLElement>('[data-section="info"] .season-item')
+          ?.focus();
+      }, 60);
+      return;
+    }
+    if (d.imdb_id) goDescubrir();
   }
 
   // URL de subtítulo precargada por startDiscover antes de cambiar a mode=discover.
@@ -1225,13 +1242,25 @@
   // Solo se setea en startDiscover y se limpia en stopDiscover.
   let discoverSrc = $state<string>("");
 
-  function discoverUrl(imdb_id: string, kind: "movie" | "tv", resumeAt?: number) {
+  function discoverUrl(
+    imdb_id: string,
+    kind: "movie" | "tv",
+    resumeAt?: number,
+    season?: number | null,
+    episode?: number | null,
+  ) {
     // VidAPI endpoint canónico (docs: vidapi.ru/api). Acepta resumeAt en
     // segundos para seek inicial y emite PLAYER_EVENT postMessage con el
     // progreso real del <video>. Reemplaza el chain playimdb→streamimdb.
     // El path debe coincidir con el tipo: /embed/movie/ para pelis,
     // /embed/tv/ para series — si no, el provider no encuentra el título.
     let url = `https://vaplayer.ru/embed/${kind}/${imdb_id}?autoplay=1`;
+    // Series con capítulo elegido: apuntar el embed a esa temporada/episodio.
+    // Si el provider ignora los params, cae al selector interno (comportamiento
+    // previo) — sin regresión.
+    if (kind === "tv" && season != null && episode != null) {
+      url += `&season=${season}&episode=${episode}`;
+    }
     if (resumeAt && resumeAt > 5) {
       url += `&resumeAt=${Math.floor(resumeAt)}`;
     }
@@ -1294,7 +1323,13 @@
     // puede mutar varias veces durante la sesión (cada PLAYER_EVENT), pero
     // discoverSrc queda fijo hasta stopDiscover.
     const playKind = selected.media_type === "tv" ? "tv" : "movie";
-    discoverSrc = discoverUrl(selected.imdb_id, playKind, progressForSelected?.watched_seconds);
+    discoverSrc = discoverUrl(
+      selected.imdb_id,
+      playKind,
+      progressForSelected?.watched_seconds,
+      sourcesSeason,
+      sourcesEpisode,
+    );
     discoverStartTs = Date.now();
     mode = "discover";
     setFs(true);
@@ -1308,6 +1343,76 @@
   // Temporada/episodio elegidos (series/anime). null en películas.
   let sourcesSeason = $state<number | null>(null);
   let sourcesEpisode = $state<number | null>(null);
+
+  // --- Navegación in-place de series: temporada elegida en el panel derecho →
+  // el grid de carátulas muestra los capítulos de esa temporada. ---
+  type EpisodeMini = {
+    episode_number: number;
+    name: string;
+    overview: string;
+    still_path: string | null;
+    air_date: string | null;
+    runtime: number | null;
+  };
+  // null = catálogo normal; nº = mostrando capítulos de esa temporada.
+  let seriesSeason = $state<number | null>(null);
+  let seriesEpisodes = $state<EpisodeMini[]>([]);
+  let episodesLoading = $state(false);
+  let episodesError = $state("");
+  // Cache por `${tmdbId}:${season}` para no rebajar episodios al volver.
+  const seasonEpCache = new Map<string, EpisodeMini[]>();
+
+  function seasonLabel(n: number): string {
+    return n === 0 ? "Especiales" : `Temporada ${n}`;
+  }
+
+  // Abre una temporada: carga capítulos (cacheado) y el grid los muestra.
+  async function openSeason(seasonNumber: number) {
+    if (!selected) return;
+    seriesSeason = seasonNumber;
+    episodesError = "";
+    const key = `${selected.id}:${seasonNumber}`;
+    if (seasonEpCache.has(key)) {
+      seriesEpisodes = seasonEpCache.get(key)!;
+      return;
+    }
+    episodesLoading = true;
+    seriesEpisodes = [];
+    try {
+      const eps = await invoke<EpisodeMini[]>("tmdb_season", {
+        id: selected.id,
+        seasonNumber,
+        apiKey,
+      });
+      seasonEpCache.set(key, eps);
+      seriesEpisodes = eps;
+    } catch (e) {
+      episodesError = String(e);
+      seriesEpisodes = [];
+    } finally {
+      episodesLoading = false;
+    }
+  }
+
+  // Vuelve del listado de capítulos al catálogo normal.
+  function closeSeasonView() {
+    seriesSeason = null;
+    seriesEpisodes = [];
+    episodesError = "";
+    setTimeout(() => {
+      document
+        .querySelector<HTMLElement>('[data-section="info"] .season-item')
+        ?.focus();
+    }, 30);
+  }
+
+  // Elige un capítulo → abre el menú de reproducción apuntando a ese episodio.
+  function chooseEpisode(ep: EpisodeMini) {
+    if (seriesSeason == null) return;
+    sourcesSeason = seriesSeason;
+    sourcesEpisode = ep.episode_number;
+    goDescubrir();
+  }
 
   // Tipo para el scraper: movie / anime (tab) / series.
   function currentKind(): "movie" | "series" | "anime" {
@@ -1437,6 +1542,9 @@
     if (selected?.media_type === "movie") {
       sourcesSeason = null;
       sourcesEpisode = null;
+      mode = "sources";
+    } else if (sourcesSeason != null && sourcesEpisode != null) {
+      // Capítulo ya elegido inline → directo a fuentes, sin EpisodePicker.
       mode = "sources";
     } else {
       mode = "episodes";
@@ -1687,6 +1795,13 @@
       return;
     }
     if (sortOpen && e.key === "Escape") { sortOpen = false; e.preventDefault(); return; }
+
+    // Vista de capítulos abierta: Esc/Backspace vuelve al catálogo.
+    if (seriesSeason != null && !inInput && (e.key === "Escape" || e.key === "Backspace")) {
+      e.preventDefault();
+      closeSeasonView();
+      return;
+    }
 
     if (inInput) {
       // Permitir edición; ↑↓ saltan fuera del input
@@ -2007,6 +2122,24 @@
               {/if}
             </div>
           {/if}
+          {#if selected.media_type === "tv" && selected.seasons && selected.seasons.length}
+            <div class="people-row seasons-row">
+              <h4 class="people-title">Temporadas</h4>
+              <div class="season-list">
+                {#each selected.seasons as s (s.season_number)}
+                  <button
+                    data-nav
+                    class="season-item"
+                    class:active={seriesSeason === s.season_number}
+                    onclick={() => openSeason(s.season_number)}
+                  >
+                    <span class="season-num">{seasonLabel(s.season_number)}</span>
+                    <span class="season-count">{s.episode_count} cap.</span>
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {/if}
           {#if selected.directors.length}
             <div class="people-row">
               <h4 class="people-title">{selected.media_type === "tv" ? "Creado por" : "Dirigido por"}</h4>
@@ -2075,6 +2208,44 @@
     </aside>
 
     <section class="gallery">
+      {#if seriesSeason != null}
+        <header class="ep-head-bar" data-section="filters">
+          <button data-nav class="ep-back-inline" onclick={closeSeasonView}>← Volver</button>
+          <span class="ep-crumb">
+            {selected?.title} · {seasonLabel(seriesSeason)}
+          </span>
+        </header>
+        {#if episodesError}<p class="err">{episodesError}</p>{/if}
+        {#if episodesLoading}
+          <div class="empty">Cargando capítulos…</div>
+        {:else}
+          <div class="grid-wrap">
+            <div class="grid" data-section="gallery">
+              {#each seriesEpisodes as ep (ep.episode_number)}
+                <button
+                  data-nav
+                  class="card ep-card"
+                  onclick={() => chooseEpisode(ep)}
+                  title={ep.name}
+                >
+                  {#if ep.still_path}
+                    <img src={img(`${IMG}/w300${ep.still_path}`, 300)} alt={ep.name} loading="lazy" />
+                  {:else}
+                    <div class="no-poster ep-noimg">E{ep.episode_number}</div>
+                  {/if}
+                  <div class="card-meta">
+                    <span class="card-title">E{ep.episode_number} · {ep.name}</span>
+                    {#if ep.overview}<span class="card-sub ep-ov">{ep.overview}</span>{/if}
+                  </div>
+                </button>
+              {/each}
+              {#if !seriesEpisodes.length}
+                <div class="empty">Sin capítulos</div>
+              {/if}
+            </div>
+          </div>
+        {/if}
+      {:else}
       <header data-section="filters">
         {#if webRemoteUrl}
           <div class="qr-col">
@@ -2352,6 +2523,7 @@
             </div>
           {/if}
         </div>
+      {/if}
       {/if}
     </section>
   </main>
@@ -3322,6 +3494,87 @@
   .card-meta { padding: 10px 12px; display: flex; flex-direction: column; gap: 3px; }
   .card-title { font-size: 14px; font-weight: 600; line-height: 1.25; }
   .card-sub { font-size: 12px; color: #888; }
+
+  /* Capítulos: thumbnail apaisado 16/9 en vez del poster 2/3. */
+  .ep-card img, .ep-card .ep-noimg { aspect-ratio: 16/9; }
+  .ep-card .card-title {
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .ep-ov {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1.35;
+  }
+
+  /* Barra de encabezado del listado de capítulos (back + breadcrumb). */
+  .ep-head-bar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .ep-back-inline {
+    background: rgba(20, 20, 28, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: #d8d8e0;
+    border-radius: 8px;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .ep-back-inline:focus-visible {
+    outline: none;
+    border-color: #f3a951;
+    background: rgba(243, 169, 81, 0.16);
+  }
+  .ep-crumb {
+    font-size: 15px;
+    font-weight: 600;
+    color: #e6e6ec;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Lista vertical de temporadas en el panel derecho. */
+  .season-list {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .season-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    background: rgba(20, 20, 28, 0.6);
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    padding: 10px 14px;
+    cursor: pointer;
+    color: #e6e6ec;
+    text-align: left;
+  }
+  .season-item:focus-visible,
+  .season-item:hover {
+    outline: none;
+    border-color: #f3a951;
+    background: rgba(243, 169, 81, 0.16);
+    color: #fff;
+  }
+  .season-item.active {
+    border-color: #f3a951;
+    background: rgba(243, 169, 81, 0.22);
+    color: #fff;
+  }
+  .season-num { font-size: 14px; font-weight: 600; }
+  .season-count { font-size: 12px; color: #9a9aa4; }
 
   /* PLAY mode */
   .discover-mode { position: fixed; inset: 0; background: #000; z-index: 1500; }

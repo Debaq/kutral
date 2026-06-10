@@ -448,13 +448,14 @@
   });
 
   // Opciones de subtítulos descargables de la última búsqueda (las indexa el
-  // picker in-video por id = posición).
-  let subOptions: { url: string; label: string; lang: string }[] = [];
+  // picker in-video por id = posición). url directa (Wyzie) o fileId (OS).
+  type SubOpt = { label: string; lang: string; url?: string; fileId?: number };
+  let subOptions: SubOpt[] = [];
 
-  // Busca subtítulos (Wyzie lista + OpenSubtitles 1) para el título actual.
-  async function searchSubOptions() {
+  // Busca VARIOS subtítulos (Wyzie + OpenSubtitles lista) para el título actual.
+  async function searchSubOptions(): Promise<SubOpt[]> {
     const lang = config.subsLang && config.subsLang !== "off" ? config.subsLang : "es";
-    const opts: { url: string; label: string; lang: string }[] = [];
+    const opts: SubOpt[] = [];
     if (config.wyzieKey) {
       try {
         const subs = await invoke<{ url: string; label: string; lang: string }[]>(
@@ -468,12 +469,15 @@
       }
     }
     try {
-      const os = await invoke<{ url: string; remaining: number }>("os_search", {
-        imdbId,
-        language: lang,
-      });
-      if (os?.url)
-        opts.push({ url: os.url, label: `OpenSubtitles (${lang.toUpperCase()})`, lang });
+      const list = await invoke<
+        { file_id: number; label: string; lang: string; downloads: number; hi: boolean }[]
+      >("os_list", { imdbId, language: lang });
+      for (const s of list)
+        opts.push({
+          fileId: s.file_id,
+          lang: s.lang,
+          label: `${s.label}  ·  ${s.downloads}⬇${s.hi ? "  ·  SDH" : ""}`,
+        });
     } catch (e) {
       dbg(`os list fail: ${String(e).slice(0, 60)}`);
     }
@@ -509,11 +513,29 @@
     void listen<string>("player:menu-pick", async (e) => {
       const o = subOptions[Number(e.payload)];
       if (!o) return;
-      await mpv(["show-text", "Descargando subtítulo…", "5000"]);
-      let toLoad = o.url;
+      await mpv(["show-text", "Descargando subtítulo…", "8000"]);
+      // Resolver la URL: Wyzie ya la trae; OpenSubtitles la pide por fileId
+      // (acá sí gasta 1 de cuota, solo del elegido).
+      let url = o.url ?? "";
+      if (!url && o.fileId != null) {
+        try {
+          const os = await invoke<{ url: string; remaining: number }>("os_download", {
+            fileId: o.fileId,
+          });
+          url = os.url;
+        } catch (err) {
+          await mpv(["show-text", `No se pudo bajar: ${String(err).slice(0, 50)}`, "3000"]);
+          return;
+        }
+      }
+      if (!url) {
+        await mpv(["show-text", "Subtítulo sin enlace", "2500"]);
+        return;
+      }
+      let toLoad = url;
       try {
         const path = await invoke<string>("subtitle_save", {
-          url: o.url,
+          url,
           filename: `${title} [${o.lang}]`,
         });
         if (path) toLoad = path;
