@@ -164,6 +164,10 @@ pub fn init(app: &tauri::AppHandle, window: &tauri::WebviewWindow) -> Result<(),
         init.set_option("force-window", "no")?;
         // El idle mantiene mpv vivo entre archivos sin cerrar el render context.
         init.set_option("idle", "yes")?;
+        // CLAVE: sin esto, render() bloquea el hilo main hasta el tiempo de
+        // display de cada frame (la doc de la Render API lo dice) → con red
+        // lenta la UI se cuelga. En 0 no bloquea; el ritmo lo da queue_render.
+        init.set_option("video-timing-offset", "0")?;
         Ok(())
     })
     .map_err(|e| format!("mpv init: {e}"))?;
@@ -275,6 +279,7 @@ fn build_surface(vbox: &gtk::Box) {
 fn show_surface() {
     if let Some(app) = APP.get() {
         let _ = app.run_on_main_thread(|| {
+            eprintln!("[mpv-embed] show_surface (main thread)");
             SURFACE.with(|s| {
                 if let Some(surf) = s.borrow().as_ref() {
                     // Oculta el webview y muestra el video (ocupa todo el box).
@@ -284,6 +289,7 @@ fn show_surface() {
                     surf.glarea.show();
                     surf.glarea.grab_focus();
                     surf.glarea.queue_render();
+                    eprintln!("[mpv-embed] glarea.show + queue_render hechos");
                 }
             });
         });
@@ -334,10 +340,13 @@ pub fn play(url: &str, title: Option<&str>, start_secs: Option<u64>) -> Result<(
             let _ = mpv.set_property("start", "none");
         }
     }
+    eprintln!("[mpv-embed] play loadfile…");
     mpv.command("loadfile", &[url, "replace"])
         .map_err(|e| format!("loadfile: {e}"))?;
+    eprintln!("[mpv-embed] play loadfile OK → show_surface");
     show_surface();
     notify_state(true);
+    eprintln!("[mpv-embed] play listo");
     Ok(())
 }
 
