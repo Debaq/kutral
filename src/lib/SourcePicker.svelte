@@ -108,13 +108,18 @@
     return 3; // VO puro: audio original, subs externos si hace falta
   }
 
-  // Fuente preferida por el usuario (config.preferredSource): una o varias
-  // palabras separadas por coma (ej. "fullscrabe, sigloxx"). Si el release o el
-  // proveedor las contiene, la fuente sube al tope del orden. Es una preferencia
+  // Fuente preferida por el usuario, SEGÚN el tipo de contenido (película/serie/
+  // anime tienen su propia lista en config): una o varias palabras separadas por
+  // coma (ej. "MeGusta, FullScrab"). Si el release o el proveedor las contiene, la
+  // fuente sube al tope del orden. Es una preferencia
   // fuerte: gana incluso a las cacheadas, porque el usuario la eligió a propósito
   // (p.ej. porque siempre trae pistas en español).
   function prefScore(s: Src): number {
-    const pref = (config.preferredSource || "").toLowerCase().trim();
+    const raw =
+      kind === "movie" ? config.preferredSourceMovie
+      : kind === "anime" ? config.preferredSourceAnime
+      : config.preferredSourceSeries;
+    const pref = (raw || "").toLowerCase().trim();
     if (!pref) return 0;
     const needles = pref.split(/[,;]/).map((x) => x.trim()).filter(Boolean);
     if (!needles.length) return 0;

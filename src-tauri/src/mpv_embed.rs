@@ -505,39 +505,67 @@ pub fn open_picker(title: String, items: Vec<(String, String)>) {
     }
 }
 
-/// Fondo del menú: panel centrado, alto según nº de ítems.
-fn build_menu_bg(n: usize) -> String {
-    let h = ((n as i32 + 2) * 44).clamp(140, 620);
+/// Máximo de ítems visibles a la vez (el resto hace scroll).
+const MENU_MAX_VISIBLE: usize = 12;
+
+/// Ventana visible [start, end) centrada en el seleccionado.
+fn menu_window(menu: &Menu) -> (usize, usize) {
+    let n = menu.items.len();
+    if n <= MENU_MAX_VISIBLE {
+        return (0, n);
+    }
+    let start = menu
+        .sel
+        .saturating_sub(MENU_MAX_VISIBLE / 2)
+        .min(n - MENU_MAX_VISIBLE);
+    (start, start + MENU_MAX_VISIBLE)
+}
+
+/// Fondo del menú: panel centrado, alto según filas visibles.
+fn build_menu_bg(rows: usize) -> String {
+    let h = ((rows as i32) * 44 + 40).clamp(160, 660);
     let cy = 360;
-    let top = cy - h / 2;
-    let bot = cy + h / 2;
+    let (top, bot) = (cy - h / 2, cy + h / 2);
     format!(
         "{{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H120F0A&\\1a&H22&\\p1}}\
-         m 330 {top} l 950 {top} 950 {bot} 330 {bot}{{\\p0}}"
+         m 300 {top} l 980 {top} 980 {bot} 300 {bot}{{\\p0}}"
     )
 }
 
-/// Texto del menú: título + lista vertical, ítem seleccionado en naranja.
+/// Texto del menú: título + ventana de ítems (scroll) con indicadores ▲/▼.
 fn build_menu_ass(menu: &Menu) -> String {
-    let mut s = String::from("{\\an5\\pos(640,360)\\bord0\\shad1.2\\4c&H000000&}");
-    s.push_str(&format!("{{\\fs34\\1c&H3BA1F9&\\b1}}{}\\N\\N", menu.title));
-    for (i, it) in menu.items.iter().enumerate() {
-        if i > 0 {
-            s.push_str("\\N");
-        }
+    let n = menu.items.len();
+    let (start, end) = menu_window(menu);
+    let mut lines: Vec<String> = Vec::new();
+    lines.push(format!("{{\\fs32\\1c&H3BA1F9&\\b1}}{}", menu.title));
+    lines.push(String::new());
+    if start > 0 {
+        lines.push(format!("{{\\fs22\\1c&H9A9488&\\b0}}▲  {} más", start));
+    }
+    for i in start..end {
+        let it = &menu.items[i];
         if i == menu.sel {
-            s.push_str(&format!("{{\\fs30\\1c&H1673F9&\\b1}}▸  {}", it.label));
+            lines.push(format!("{{\\fs28\\1c&H1673F9&\\b1}}▸  {}", it.label));
         } else {
-            s.push_str(&format!("{{\\fs30\\1c&HE8E0D0&\\b0}}    {}", it.label));
+            lines.push(format!("{{\\fs28\\1c&HE8E0D0&\\b0}}     {}", it.label));
         }
     }
-    s
+    if end < n {
+        lines.push(format!("{{\\fs22\\1c&H9A9488&\\b0}}▼  {} más", n - end));
+    }
+    format!(
+        "{{\\an5\\pos(640,360)\\bord0\\shad1.2\\4c&H000000&}}{}",
+        lines.join("\\N")
+    )
 }
 
 fn draw_menu() {
     let drawn = MENU.with(|m| {
         m.borrow().as_ref().map(|menu| {
-            (build_menu_bg(menu.items.len()), build_menu_ass(menu))
+            let n = menu.items.len();
+            let (start, end) = menu_window(menu);
+            let rows = 2 + (start > 0) as usize + (end - start) + (end < n) as usize;
+            (build_menu_bg(rows), build_menu_ass(menu))
         })
     });
     if let Some((bg, fg)) = drawn {

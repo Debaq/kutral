@@ -116,7 +116,9 @@
   let subSize = $state(config.subSize);
   let subMode = $state<SubMode>(config.subMode);
   let sourceSelect = $state<SourceSelect>(config.sourceSelect);
-  let preferredSource = $state(config.preferredSource);
+  let preferredSourceMovie = $state(config.preferredSourceMovie);
+  let preferredSourceSeries = $state(config.preferredSourceSeries);
+  let preferredSourceAnime = $state(config.preferredSourceAnime);
   // OpenSubtitles: login de cuenta gratis (sube cuota a 20/día).
   let osUserInput = $state("");
   let osPassInput = $state("");
@@ -211,7 +213,9 @@
     subSize = config.subSize;
     subMode = config.subMode;
     sourceSelect = config.sourceSelect;
-    preferredSource = config.preferredSource;
+    preferredSourceMovie = config.preferredSourceMovie;
+    preferredSourceSeries = config.preferredSourceSeries;
+    preferredSourceAnime = config.preferredSourceAnime;
     void refreshOsStatus();
     webAuto = config.webAutoStart;
     webPortInput = config.webPort;
@@ -240,7 +244,9 @@
     subSize !== config.subSize ||
     subMode !== config.subMode ||
     sourceSelect !== config.sourceSelect ||
-    preferredSource !== config.preferredSource ||
+    preferredSourceMovie !== config.preferredSourceMovie ||
+    preferredSourceSeries !== config.preferredSourceSeries ||
+    preferredSourceAnime !== config.preferredSourceAnime ||
     webAuto !== config.webAutoStart ||
     webPortInput !== config.webPort ||
     gameRegions.join(",") !== config.gameRegions.join(",") ||
@@ -259,7 +265,9 @@
     config.subSize = Math.min(200, Math.max(50, Math.round(subSize)));
     config.subMode = subMode;
     config.sourceSelect = sourceSelect;
-    config.preferredSource = preferredSource.trim();
+    config.preferredSourceMovie = preferredSourceMovie.trim();
+    config.preferredSourceSeries = preferredSourceSeries.trim();
+    config.preferredSourceAnime = preferredSourceAnime.trim();
     config.webAutoStart = webAuto;
     config.webPort = Math.min(65535, Math.max(1024, Math.round(webPortInput) || 8080));
     webPortInput = config.webPort;
@@ -870,21 +878,42 @@
               </div>
             </label>
           </div>
+          <p class="hint">
+            Texto de interés en el nombre del torrent (release/grupo). Si el nombre
+            o el proveedor lo contiene, esa fuente sube al tope (en modo automático,
+            es la que se reproduce). Útil para grupos que suelen traer audio en
+            español. Varias separadas por coma. Se configura por tipo.
+          </p>
           <label class="field">
-            <span class="field-label">Fuente preferida (opcional)</span>
+            <span class="field-label">Películas</span>
             <input
               type="text"
-              bind:value={preferredSource}
-              placeholder="ej. fullscrabe"
+              bind:value={preferredSourceMovie}
+              placeholder="ej. FullScrab, YIFY"
               autocomplete="off"
               spellcheck="false"
             />
           </label>
-          <p class="hint">
-            Si el nombre del release o el proveedor contiene este texto, esa fuente
-            sube al tope (en modo automático, es la que se reproduce). Útil para
-            grupos que siempre traen audio en español. Varias separadas por coma.
-          </p>
+          <label class="field">
+            <span class="field-label">Series</span>
+            <input
+              type="text"
+              bind:value={preferredSourceSeries}
+              placeholder="ej. MeGusta, FLUX"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </label>
+          <label class="field">
+            <span class="field-label">Anime</span>
+            <input
+              type="text"
+              bind:value={preferredSourceAnime}
+              placeholder="ej. Erai-raws, SubsPlease"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </label>
         </section>
 
         <section class="block">

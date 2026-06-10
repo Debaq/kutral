@@ -531,20 +531,9 @@ async fn eztv_search(
 // AnimeTosho (anime, por título — JSON feed)
 // ========================================================================
 
-#[derive(serde::Deserialize)]
-struct ToshoItem {
-    #[serde(default)]
-    title: Option<String>,
-    #[serde(default)]
-    torrent_name: Option<String>,
-    #[serde(default)]
-    info_hash: Option<String>,
-    #[serde(default)]
-    magnet_uri: Option<String>,
-    #[serde(default)]
-    seeders: Option<u32>,
-    #[serde(default)]
-    total_size: Option<u64>,
+// El feed manda números como string ("seeders":"82") o número según el item.
+fn tosho_num(v: &serde_json::Value) -> Option<u64> {
+    v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
 }
 
 async fn animetosho_search(title: &str, episode: Option<u32>) -> Result<Vec<Source>, String> {
@@ -560,17 +549,22 @@ async fn animetosho_search(title: &str, episode: Option<u32>) -> Result<Vec<Sour
     if !resp.status().is_success() {
         return Err(format!("tosho {}", resp.status()));
     }
-    let items: Vec<ToshoItem> = resp.json().await.map_err(|e| format!("tosho parse: {e}"))?;
+    let items: Vec<serde_json::Value> = resp.json().await.map_err(|e| format!("tosho parse: {e}"))?;
     let mut out = Vec::new();
     for it in items.into_iter().take(PER_SOURCE_CAP) {
-        let name = it.title.or(it.torrent_name).unwrap_or_default();
-        let hash = match it.info_hash {
-            Some(h) if !h.is_empty() => h,
+        let name = it["title"]
+            .as_str()
+            .or_else(|| it["torrent_name"].as_str())
+            .unwrap_or_default()
+            .to_string();
+        let hash = match it["info_hash"].as_str() {
+            Some(h) if !h.is_empty() => h.to_string(),
             _ => continue,
         };
-        let magnet = it
-            .magnet_uri
+        let magnet = it["magnet_uri"]
+            .as_str()
             .filter(|m| m.starts_with("magnet:"))
+            .map(|m| m.to_string())
             .unwrap_or_else(|| build_magnet(&hash, &name, None));
         out.push(Source {
             source: "animetosho".into(),
@@ -578,8 +572,8 @@ async fn animetosho_search(title: &str, episode: Option<u32>) -> Result<Vec<Sour
             magnet: Some(magnet),
             url: None,
             info_hash: Some(hash),
-            size_bytes: it.total_size.filter(|n| *n > 0),
-            seeders: it.seeders,
+            size_bytes: tosho_num(&it["total_size"]).filter(|n| *n > 0),
+            seeders: tosho_num(&it["seeders"]).map(|n| n as u32),
             rd_cached: None,
             title: name,
         });

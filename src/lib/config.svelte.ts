@@ -116,7 +116,9 @@ export const config = $state({
 	sourceSelect: "auto" as SourceSelect,
 	// Pista de texto (nombre de release/grupo, ej. "fullscrabe") que sube esa
 	// fuente al tope del orden. En modo auto, es la que se reproduce. Vacío = off.
-	preferredSource: "",
+	preferredSourceMovie: "",
+	preferredSourceSeries: "",
+	preferredSourceAnime: "",
 	// Estado de la cuenta OpenSubtitles (subs externos, 20/día con cuenta). El
 	// token NO vive aquí: está en el store 0600 del backend. Solo el indicador.
 	osLinked: false,
@@ -156,7 +158,12 @@ export function loadConfig() {
 	config.subMode = sm === "sub" ? "sub" : "dub";
 	const ssel = localStorage.getItem("source_select");
 	config.sourceSelect = ssel === "manual" ? "manual" : "auto";
-	config.preferredSource = localStorage.getItem("preferred_source") || "";
+	// Fuente preferida por tipo. Migra desde el viejo `preferred_source`
+	// (campo único): si no existe el nuevo por tipo, hereda el legacy.
+	const legacyPref = localStorage.getItem("preferred_source") || "";
+	config.preferredSourceMovie = localStorage.getItem("preferred_source_movie") ?? legacyPref;
+	config.preferredSourceSeries = localStorage.getItem("preferred_source_series") ?? legacyPref;
+	config.preferredSourceAnime = localStorage.getItem("preferred_source_anime") ?? legacyPref;
 	const ss = parseInt(localStorage.getItem("sub_size") || "", 10);
 	config.subSize = Number.isFinite(ss)
 		? Math.min(200, Math.max(50, ss))
@@ -210,7 +217,9 @@ export function saveConfig() {
 	localStorage.setItem("wyzie_key", config.wyzieKey.trim());
 	localStorage.setItem("sub_mode", config.subMode);
 	localStorage.setItem("source_select", config.sourceSelect);
-	localStorage.setItem("preferred_source", config.preferredSource.trim());
+	localStorage.setItem("preferred_source_movie", config.preferredSourceMovie.trim());
+	localStorage.setItem("preferred_source_series", config.preferredSourceSeries.trim());
+	localStorage.setItem("preferred_source_anime", config.preferredSourceAnime.trim());
 	localStorage.setItem("sub_size", String(config.subSize));
 	localStorage.setItem("web_autostart", config.webAutoStart ? "1" : "0");
 	localStorage.setItem("web_port", String(config.webPort));
