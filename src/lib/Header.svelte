@@ -335,8 +335,8 @@
     align-items: center;
     gap: 8px;
     padding: 0 12px;
-    flex: 1;
-    min-width: 0;
+    flex: 1 1 0;
+    min-width: 32px;
   }
   .logo-img {
     height: 22px;
@@ -353,6 +353,9 @@
     padding: 0 12px;
     color: #d8d8e0;
     font-size: 13px;
+    margin-left: auto;
+    flex-shrink: 0;
+    white-space: nowrap;
   }
   .sep {
     width: 1px;
@@ -390,7 +393,7 @@
   }
   .net-icon.offline { color: #c44; }
   .net-ssid {
-    width: 110px;
+    max-width: 110px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .cfg-btn {
@@ -472,6 +475,7 @@
   .controls {
     display: flex;
     align-items: stretch;
+    flex-shrink: 0;
   }
   .ctrl {
     width: 46px;

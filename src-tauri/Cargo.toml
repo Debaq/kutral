@@ -1,6 +1,6 @@
 [package]
 name = "kutral"
-version = "26.5.5"
+version = "26.5.6"
 description = "Kütral"
 authors = ["you"]
 edition = "2021"
@@ -37,7 +37,6 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tiny_http = "0.12"
 local-ip-address = "0.6"
-libmpv2 = { version = "6.0.0", features = ["render"] }
 
 # Acceso directo al WebKitGTK del webview para activar MSE (Media Source
 # Extensions), necesario para que hls.js reproduzca HLS in-app. La versión
@@ -50,6 +49,9 @@ webkit2gtk = "=2.0.2"
 gtk = "0.18"
 gdk = "0.18"
 glib = "0.18"
+# libmpv embebido (solo Linux; en Windows seguimos con mpv de proceso externo,
+# por eso NO va en [dependencies] generales — alli romperia el build Windows).
+libmpv2 = { version = "6.0.0", features = ["render"] }
 # Resolver punteros GL desde libepoxy.so (el mismo loader que usa GtkGLArea):
 # se los pasamos a libmpv como get_proc_address y leemos el FBO destino.
 libloading = "0.8"
