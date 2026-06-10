@@ -2449,6 +2449,7 @@ dependencies = [
  "gtk",
  "hex",
  "image",
+ "libc",
  "libloading 0.8.9",
  "libmpv2",
  "local-ip-address",

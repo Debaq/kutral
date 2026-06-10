@@ -76,21 +76,31 @@ fn ensure_epoxy() {
 
 /// get_proc_address que pide libmpv: resuelve `name` (ej "glActiveTexture") en
 /// libepoxy. Plain fn (no closure) porque OpenGLInitParams exige `fn`.
+///
+/// libepoxy NO exporta los símbolos GL planos (`glGetString`): exporta los
+/// dispatchers como variables-puntero `epoxy_glGetString`. Así que buscamos
+/// `epoxy_<name>` y devolvemos el valor del puntero (el trampolín que resuelve
+/// la función real del contexto GL actual en la primera llamada).
 fn gl_get_proc(_ctx: &(), name: &str) -> *mut c_void {
     let lib = EPOXY_LIB.load(Ordering::Acquire);
     if lib.is_null() {
         return ptr::null_mut();
     }
     let lib: &libloading::Library = unsafe { &*lib };
-    let Ok(cname) = CString::new(name) else {
-        return ptr::null_mut();
-    };
-    unsafe {
-        match lib.get::<*const c_void>(cname.as_bytes_with_nul()) {
-            Ok(sym) => (*sym) as *mut c_void,
-            Err(_) => ptr::null_mut(),
+    // 1) nombre plano (por si alguna build de epoxy sí lo exporta).
+    // 2) fallback: epoxy_<name> (lo normal en Linux).
+    for candidate in [name.to_string(), format!("epoxy_{name}")] {
+        let Ok(cname) = CString::new(candidate) else {
+            continue;
+        };
+        if let Ok(sym) = unsafe { lib.get::<*const c_void>(cname.as_bytes_with_nul()) } {
+            let p = *sym;
+            if !p.is_null() {
+                return p as *mut c_void;
+            }
         }
     }
+    ptr::null_mut()
 }
 
 /// Puntero a glGetIntegerv (cacheado) para leer el FBO destino del GLArea.
@@ -130,6 +140,13 @@ fn config_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
 /// Crea el handle mpv, reparenta el webview en un Overlay y mete el GtkGLArea.
 pub fn init(app: &tauri::AppHandle, window: &tauri::WebviewWindow) -> Result<(), String> {
     ensure_epoxy();
+
+    // libmpv exige LC_NUMERIC="C" (decimal con punto). GTK ya fijó el locale del
+    // usuario (es_CL → coma) y eso hace que mpv_create() devuelva NULL. Reseteamos
+    // SOLO esa categoría, sin tocar el resto del locale de la UI.
+    unsafe {
+        libc::setlocale(libc::LC_NUMERIC, c"C".as_ptr());
+    }
 
     // mpv: opciones ANTES de init. vo=libmpv activa la Render API; config=yes +
     // config-dir cargan mpv.conf y los scripts (uosc).
@@ -171,7 +188,10 @@ fn build_surface(vbox: &gtk::Box) {
     let glarea = gtk::GLArea::new();
     glarea.set_hexpand(true);
     glarea.set_vexpand(true);
-    glarea.set_auto_render(false); // render solo cuando mpv avisa frame
+    // auto_render(true): GTK emite ::render al mapear/exponer → ahí creamos el
+    // render context de forma perezosa (contexto GL garantizado current). Los
+    // frames nuevos de mpv los empujamos con queue_render.
+    glarea.set_auto_render(true);
     glarea.set_use_es(false);
     glarea.set_has_stencil_buffer(true);
 
@@ -187,46 +207,43 @@ fn build_surface(vbox: &gtk::Box) {
         });
     }
 
-    // realize: contexto GL current → crear el RenderContext de mpv.
+    // render: crea el RenderContext en la PRIMERA llamada (contexto GL current,
+    // a diferencia de realize donde mpv→glGetString crasheaba) y dibuja el
+    // frame de mpv en el FBO del GLArea (tamaño en px reales = lógico * scale,
+    // arregla el escalado HiDPI de raíz).
     {
         let render = render.clone();
         let tx = tx.clone();
-        glarea.connect_realize(move |area| {
-            area.make_current();
-            if let Some(err) = area.error() {
-                eprintln!("[mpv-embed] GLArea realize error: {err}");
-                return;
-            }
-            let Some(mpv) = MPV.get() else { return };
-            let params = [
-                RenderParam::ApiType(RenderParamApiType::OpenGl),
-                RenderParam::InitParams(OpenGLInitParams {
-                    get_proc_address: gl_get_proc,
-                    ctx: (),
-                }),
-            ];
-            match mpv.create_render_context(params) {
-                Ok(mut ctx) => {
-                    let tx = tx.clone();
-                    ctx.set_update_callback(move || {
-                        let _ = tx.send(());
-                    });
-                    *render.borrow_mut() = Some(ctx);
-                    eprintln!("[mpv-embed] render context creado");
-                }
-                Err(e) => eprintln!("[mpv-embed] create_render_context: {e}"),
-            }
-        });
-    }
-
-    // render: dibujar el frame de mpv en el FBO del GLArea (tamaño en px reales
-    // = lógico * scale_factor → arregla el escalado HiDPI de raíz).
-    {
-        let render = render.clone();
         glarea.connect_render(move |area, _gl| {
+            let need_init = render.borrow().is_none();
+            if need_init {
+                if let Some(mpv) = MPV.get() {
+                    let params = [
+                        RenderParam::ApiType(RenderParamApiType::OpenGl),
+                        RenderParam::InitParams(OpenGLInitParams {
+                            get_proc_address: gl_get_proc,
+                            ctx: (),
+                        }),
+                    ];
+                    match mpv.create_render_context(params) {
+                        Ok(mut ctx) => {
+                            let tx = tx.clone();
+                            ctx.set_update_callback(move || {
+                                let _ = tx.send(());
+                            });
+                            *render.borrow_mut() = Some(ctx);
+                            eprintln!("[mpv-embed] render context creado");
+                        }
+                        Err(e) => {
+                            eprintln!("[mpv-embed] create_render_context: {e}");
+                            return glib::Propagation::Proceed;
+                        }
+                    }
+                }
+            }
             let scale = area.scale_factor();
-            let w = area.allocated_width() * scale;
-            let h = area.allocated_height() * scale;
+            let w = (area.allocated_width() * scale).max(1);
+            let h = (area.allocated_height() * scale).max(1);
             let mut fbo: i32 = 0;
             if let Some(get) = gl_get_integerv() {
                 unsafe { get(GL_DRAW_FRAMEBUFFER_BINDING, &mut fbo) };

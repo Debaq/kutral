@@ -53,4 +53,7 @@ glib = "0.18"
 # Resolver punteros GL desde libepoxy.so (el mismo loader que usa GtkGLArea):
 # se los pasamos a libmpv como get_proc_address y leemos el FBO destino.
 libloading = "0.8"
+# setlocale(LC_NUMERIC, "C"): libmpv lo exige y GTK fija el locale del usuario
+# (decimal con coma) → sin esto mpv_create() devuelve NULL.
+libc = "0.2"
 
