@@ -185,42 +185,50 @@ fn mpv_cmd2(name: &str, args: &[&str]) {
     }
 }
 
-/// Construye el ASS del bar con la acción enfocada resaltada (naranja marca).
+// osd-overlay ids: 46 = fondo (pill), 47 = textos. Canvas virtual 1280×720.
+const BAR_BG_ID: &str = "46";
+const BAR_FG_ID: &str = "47";
+
+/// Fondo: pill inferior oscuro semi-transparente (ASS drawing con esquinas).
+fn build_bar_bg() -> String {
+    // \1a = transparencia (00 opaco … FF transp). Dark #0A0F12 → &H120F0A&.
+    "{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H120F0A&\\1a&H35&\\p1}\
+     m 150 560 b 150 542 164 528 182 528 l 1098 528 b 1116 528 1130 542 1130 560 \
+     l 1130 612 b 1130 630 1116 644 1098 644 l 182 644 b 164 644 150 630 150 612{\\p0}"
+        .to_string()
+}
+
+/// Textos del bar: acción enfocada en naranja+negrita, resto cream. Separadores
+/// tenues. Sombra para legibilidad sobre el video.
 fn build_bar_ass(focus: usize) -> String {
-    // Colores ASS = &HBBGGRR&. Naranja f97316 → &H1673F9&. Texto cream c8c8c8.
-    let mut s =
-        String::from("{\\an5\\pos(640,664)\\fs26\\bord1.4\\3c&H221A1A&\\1c&HC8C8C8&}");
+    // Colores ASS = &HBBGGRR&. Naranja f97316 → &H1673F9&. Cream → &HE8E0D0&.
+    let mut s = String::from("{\\an5\\pos(640,586)\\fs30\\bord0\\shad1.2\\4c&H000000&}");
     for (i, label) in ACTIONS.iter().enumerate() {
         if i > 0 {
-            s.push_str("     ");
+            s.push_str("{\\1c&H6B6256&\\b0}   ·   ");
         }
         if i == focus {
-            s.push_str("{\\1c&H1673F9&\\b1\\fs30}");
-            s.push_str(label);
-            s.push_str("{\\1c&HC8C8C8&\\b0\\fs26}");
+            s.push_str(&format!("{{\\1c&H1673F9&\\b1}}{label}"));
         } else {
-            s.push_str(label);
+            s.push_str(&format!("{{\\1c&HE8E0D0&\\b0}}{label}"));
         }
     }
     s
 }
 
-/// Dibuja/actualiza el bar (osd-overlay id=47, canvas 1280×720).
+/// Dibuja/actualiza el bar (fondo + textos).
 fn draw_bar() {
     let focus = PLAYER_UI.with(|u| u.borrow().focus);
-    let ass = build_bar_ass(focus);
-    mpv_cmd2(
-        "osd-overlay",
-        &["47", "ass-events", &ass, "1280", "720", "0", "no", "no"],
-    );
+    let bg = build_bar_bg();
+    mpv_cmd2("osd-overlay", &[BAR_BG_ID, "ass-events", &bg, "1280", "720", "0", "no", "no"]);
+    let fg = build_bar_ass(focus);
+    mpv_cmd2("osd-overlay", &[BAR_FG_ID, "ass-events", &fg, "1280", "720", "0", "no", "no"]);
 }
 
-/// Quita el bar.
+/// Quita el bar (fondo + textos).
 fn clear_bar() {
-    mpv_cmd2(
-        "osd-overlay",
-        &["47", "none", "", "1280", "720", "0", "no", "no"],
-    );
+    mpv_cmd2("osd-overlay", &[BAR_BG_ID, "none", "", "1280", "720", "0", "no", "no"]);
+    mpv_cmd2("osd-overlay", &[BAR_FG_ID, "none", "", "1280", "720", "0", "no", "no"]);
 }
 
 /// Pausa y muestra el bar (foco en Reanudar).
@@ -265,15 +273,27 @@ fn move_focus(delta: i32) {
     draw_bar();
 }
 
-/// Activa la acción enfocada.
+/// Activa la acción enfocada (con feedback OSD visible).
 fn activate_focus() {
     let f = PLAYER_UI.with(|u| u.borrow().focus);
     match f {
-        0 => mpv_cmd2("seek", &["-10"]),
+        0 => {
+            mpv_cmd2("seek", &["-10"]);
+            mpv_cmd2("show-text", &["⏪ -10s   ${time-pos}", "1200"]);
+        }
         1 => resume_play(),
-        2 => mpv_cmd2("seek", &["10"]),
-        3 => mpv_cmd2("cycle", &["sub"]),
-        4 => mpv_cmd2("cycle", &["audio"]),
+        2 => {
+            mpv_cmd2("seek", &["10"]);
+            mpv_cmd2("show-text", &["⏩ +10s   ${time-pos}", "1200"]);
+        }
+        3 => {
+            mpv_cmd2("cycle", &["sub"]);
+            mpv_cmd2("show-text", &["Subtítulo: ${sub} / ${track-list/count}", "1500"]);
+        }
+        4 => {
+            mpv_cmd2("cycle", &["audio"]);
+            mpv_cmd2("show-text", &["Audio: ${audio} — ${current-tracks/audio/title}", "1500"]);
+        }
         5 => {
             let _ = stop();
         }
