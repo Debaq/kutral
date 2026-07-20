@@ -16,3 +16,4 @@ vite.config.ts.timestamp-*
 # Local build artifacts (Kutral.sh)
 /out
 /dist
+/kutral.zip

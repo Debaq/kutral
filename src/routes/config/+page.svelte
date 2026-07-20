@@ -300,6 +300,12 @@
     setTimeout(() => { saved = false; }, 1800);
   }
 
+  function updateWyzieKey(value: string) {
+    wyzieKey = value;
+    config.wyzieKey = value.trim();
+    saveConfig();
+  }
+
   function back() {
     goto("/");
   }
@@ -998,8 +1004,11 @@
             <div class="key-row">
               <input
                 type={showWyzie ? "text" : "password"}
-                bind:value={wyzieKey}
+                value={wyzieKey}
+                oninput={(e) => updateWyzieKey(e.currentTarget.value)}
                 placeholder="Sin key: el player usa OpenSubtitles"
+                autocomplete="off"
+                spellcheck="false"
               />
               <button type="button" class="btn-ghost" onclick={() => (showWyzie = !showWyzie)}>
                 {showWyzie ? "Ocultar" : "Mostrar"}
