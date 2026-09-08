@@ -23,6 +23,7 @@
       titulo: "Globales",
       lineas: [
         { tecla: "I-I", desc: "Abrir / cerrar esta ayuda" },
+        { tecla: "P", desc: "Volver a la reproducción en pausa" },
         { tecla: "Esc", desc: "Paso atrás · cerrar modal" },
         { tecla: "Backspace", desc: "Salir a home · cerrar modal" },
       ],
@@ -73,7 +74,13 @@
       id: "discover",
       titulo: "Reproducción · trailer",
       lineas: [
-        { tecla: "Esc · Backspace", desc: "Cerrar reproducción" },
+        { tecla: "Esc · Backspace", desc: "Salir a los menús dejando en pausa" },
+        { tecla: "P", desc: "Volver a lo que quedó en pausa" },
+        { tecla: "Enter · Espacio", desc: "Pausar y abrir el bar de iconos" },
+        { tecla: "← →", desc: "Reproduciendo: saltar 10s · pausado: mover foco" },
+        { tecla: "c · a · v", desc: "Menú de subtítulos · audio · video" },
+        { tecla: "Mouse", desc: "Mover saca el bar · click activa el icono" },
+        { tecla: "✕ Salir (bar)", desc: "Cerrar la reproducción del todo" },
       ],
     },
     {

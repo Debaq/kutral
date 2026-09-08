@@ -718,7 +718,7 @@ pub fn emu_play(
         }
     })?;
 
-    *state.child.lock().unwrap() = Some(child);
+    *state.child.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
     Ok(())
 }
 
@@ -742,7 +742,7 @@ pub fn emu_stop(state: tauri::State<'_, EmuState>) -> Result<(), String> {
 }
 
 fn alive(state: &tauri::State<'_, EmuState>) -> bool {
-    let mut guard = state.child.lock().unwrap();
+    let mut guard = state.child.lock().unwrap_or_else(|e| e.into_inner());
     match guard.as_mut() {
         Some(c) => match c.try_wait() {
             Ok(Some(_)) => {
@@ -824,7 +824,7 @@ pub fn remote_to_emu(app: &tauri::AppHandle, key: &str, pressed: bool) -> bool {
 }
 
 fn kill_existing(state: &tauri::State<'_, EmuState>) {
-    if let Some(mut child) = state.child.lock().unwrap().take() {
+    if let Some(mut child) = state.child.lock().unwrap_or_else(|e| e.into_inner()).take() {
         let _ = child.kill();
         let _ = child.wait();
     }

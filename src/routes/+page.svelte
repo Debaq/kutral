@@ -2,7 +2,6 @@
   import { invoke, convertFileSrc } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
-  import { openUrl } from "@tauri-apps/plugin-opener";
   import Database from "@tauri-apps/plugin-sql";
   import { onDestroy, onMount } from "svelte";
   import { afterNavigate } from "$app/navigation";
@@ -11,12 +10,12 @@
   import { config } from "$lib/config.svelte";
   import SourcePicker from "$lib/SourcePicker.svelte";
   import PlayMenu from "$lib/PlayMenu.svelte";
+  import QRCode from "qrcode";
   import EpisodePicker from "$lib/EpisodePicker.svelte";
   import { ANIME_GENRES, ANILIST_SORTS, anilistGenresCSV, animeSeasonOptions } from "$lib/anime";
   import RemoteQr from "$lib/RemoteQr.svelte";
   import {
     cargarNoDisponiblesIniciales,
-    encolarScreening,
     pausarScreening,
     suscribirScreening,
   } from "$lib/screening.svelte";
@@ -44,16 +43,6 @@
   let personLoading = $state(false);
   // Carrusel de escenas (backdrops) en pantalla completa.
   let carousel = $state<{ images: string[]; idx: number } | null>(null);
-
-  type TrailerSource = "nocookie" | "youtube" | "invidious" | "piped";
-  const TRAILER_SOURCES: { id: TrailerSource; label: string; build: (k: string) => string }[] = [
-    { id: "nocookie",  label: "YouTube (sin cookies)", build: (k) => `https://www.youtube-nocookie.com/embed/${k}?autoplay=1&rel=0&modestbranding=1` },
-    { id: "youtube",   label: "YouTube clásico",       build: (k) => `https://www.youtube.com/embed/${k}?autoplay=1&rel=0&modestbranding=1` },
-    { id: "invidious", label: "Invidious (yewtu.be)",  build: (k) => `https://yewtu.be/embed/${k}?autoplay=1` },
-    { id: "piped",     label: "Piped",                 build: (k) => `https://piped.video/embed/${k}?autoplay=1` },
-  ];
-  let trailerSource = $state<TrailerSource>("nocookie");
-  let trailerSourceOpen = $state(false);
 
   const BACK_KEYS = ["Escape", "Backspace"];
   const ARROW_KEYS = ["Up", "Down", "Left", "Right"];
@@ -140,6 +129,7 @@
     year: string;
     imdb_id?: string;
     runtime?: number;
+    original_title?: string | null;
     genres: string[];
     directors: PersonMini[];
     cast: PersonMini[];
@@ -438,8 +428,9 @@
 
   let mode = $state<"browse" | "discover" | "trailer" | "unavailable" | "sources" | "playmenu" | "episodes">("browse");
   let checkingDiscover = $state(false);
-  let trailerKey = $state<string>("");
-  let appleTrailerUrl = $state<string>("");
+  // Pantalla de último recurso: QR al video de YouTube.
+  let trailerQr = $state<string>("");
+  let trailerQrUrl = $state<string>("");
   // Datos extra para PlayMenu: OMDb (premios/ratings/plot) + trailer pre-cargado.
   type OmdbRating = { source: string; value: string };
   type OmdbDetail = {
@@ -458,16 +449,14 @@
     ratings: OmdbRating[];
   };
   let menuOmdb = $state<OmdbDetail | null>(null);
-  let menuTrailerKey = $state<string>("");
-  let menuApple = $state<string>("");
+  let menuTrailerPick = $state<TrailerPick>({ ytKey: "", apple: "", playable: false, err: "" });
   const omdbCache = new Map<string, OmdbDetail>();
-  const trailerCache = new Map<string, { yt: string; apple: string }>();
+  const trailerCache = new Map<string, TrailerPick>();
   let unavailable = $state<{ open: boolean; reason: "404" | "no_imdb"; checking: boolean }>({
     open: false,
     reason: "404",
     checking: false,
   });
-  type Video = { key: string; name: string; site: string; type: string; official: boolean };
 
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -507,8 +496,6 @@
 
     // apiKey ya fue leída sync al principio del onMount para evitar race
     // con afterNavigate. Acá solo cargamos lo demás.
-    const ts = (localStorage.getItem("trailer_src") as TrailerSource) || "nocookie";
-    if (TRAILER_SOURCES.some((s) => s.id === ts)) trailerSource = ts;
     if (apiKey) {
       loadGenres();
       resetAndLoad();
@@ -858,28 +845,117 @@
     console.log("[db] load para", selected.imdb_id, "→", progressForSelected);
   }
 
-  function setTrailerSource(s: TrailerSource) {
-    trailerSource = s;
-    localStorage.setItem("trailer_src", s);
-    trailerSourceOpen = false;
-  }
+  // Resultado de la búsqueda de trailer.
+  //  - `ytKey`: video de YouTube que existe (verificado contra oEmbed).
+  //  - `playable`: yt-dlp lo puede resolver → mpv lo reproduce.
+  //  - `apple`: mp4 de iTunes, alternativa cuando YouTube no se puede.
+  type TrailerPick = { ytKey: string; apple: string; playable: boolean; err: string };
 
-  function trailerUrl(key: string): string {
-    return (TRAILER_SOURCES.find((s) => s.id === trailerSource) || TRAILER_SOURCES[0]).build(key);
-  }
-
-  async function openTrailerExternal() {
+  // Los trailers se reproducen SIEMPRE en mpv, nunca en el webview:
+  //  1. El iframe de YouTube da "error 153" en Tauri (el origen es
+  //     `tauri://localhost`, que no es un referrer http(s) válido) — pasa con
+  //     todos los videos, permitan embed o no. Invidious/Piped tampoco: sus
+  //     instancias públicas están caídas o bloqueadas.
+  //  2. Un <video> tampoco sirve: YouTube ya casi no entrega formatos
+  //     progresivos, el video y el audio van en streams DASH separados y el
+  //     webview no los puede juntar.
+  // mpv sí los junta (ytdl_hook + yt-dlp de vendor/), así que la reproducción
+  // va por ahí. Si ni eso, se muestra un QR para verlo en el celular.
+  //
+  // TMDb va antes que Apple porque se consulta por id exacto y nunca devuelve
+  // otra película; iTunes solo se puede buscar por texto y para títulos fuera
+  // del catálogo US (cine coreano, indio, europeo) el match es frágil.
+  async function resolveTrailer(d: {
+    media_type: "movie" | "tv";
+    id: number;
+    title: string;
+    original_title?: string | null;
+    year?: string;
+  }): Promise<TrailerPick> {
+    const out: TrailerPick = { ytKey: "", apple: "", playable: false, err: "" };
     try {
-      if (appleTrailerUrl) {
-        await openUrl(appleTrailerUrl);
-        return;
-      }
-      if (trailerKey) {
-        await openUrl(`https://www.youtube.com/watch?v=${trailerKey}`);
-      }
+      const tk = await invoke<{ key: string; embeddable: boolean } | null>("tmdb_trailer_key", {
+        mediaType: d.media_type,
+        id: d.id,
+        apiKey,
+      });
+      if (tk?.key) out.ytKey = tk.key;
     } catch (e) {
-      console.warn("openUrl falló", e);
+      console.warn("[tmdb_trailer_key]", e);
     }
+    if (out.ytKey) {
+      const chk = await ytPlayable(out.ytKey);
+      out.playable = chk.ok;
+      out.err = chk.err;
+      if (out.playable) return out;
+    }
+    try {
+      const a = await invoke<{ url: string } | null>("apple_trailer", {
+        title: d.title,
+        originalTitle: d.original_title || "",
+        year: d.year || "",
+        mediaType: d.media_type,
+      });
+      if (a?.url) out.apple = a.url;
+    } catch (e) {
+      console.warn("[apple_trailer]", e);
+    }
+    return out;
+  }
+
+  // ¿yt-dlp puede resolver el video? `err` casi siempre es que falta el binario
+  // en vendor/ (lo baja vendor/fetch.sh) o que YouTube pide verificación.
+  async function ytPlayable(key: string): Promise<{ ok: boolean; err: string }> {
+    try {
+      const ok = await invoke<boolean>("yt_playable", { key });
+      return { ok, err: ok ? "" : "yt-dlp no resolvió el video" };
+    } catch (e) {
+      console.warn("[yt_playable]", e);
+      return { ok: false, err: String(e) };
+    }
+  }
+
+  // Trailer de anime: la key viene de AniList; TMDb/Apple no aplican porque el
+  // id no es de TMDb.
+  async function resolveAnimeTrailer(key: string): Promise<TrailerPick> {
+    const out: TrailerPick = { ytKey: key, apple: "", playable: false, err: "" };
+    if (!key) return out;
+    const chk = await ytPlayable(key);
+    out.playable = chk.ok;
+    out.err = chk.err;
+    return out;
+  }
+
+  // Reproduce el trailer en mpv. Devuelve false si mpv no lo aceptó.
+  async function playTrailerInMpv(url: string, title: string): Promise<boolean> {
+    try {
+      // mpv_play_trailer, no mpv_play: un trailer no reemplaza la película que
+      // estuviera esperando ni se queda él mismo en la pill al salir.
+      await invoke("mpv_play_trailer", { url, title: `Trailer — ${title}` });
+      setPlaying(true);
+      return true;
+    } catch (e) {
+      console.warn("[mpv_play trailer]", e);
+      return false;
+    }
+  }
+
+  // Último recurso: pantalla con QR para ver el trailer en el celular.
+  async function showTrailerQr(key: string) {
+    trailerQrUrl = `https://youtu.be/${key}`;
+    try {
+      trailerQr = await QRCode.toDataURL(trailerQrUrl, { width: 420, margin: 1 });
+    } catch (e) {
+      console.warn("[qr]", e);
+      trailerQr = "";
+      trailerMsg = "No se pudo generar el QR del trailer.";
+      setTimeout(() => (trailerMsg = ""), 4000);
+      return;
+    }
+    mode = "trailer";
+    setFs(true);
+    registerBackShortcuts(true);
+    setTimeout(() => document.querySelector<HTMLElement>(".trailer-bar .bar-btn")?.focus(), 50);
   }
 
   function saveKey() {
@@ -979,8 +1055,18 @@
   // 5 físico, 6 TV. Excluye 1 (premiere de festival). Solo aplica a movie.
   const RELEASE_TYPES_DISPONIBLES = "2|3|4|5|6";
 
+  // Token de generación. Cada loadList se queda con su número al entrar; si
+  // entremedio arranca otra (el user siguió tecleando, cambió de tab, de
+  // género o de orden), la vieja descarta su respuesta al volver.
+  //
+  // Sin esto: escribes "batman" rápido → salen 2-3 búsquedas y la que responde
+  // ÚLTIMA gana, no la que corresponde al texto actual. El grid terminaba
+  // mostrando resultados de "batm" o de la lista anterior.
+  let loadGen = 0;
+
   async function loadList(append: boolean) {
     if (!apiKey && tab !== "anime") return;
+    const gen = ++loadGen;
     if (append) loadingMore = true; else listLoading = true;
     listError = "";
     try {
@@ -1011,8 +1097,13 @@
             primaryReleaseDateLte: hoyISO(),
             withReleaseType: mt === "movie" ? RELEASE_TYPES_DISPONIBLES : undefined,
           });
+      if (gen !== loadGen) return; // respuesta obsoleta: no pisar la actual
       totalPages = Math.min(resp.total_pages, 500);
-      const newItems = resp.results;
+      // Sin póster = ficha fantasma. Queda un resto que el piso de votos del
+      // backend no atrapa (sobre todo en "Más antiguas": cine mudo real pero
+      // sin arte). Una card sin imagen no se puede ni mirar ni elegir, así
+      // que fuera del grid.
+      const newItems = resp.results.filter((x) => !!x.poster_path);
       if (append) {
         // TMDb repite títulos entre páginas consecutivas (la popularidad
         // cambia entre requests). Sin dedup, la key duplicada en {#each}
@@ -1025,10 +1116,11 @@
         items = newItems;
         cardEls = new Array(newItems.length).fill(null);
       }
-      // hasMore mira newItems (crudo), no fresh: una página 100% duplicada
-      // no significa fin de lista.
-      hasMore = page < totalPages && newItems.length > 0;
+      // hasMore mira la página CRUDA, no la filtrada: una página que quedó
+      // vacía por el filtro de póster no significa fin de lista.
+      hasMore = page < totalPages && resp.results.length > 0;
     } catch (e) {
+      if (gen !== loadGen) return; // el error es de una carga ya descartada
       listError = String(e);
       if (append) {
         // Error transitorio (429/red): revertir página y dejar hasMore
@@ -1039,8 +1131,12 @@
         hasMore = false;
       }
     } finally {
-      listLoading = false;
-      loadingMore = false;
+      // Solo la carga vigente apaga los spinners: si una vieja los apagara,
+      // el grid se vería "listo" con la nueva todavía en vuelo.
+      if (gen === loadGen) {
+        listLoading = false;
+        loadingMore = false;
+      }
     }
   }
 
@@ -1082,9 +1178,10 @@
         const im = new Map(imdbIdMap);
         im.set(id, s.imdb_id);
         imdbIdMap = im;
-        // Disparar screening de fondo: si el título no tiene player real,
-        // queda marcado y la UI esconde el botón Descubrir.
-        void encolarScreening([s.imdb_id], tabToMediaType(tab));
+        // Screening automático (vaplayer) desactivado: esa API dejó de ser
+        // confiable como fuente de verdad y marcaba pelis sanas como no
+        // disponibles. Única vía de reproducción real: debrid (PlayMenu).
+        // El reporte manual del user ("Marcar como no disponible") sigue activo.
         // Premios/nominaciones (Wikidata). Cache + cola con concurrencia.
         enqueueAwards(s.imdb_id);
       }
@@ -1240,7 +1337,7 @@
     const p = (async () => {
       try {
         const d = tab === "anime"
-          ? await invoke<Detail>("anilist_detail", { id: it.id })
+          ? await invoke<Detail>("anilist_detail", { id: it.id, apiKey })
           : await invoke<Detail>("tmdb_detail", { mediaType: tabToMediaType(tab), id: it.id, apiKey });
         selected = d;
         // Nuevo título → resetear vista de capítulos y episodio elegido.
@@ -1515,6 +1612,8 @@
     void registerBackShortcuts(false);
   }
 
+  const EMPTY_PICK: TrailerPick = { ytKey: "", apple: "", playable: false, err: "" };
+
   // Bajamos OMDb (premios/ratings/plot largo) + trailer en paralelo cuando se
   // abre el PlayMenu. No bloquea: la UI ya mostró todo lo que tiene de TMDb.
   async function prefetchMenuExtras() {
@@ -1522,28 +1621,26 @@
     // aplican — el id es de AniList, no de TMDb.
     if (selected?.is_anime) {
       menuOmdb = null;
-      menuApple = "";
-      menuTrailerKey = selected.trailer_youtube || "";
+      menuTrailerPick = EMPTY_PICK;
+      const key = selected.trailer_youtube || "";
+      const animeId = selected.id;
+      const pick = await resolveAnimeTrailer(key);
+      if (selected?.id === animeId) menuTrailerPick = pick;
       return;
     }
     if (!selected?.imdb_id) {
       menuOmdb = null;
-      menuTrailerKey = "";
-      menuApple = "";
+      menuTrailerPick = EMPTY_PICK;
       return;
     }
     const imdb = selected.imdb_id;
-    const mediaType = selected.media_type;
-    const title = selected.title;
-    const year = selected.year || "";
-    const tmdbId = selected.id;
+    const detail = selected;
     const omdbKey = (config.omdbKey || "").trim();
 
     // Servir desde cache si existe.
     menuOmdb = omdbCache.get(imdb) ?? null;
     const tCache = trailerCache.get(imdb);
-    menuTrailerKey = tCache?.yt || "";
-    menuApple = tCache?.apple || "";
+    menuTrailerPick = tCache ?? EMPTY_PICK;
 
     const tasks: Promise<unknown>[] = [];
 
@@ -1561,27 +1658,9 @@
     if (!trailerCache.has(imdb)) {
       tasks.push(
         (async () => {
-          let yt = "";
-          let apple = "";
-          try {
-            const a = await invoke<{ url: string } | null>("apple_trailer", {
-              title, year, mediaType,
-            });
-            if (a?.url) apple = a.url;
-          } catch (e) { console.warn("[apple_trailer menu]", e); }
-          if (!apple) {
-            try {
-              const vids = await invoke<Video[]>("tmdb_videos", {
-                mediaType, id: tmdbId, apiKey,
-              });
-              if (vids.length) yt = vids[0].key;
-            } catch (e) { console.warn("[tmdb_videos menu]", e); }
-          }
-          trailerCache.set(imdb, { yt, apple });
-          if (selected?.imdb_id === imdb) {
-            menuTrailerKey = yt;
-            menuApple = apple;
-          }
+          const pick = await resolveTrailer(detail);
+          trailerCache.set(imdb, pick);
+          if (selected?.imdb_id === imdb) menuTrailerPick = pick;
         })(),
       );
     }
@@ -1590,23 +1669,32 @@
   }
 
   // Acción "Trailer" desde PlayMenu: reusa los datos ya bajados.
-  function menuTrailer() {
-    if (menuApple) {
-      appleTrailerUrl = menuApple;
-      mode = "trailer";
-      setFs(true);
-      setTimeout(() => document.querySelector<HTMLElement>(".trailer-bar .bar-btn")?.focus(), 50);
+  async function menuTrailer() {
+    if (!selected) return;
+    const pick = menuTrailerPick;
+    // Nada prefetcheado todavía → flujo completo (busca y avisa).
+    if (!pick.ytKey && !pick.apple) {
+      void watchTrailer();
       return;
     }
-    if (menuTrailerKey) {
-      trailerKey = menuTrailerKey;
-      mode = "trailer";
-      setFs(true);
-      setTimeout(() => document.querySelector<HTMLElement>(".trailer-bar .bar-btn")?.focus(), 50);
+    await playPick(pick, selected.title);
+  }
+
+  // Reproduce lo mejor disponible del pick; QR si no hay forma de verlo dentro.
+  async function playPick(pick: TrailerPick, title: string): Promise<void> {
+    if (pick.playable && pick.ytKey) {
+      if (await playTrailerInMpv(`https://www.youtube.com/watch?v=${pick.ytKey}`, title)) return;
+    }
+    if (pick.apple) {
+      if (await playTrailerInMpv(pick.apple, title)) return;
+    }
+    if (pick.ytKey) {
+      if (pick.err) console.warn("[trailer] sin reproducción local:", pick.err);
+      await showTrailerQr(pick.ytKey);
       return;
     }
-    // Fallback al flujo original (busca de nuevo).
-    void watchTrailer();
+    trailerMsg = `Sin trailer disponible para "${title}".`;
+    setTimeout(() => (trailerMsg = ""), 4000);
   }
 
   // --- Acciones del menú ---
@@ -1696,8 +1784,8 @@
       }
     }
     mode = "browse";
-    trailerKey = "";
-    appleTrailerUrl = "";
+    trailerQr = "";
+    trailerQrUrl = "";
     discoverSrc = "";
     setFs(false);
     unregisterBackShortcuts();
@@ -1708,71 +1796,19 @@
   async function watchTrailer() {
     if (!selected) return;
     unavailable.open = false;
+    trailerMsg = "Buscando trailer…";
+    trailerQr = "";
+    trailerQrUrl = "";
+
+    const title = selected.title;
+    // Anime: la key viene de AniList; TMDb/Apple no aplican (el id no es TMDb).
+    const pick = selected.is_anime
+      ? await resolveAnimeTrailer(selected.trailer_youtube || "")
+      : await resolveTrailer(selected);
     trailerMsg = "";
-    appleTrailerUrl = "";
-    trailerKey = "";
+    console.log("[trailer]", title, "→", pick);
 
-    // Anime: trailer de AniList (YouTube key) — Apple/TMDb no aplican.
-    if (selected.is_anime) {
-      if (selected.trailer_youtube) {
-        trailerKey = selected.trailer_youtube;
-        mode = "trailer";
-        setFs(true);
-        registerBackShortcuts(true);
-        setTimeout(() => document.querySelector<HTMLElement>(".trailer-bar .bar-btn")?.focus(), 50);
-      } else {
-        trailerMsg = `Sin trailer disponible para "${selected.title}".`;
-        setTimeout(() => (trailerMsg = ""), 4000);
-      }
-      return;
-    }
-
-    // 1) Apple primero (mp4 directo, sin embed YouTube → no error 153).
-    try {
-      const apple = await invoke<{ url: string; title: string; year: string | null } | null>(
-        "apple_trailer",
-        {
-          title: selected.title,
-          year: selected.year || "",
-          mediaType: selected.media_type,
-        }
-      );
-      console.log("[apple_trailer]", selected.title, "→", apple);
-      if (apple && apple.url) {
-        appleTrailerUrl = apple.url;
-        mode = "trailer";
-        setFs(true);
-        registerBackShortcuts(true);
-        setTimeout(() => document.querySelector<HTMLElement>(".trailer-bar .bar-btn")?.focus(), 50);
-        return;
-      }
-    } catch (e) {
-      console.warn("[apple_trailer] error", e);
-    }
-
-    // 2) Fallback TMDb (YouTube embed — puede fallar con error 153 en Tauri).
-    try {
-      const vids = await invoke<Video[]>("tmdb_videos", {
-        mediaType: selected.media_type,
-        id: selected.id,
-        apiKey,
-      });
-      console.log("[tmdb_videos]", selected.media_type, selected.id, "→", vids);
-      if (!vids.length) {
-        trailerMsg = `Sin trailer disponible para "${selected.title}".`;
-        setTimeout(() => (trailerMsg = ""), 4000);
-        return;
-      }
-      trailerKey = vids[0].key;
-      mode = "trailer";
-      setFs(true);
-      registerBackShortcuts(true);
-      setTimeout(() => document.querySelector<HTMLElement>(".trailer-bar .bar-btn")?.focus(), 50);
-    } catch (e) {
-      console.warn("[tmdb_videos] error", e);
-      trailerMsg = `Error trayendo trailer: ${e}`;
-      setTimeout(() => (trailerMsg = ""), 5000);
-    }
+    await playPick(pick, title);
   }
 
   function getNavRoot(): ParentNode {
@@ -2012,8 +2048,7 @@
     progressLabel={progressLabelFor()}
     posterUrl={selected.poster_path ? art(selected.poster_path, "w342", 342) : null}
     backdropUrl={selected.backdrop_path ? art(selected.backdrop_path, "w1280", 1280) : null}
-    trailerKey={menuTrailerKey}
-    appleTrailerUrl={menuApple}
+    hasTrailer={!!(menuTrailerPick.ytKey || menuTrailerPick.apple)}
     hasRd={config.rdLinked}
     onContinue={menuContinue}
     onRestart={menuRestart}
@@ -2065,54 +2100,20 @@
       allow="autoplay; fullscreen; picture-in-picture"
     ></iframe>
   </div>
-{:else if mode === "trailer" && (appleTrailerUrl || trailerKey)}
-  <div class="discover-mode">
+{:else if mode === "trailer" && trailerQr}
+  <div class="discover-mode trailer-qr-mode">
     <div class="trailer-bar">
       <button data-nav class="bar-btn" onclick={stopDiscover} title="Volver (Esc / Backspace)">
         ← Volver
       </button>
-      <div class="trailer-badge-inline">TRAILER{appleTrailerUrl ? " · Apple" : ""}</div>
-      {#if !appleTrailerUrl}
-        <div class="dropdown">
-          <button data-nav class="bar-btn" onclick={() => (trailerSourceOpen = !trailerSourceOpen)}>
-            {TRAILER_SOURCES.find(s => s.id === trailerSource)?.label} ▾
-          </button>
-          {#if trailerSourceOpen}
-            <ul class="dropdown-menu menu-up" use:autofocusFirst>
-              {#each TRAILER_SOURCES as s}
-                <li>
-                  <button data-nav class:active={s.id === trailerSource} onclick={() => setTrailerSource(s.id)}>
-                    {s.label}
-                  </button>
-                </li>
-              {/each}
-            </ul>
-          {/if}
-        </div>
-      {/if}
-      <button data-nav class="bar-btn" onclick={openTrailerExternal} title="Abrir en navegador">
-        ↗ Externo
-      </button>
+      <div class="trailer-badge-inline">TRAILER</div>
     </div>
-    {#if appleTrailerUrl}
-      <!-- svelte-ignore a11y_media_has_caption -->
-      <video
-        src={appleTrailerUrl}
-        autoplay
-        controls
-        playsinline
-        crossorigin="anonymous"
-      ></video>
-    {:else}
-      {#key trailerSource}
-        <iframe
-          src={trailerUrl(trailerKey)}
-          title="trailer"
-          referrerpolicy="no-referrer"
-          allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
-        ></iframe>
-      {/key}
-    {/if}
+    <div class="trailer-qr">
+      <h2>Trailer disponible en YouTube</h2>
+      <p>Escanea el código con el celular para verlo ahí.</p>
+      <img src={trailerQr} alt="Código QR del trailer en YouTube" />
+      <code>{trailerQrUrl}</code>
+    </div>
   </div>
 {:else}
   <main>
@@ -3666,8 +3667,7 @@
 
   /* PLAY mode */
   .discover-mode { position: fixed; inset: 0; background: #000; z-index: 1500; }
-  .discover-mode iframe,
-  .discover-mode video { width: 100%; height: 100%; border: 0; background: #000; object-fit: contain; }
+  .discover-mode iframe { width: 100%; height: 100%; border: 0; background: #000; }
   .back-btn {
     position: absolute; top: 14px; right: 14px; z-index: 1100;
     display: inline-flex; align-items: center; gap: 8px;
@@ -3741,6 +3741,20 @@
     pointer-events: none;
   }
   .trailer-bar > * { pointer-events: auto; }
+  /* Último recurso del trailer: QR para verlo en el celular. */
+  .trailer-qr-mode { display: grid; place-items: center; }
+  .trailer-qr {
+    display: flex; flex-direction: column; align-items: center; gap: 18px;
+    padding: 40px; text-align: center;
+  }
+  .trailer-qr h2 { margin: 0; font-size: 28px; color: #fff; }
+  .trailer-qr p { margin: 0; color: #9a9aa8; font-size: 15px; }
+  .trailer-qr img {
+    width: 300px; height: 300px;
+    background: #fff; padding: 12px; border-radius: 12px;
+  }
+  .trailer-qr code { color: #f5c518; font-size: 14px; letter-spacing: 0.5px; }
+
   .trailer-badge-inline {
     padding: 5px 12px;
     background: #f5c518; color: #0d0d12;
@@ -3759,7 +3773,6 @@
     transition: background 0.12s, color 0.12s, border-color 0.12s;
   }
   .bar-btn:hover { background: #f5c518; color: #0d0d12; border-color: #f5c518; }
-  .menu-up { top: auto; bottom: calc(100% + 4px); right: auto; left: 0; }
 
 
   /* Modal */

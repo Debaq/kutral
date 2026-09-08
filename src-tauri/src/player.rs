@@ -54,6 +54,19 @@ pub struct MpvStatus {
     pub title: String,
 }
 
+/// Sesión suspendida: lo que la UI necesita para dibujar la pill "volver a la
+/// reproducción" (Esc sale a los menús pero no cierra el archivo).
+#[derive(serde::Serialize, Default)]
+pub struct MpvSession {
+    /// Hay algo esperando volver.
+    pub suspended: bool,
+    pub title: String,
+    pub pos: f64,
+    pub duration: f64,
+    /// IPTV: sigue sonando de fondo, no está pausado.
+    pub live: bool,
+}
+
 /// Una pista (audio/sub) del contenedor: verdad del archivo, no del nombre.
 #[derive(serde::Serialize, Default)]
 pub struct MpvTrack {
@@ -100,6 +113,21 @@ pub mod imp {
         mpv_embed::play(&url, title.as_deref(), start_secs)
     }
 
+    /// Trailer: no pisa la película que estuviera esperando y al salir no
+    /// deja nada en la pill (ver mpv_embed::play_trailer).
+    #[tauri::command]
+    pub fn mpv_play_trailer(
+        _app: tauri::AppHandle,
+        _state: tauri::State<'_, PlayerState>,
+        url: String,
+        title: Option<String>,
+    ) -> Result<(), String> {
+        if url.is_empty() {
+            return Err("url vacía".into());
+        }
+        mpv_embed::play_trailer(&url, title.as_deref())
+    }
+
     #[tauri::command]
     pub fn mpv_play_iptv(
         _app: tauri::AppHandle,
@@ -135,6 +163,38 @@ pub mod imp {
         _state: tauri::State<'_, PlayerState>,
     ) -> Result<(), String> {
         mpv_embed::stop()
+    }
+
+    /// Esc: vuelve a los menús dejando la sesión viva (pausada; IPTV sigue).
+    #[tauri::command]
+    pub fn mpv_suspend(
+        _app: tauri::AppHandle,
+        _state: tauri::State<'_, PlayerState>,
+    ) -> Result<(), String> {
+        mpv_embed::suspend()
+    }
+
+    /// Retoma la sesión suspendida (botón "volver a la reproducción").
+    #[tauri::command]
+    pub fn mpv_resume(
+        _app: tauri::AppHandle,
+        _state: tauri::State<'_, PlayerState>,
+    ) -> Result<(), String> {
+        mpv_embed::resume()
+    }
+
+    #[tauri::command]
+    pub fn mpv_session(_state: tauri::State<'_, PlayerState>) -> MpvSession {
+        if !mpv_embed::is_suspended() {
+            return MpvSession::default();
+        }
+        MpvSession {
+            suspended: true,
+            title: mpv_embed::get_string("media-title"),
+            pos: mpv_embed::get_f64("time-pos"),
+            duration: mpv_embed::get_f64("duration"),
+            live: mpv_embed::is_live(),
+        }
     }
 
     #[tauri::command]
@@ -188,7 +248,7 @@ pub mod imp {
             return false;
         }
         if key == "Backspace" || key == "Escape" {
-            let _ = mpv_embed::stop();
+            let _ = mpv_embed::suspend();
             return true;
         }
         let args = match key {
@@ -276,6 +336,27 @@ pub mod imp {
         exe.to_string()
     }
 
+    /// yt-dlp vendorizado: ytdl_hook lo necesita para los trailers de YouTube
+    /// (streams DASH separados) sin depender del PATH del sistema.
+    fn ytdlp_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+        use tauri::Manager;
+        #[cfg(windows)]
+        let exe = "yt-dlp.exe";
+        #[cfg(not(windows))]
+        let exe = "yt-dlp";
+        let mut cands: Vec<std::path::PathBuf> = Vec::new();
+        if let Ok(res) = app.path().resource_dir() {
+            cands.push(res.join("vendor").join(exe));
+        }
+        cands.push(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("vendor").join(exe));
+        if let Ok(p) = std::env::current_exe() {
+            if let Some(dir) = p.parent() {
+                cands.push(dir.join("vendor").join(exe));
+            }
+        }
+        cands.into_iter().find(|c| c.exists())
+    }
+
     fn mpv_config_dir(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
         use tauri::Manager;
         let mut cands: Vec<std::path::PathBuf> = Vec::new();
@@ -326,6 +407,10 @@ pub mod imp {
                 .arg("--hwdec=auto-safe");
         }
 
+        if let Some(y) = ytdlp_path(app) {
+            cmd.arg(format!("--script-opts=ytdl_hook-ytdl_path={}", y.display()));
+        }
+
         for a in extra {
             cmd.arg(a);
         }
@@ -341,7 +426,7 @@ pub mod imp {
         })?;
 
         eprintln!("[mpv] pid={:?} lanzado", child.id());
-        *state.child.lock().unwrap() = Some(child);
+        *state.child.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
         let _ = app.emit("mpv:state", true);
         Ok(())
     }
@@ -369,6 +454,19 @@ pub mod imp {
         extra.push(url.clone());
         eprintln!("[mpv] spawn fullscreen url={url}");
         spawn_mpv(&app, &state, extra)
+    }
+
+    /// Trailer. Con mpv de proceso externo no hay sesión que preservar (cada
+    /// reproducción es un proceso nuevo que mata al anterior), así que se
+    /// comporta como un play normal.
+    #[tauri::command]
+    pub fn mpv_play_trailer(
+        app: tauri::AppHandle,
+        state: tauri::State<'_, PlayerState>,
+        url: String,
+        title: Option<String>,
+    ) -> Result<(), String> {
+        mpv_play(app, state, url, title, None)
     }
 
     #[tauri::command]
@@ -437,7 +535,7 @@ pub mod imp {
     }
 
     fn alive(state: &tauri::State<'_, PlayerState>) -> bool {
-        let mut guard = state.child.lock().unwrap();
+        let mut guard = state.child.lock().unwrap_or_else(|e| e.into_inner());
         match guard.as_mut() {
             Some(c) => match c.try_wait() {
                 Ok(Some(_)) => {
@@ -448,6 +546,57 @@ pub mod imp {
                 Err(_) => false,
             },
             None => false,
+        }
+    }
+
+    /// Sin embed no hay superficie que ocultar: suspender = pausar y avisar a
+    /// la UI, que dibuja la pill para volver.
+    #[tauri::command]
+    pub fn mpv_suspend(
+        app: tauri::AppHandle,
+        state: tauri::State<'_, PlayerState>,
+    ) -> Result<(), String> {
+        if !alive(&state) {
+            return Ok(());
+        }
+        let _ = mpv_cmd(vec![
+            serde_json::Value::String("set_property".into()),
+            serde_json::Value::String("pause".into()),
+            serde_json::Value::Bool(true),
+        ]);
+        let _ = app.emit("mpv:suspended", true);
+        Ok(())
+    }
+
+    #[tauri::command]
+    pub fn mpv_resume(
+        app: tauri::AppHandle,
+        state: tauri::State<'_, PlayerState>,
+    ) -> Result<(), String> {
+        if !alive(&state) {
+            return Err("no hay reproducción en pausa".into());
+        }
+        let _ = mpv_cmd(vec![
+            serde_json::Value::String("set_property".into()),
+            serde_json::Value::String("pause".into()),
+            serde_json::Value::Bool(false),
+        ]);
+        let _ = app.emit("mpv:suspended", false);
+        Ok(())
+    }
+
+    #[tauri::command]
+    pub fn mpv_session(state: tauri::State<'_, PlayerState>) -> MpvSession {
+        let st = build_status(&state);
+        if !st.running || !st.pause {
+            return MpvSession::default();
+        }
+        MpvSession {
+            suspended: true,
+            title: st.title,
+            pos: st.pos,
+            duration: st.duration,
+            live: st.duration <= 0.0,
         }
     }
 
@@ -463,7 +612,7 @@ pub mod imp {
             return false;
         }
         if key == "Backspace" || key == "Escape" {
-            let _ = mpv_stop(app.clone(), state);
+            let _ = mpv_suspend(app.clone(), state);
             return true;
         }
         let args = match key {
@@ -619,7 +768,7 @@ pub mod imp {
     }
 
     fn kill_existing(state: &tauri::State<'_, PlayerState>) {
-        if let Some(mut child) = state.child.lock().unwrap().take() {
+        if let Some(mut child) = state.child.lock().unwrap_or_else(|e| e.into_inner()).take() {
             let _ = child.kill();
             let _ = child.wait();
         }

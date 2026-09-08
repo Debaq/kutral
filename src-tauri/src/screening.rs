@@ -114,7 +114,7 @@ pub async fn screening_set_paused(
     state: tauri::State<'_, ScreeningState>,
     paused: bool,
 ) -> Result<(), String> {
-    *state.paused.lock().unwrap() = paused;
+    *state.paused.lock().unwrap_or_else(|e| e.into_inner()) = paused;
     eprintln!("[screening] paused={}", paused);
     Ok(())
 }
@@ -125,7 +125,7 @@ pub async fn screening_set_concurrency(
     n: usize,
 ) -> Result<(), String> {
     let clamped = n.clamp(MIN_INFLIGHT, MAX_INFLIGHT_CAP);
-    *state.max_inflight.lock().unwrap() = clamped;
+    *state.max_inflight.lock().unwrap_or_else(|e| e.into_inner()) = clamped;
     eprintln!("[screening] concurrency={}", clamped);
     Ok(())
 }
@@ -140,8 +140,8 @@ pub async fn screening_enqueue(
     let k = norm_kind(kind.as_deref().unwrap_or("movie"));
     let already = already_marked(&app, k);
     {
-        let inflight = state.inflight.lock().unwrap();
-        let mut q = state.queue.lock().unwrap();
+        let inflight = state.inflight.lock().unwrap_or_else(|e| e.into_inner());
+        let mut q = state.queue.lock().unwrap_or_else(|e| e.into_inner());
         for id in ids {
             if id.is_empty() || !id.starts_with("tt") || already.contains(&id) {
                 continue;
@@ -156,7 +156,7 @@ pub async fn screening_enqueue(
             q.push((id, k.to_string()));
         }
     }
-    let mut s = state.started.lock().unwrap();
+    let mut s = state.started.lock().unwrap_or_else(|e| e.into_inner());
     if *s {
         return Ok(());
     }
@@ -179,14 +179,14 @@ async fn worker_loop(app: AppHandle) {
         Err(e) => {
             eprintln!("[screening] reqwest build fail: {}", e);
             let state = app.state::<ScreeningState>();
-            *state.started.lock().unwrap() = false;
+            *state.started.lock().unwrap_or_else(|e| e.into_inner()) = false;
             return;
         }
     };
 
     loop {
         // Si el user está viendo una peli, no robamos red/CPU. Espera y reintenta.
-        let is_paused = *app.state::<ScreeningState>().paused.lock().unwrap();
+        let is_paused = *app.state::<ScreeningState>().paused.lock().unwrap_or_else(|e| e.into_inner());
         if is_paused {
             tokio::time::sleep(std::time::Duration::from_millis(PAUSED_POLL_MS)).await;
             continue;
@@ -195,15 +195,15 @@ async fn worker_loop(app: AppHandle) {
         // Tomar hasta max_inflight items de la cola (config dinámica)
         let batch: Vec<(String, String)> = {
             let state = app.state::<ScreeningState>();
-            let mut q = state.queue.lock().unwrap();
-            let mut inflight = state.inflight.lock().unwrap();
+            let mut q = state.queue.lock().unwrap_or_else(|e| e.into_inner());
+            let mut inflight = state.inflight.lock().unwrap_or_else(|e| e.into_inner());
             if q.is_empty() {
-                let mut s = state.started.lock().unwrap();
+                let mut s = state.started.lock().unwrap_or_else(|e| e.into_inner());
                 *s = false;
                 eprintln!("[screening] cola vacía, worker termina");
                 return;
             }
-            let cur_max = *state.max_inflight.lock().unwrap();
+            let cur_max = *state.max_inflight.lock().unwrap_or_else(|e| e.into_inner());
             let n = q.len().min(cur_max);
             let drained: Vec<(String, String)> = q.drain(..n).collect();
             for (id, k) in &drained {
@@ -222,7 +222,7 @@ async fn worker_loop(app: AppHandle) {
                 let st = app_c.state::<ScreeningState>();
                 st.inflight
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|e| e.into_inner())
                     .remove(&format!("{}:{}", kind, id));
             }));
         }

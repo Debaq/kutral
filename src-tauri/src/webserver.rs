@@ -419,7 +419,7 @@ fn parse_str_field(body: &str, field: &str) -> Option<String> {
 
 #[tauri::command]
 pub fn web_server_status() -> WebStatus {
-    let g = state().lock().unwrap();
+    let g = state().lock().unwrap_or_else(|e| e.into_inner());
     match g.as_ref() {
         Some(s) => WebStatus {
             running: true,
@@ -441,7 +441,7 @@ pub fn web_server_start(
     app: tauri::AppHandle,
     port: Option<u16>,
 ) -> Result<WebStatus, String> {
-    let mut g = state().lock().unwrap();
+    let mut g = state().lock().unwrap_or_else(|e| e.into_inner());
     if g.is_some() {
         let s = g.as_ref().unwrap();
         return Ok(WebStatus {
@@ -683,7 +683,7 @@ pub fn web_server_start(
 
 #[tauri::command]
 pub fn web_server_stop() -> Result<(), String> {
-    let mut g = state().lock().unwrap();
+    let mut g = state().lock().unwrap_or_else(|e| e.into_inner());
     if let Some(mut s) = g.take() {
         s.stop.store(true, Ordering::Relaxed);
         if let Some(h) = s.handle.take() {

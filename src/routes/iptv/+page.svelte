@@ -11,6 +11,7 @@
   import { onMount, onDestroy, tick } from "svelte";
   import { goto } from "$app/navigation";
   import { invoke } from "@tauri-apps/api/core";
+  import { setNowPlaying } from "$lib/playerState.svelte";
   import Hls from "hls.js";
   import { config, loadConfig, IPTV_DEFAULT_LISTS } from "$lib/config.svelte";
   import { ayuda } from "$lib/atajos/store.svelte";
@@ -221,6 +222,7 @@
     const start = idx >= 0 ? idx : visibles.indexOf(c);
     const items = visibles.map((ch) => ({ url: ch.url, title: ch.name }));
     try {
+      setNowPlaying("", c.name); // canal en vivo: no hay imdb para buscar subs
       await invoke("mpv_play_iptv", { items, start: Math.max(0, start) });
       return;
     } catch (e) {

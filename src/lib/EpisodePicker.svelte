@@ -5,6 +5,7 @@
   // Esc vuelve. Al elegir episodio → onPick(season, episode).
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
+  import { WEB_PLAYER_ENABLED } from "$lib/features";
 
   type Season = {
     season_number: number;
@@ -175,7 +176,9 @@
     <header class="ep-head">
       <button class="ep-back" onclick={onClose}>← Volver</button>
       <h2>{title}</h2>
-      <button class="ep-web" onclick={onWeb}>🌐 Ver en web</button>
+      {#if WEB_PLAYER_ENABLED}
+        <button class="ep-web" onclick={onWeb}>🌐 Ver en web</button>
+      {/if}
     </header>
 
     <div class="ep-cols">

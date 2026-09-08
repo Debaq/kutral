@@ -44,6 +44,27 @@ static EGL_GET_PROC: OnceLock<Option<GetProcFn>> = OnceLock::new();
 static GLX_GET_PROC: OnceLock<Option<GetProcFn>> = OnceLock::new();
 /// ¿Hay algo cargado/reproduciéndose? (equivalente al "alive" del proceso).
 static RUNNING: AtomicBool = AtomicBool::new(false);
+/// Sesión VIVA pero fuera de pantalla: Esc vuelve a los menús sin matar el
+/// archivo (película pausada / canal IPTV sonando de fondo). La pill de la UI
+/// la retoma con `resume()`; un `play()` nuevo la reemplaza.
+static SUSPENDED: AtomicBool = AtomicBool::new(false);
+/// La sesión actual es una playlist IPTV (vivo): al suspender NO se pausa,
+/// pausar un stream en directo lo dejaría atrasado del aire.
+static LIVE: AtomicBool = AtomicBool::new(false);
+/// Lo que está en pantalla es un trailer: no es una sesión "de verdad", así que
+/// Esc la cierra en vez de dejarla esperando en la pill.
+static TRAILER: AtomicBool = AtomicBool::new(false);
+/// Reproducción que el trailer dejó en pausa para restaurarla después.
+static PENDING: std::sync::Mutex<Option<Pending>> = std::sync::Mutex::new(None);
+
+/// Sesión guardada mientras se ve un trailer.
+#[derive(Clone)]
+struct Pending {
+    path: String,
+    pos: f64,
+    title: String,
+    live: bool,
+}
 
 type GlGetIntegervFn = unsafe extern "C" fn(u32, *mut i32);
 static GL_GET_INTEGERV: OnceLock<GlGetIntegervFn> = OnceLock::new();
@@ -160,25 +181,6 @@ fn cursor_activity(area: &gtk::GLArea) {
     });
 }
 
-/// Manda la posición del mouse a mpv en coords OSD (px reales = lógico×scale).
-fn mpv_mouse_move(x: f64, y: f64, scale: i32) {
-    if let Some(mpv) = MPV.get() {
-        let xs = ((x * scale as f64).round() as i64).to_string();
-        let ys = ((y * scale as f64).round() as i64).to_string();
-        let _ = mpv.command("mouse", &[xs.as_str(), ys.as_str()]);
-    }
-}
-
-/// Nombre de botón mpv para un botón GDK (1=izq, 2=medio, 3=der).
-fn mpv_btn_name(button: u32) -> Option<&'static str> {
-    match button {
-        1 => Some("MBTN_LEFT"),
-        2 => Some("MBTN_MID"),
-        3 => Some("MBTN_RIGHT"),
-        _ => None,
-    }
-}
-
 /// Manda un evento de tecla/botón a mpv (action = keydown/keyup/keypress).
 fn mpv_key(action: &str, key: &str) {
     if let Some(mpv) = MPV.get() {
@@ -237,14 +239,20 @@ const ICON_FONT: &str = "Material Icons Round";
 
 struct PlayerUi {
     paused: bool,
+    /// El bar está en pantalla. Con teclado va de la mano de `paused`; con el
+    /// mouse aparece sin pausar (y se auto-oculta a los 4s sin movimiento).
+    bar_visible: bool,
     focus: usize,
-    /// Acciones visibles del bar (se reconstruyen al pausar según las pistas).
+    /// Acciones visibles del bar (se reconstruyen al mostrarlo según las pistas).
     bar: Vec<BarAction>,
 }
 
 thread_local! {
-    static PLAYER_UI: RefCell<PlayerUi> =
-        const { RefCell::new(PlayerUi { paused: false, focus: 1, bar: Vec::new() }) };
+    static PLAYER_UI: RefCell<PlayerUi> = const {
+        RefCell::new(PlayerUi { paused: false, bar_visible: false, focus: 1, bar: Vec::new() })
+    };
+    /// Generación del autohide del bar (mismo truco que CURSOR_GEN).
+    static BAR_GEN: Cell<u64> = const { Cell::new(0) };
     /// Menú de pistas abierto (audio/subs). None = no hay menú (modo bar).
     static MENU: RefCell<Option<Menu>> = const { RefCell::new(None) };
 }
@@ -309,58 +317,224 @@ fn mpv_cmd2(name: &str, args: &[&str]) {
 const BAR_BG_ID: &str = "46";
 const BAR_FG_ID: &str = "47";
 
-/// Fondo: pill inferior oscuro semi-transparente (ASS drawing con esquinas).
-fn build_bar_bg() -> String {
-    // \1a = transparencia (00 opaco … FF transp). Dark #0A0F12 → &H120F0A&.
-    "{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H120F0A&\\1a&H30&\\p1}\
-     m 170 540 b 170 520 184 506 204 506 l 1076 506 b 1096 506 1110 520 1110 540 \
-     l 1110 632 b 1110 652 1096 666 1076 666 l 204 666 b 184 666 170 652 170 632{\\p0}"
-        .to_string()
+// ─────────────────────── geometría real del OSD ───────────────────────────
+//
+// El bar y los menús se dibujan en PÍXELES REALES del OSD (osd-width/height),
+// no en un canvas fijo: la ventana cambia de tamaño y de proporción según el
+// equipo, y con un canvas 1280×720 estirado el click caía corrido. El diseño
+// se define en unidades de 720p y se multiplica por k = alto_real / 720, así
+// se ve igual en 720p, 1080p, 4K o una ventana pequeña y arbitraria.
+
+/// Alto del diseño de referencia. Todo lo demás se escala contra esto.
+const DESIGN_H: f64 = 720.0;
+
+#[derive(Clone, Copy)]
+struct Osd {
+    w: f64,
+    h: f64,
+    /// Factor de escala del diseño (1.0 = 720p).
+    k: f64,
 }
 
-/// Bar con ICONOS (fuente Material Icons Round, igual que uosc): fila de iconos
-/// con el enfocado en naranja+grande, y debajo la etiqueta del enfocado.
+/// Tamaño físico del GLArea (px reales = lógico × scale). Respaldo cuando mpv
+/// aún no reporta OSD (antes del primer frame).
+fn surface_px() -> (f64, f64) {
+    SURFACE
+        .with(|s| {
+            s.borrow().as_ref().map(|surf| {
+                let sc = surf.glarea.scale_factor() as f64;
+                (
+                    surf.glarea.allocated_width().max(1) as f64 * sc,
+                    surf.glarea.allocated_height().max(1) as f64 * sc,
+                )
+            })
+        })
+        .unwrap_or((1280.0, 720.0))
+}
+
+/// Dimensiones reales del OSD según mpv (las mismas que usa libass al componer
+/// el overlay), con su factor de escala de diseño.
+fn osd() -> Osd {
+    let (mut w, mut h) = (0.0, 0.0);
+    if let Some(mpv) = MPV.get() {
+        w = mpv.get_property::<i64>("osd-width").unwrap_or(0) as f64;
+        h = mpv.get_property::<i64>("osd-height").unwrap_or(0) as f64;
+    }
+    if w < 2.0 || h < 2.0 {
+        let (fw, fh) = surface_px();
+        w = fw;
+        h = fh;
+    }
+    let k = (h / DESIGN_H).clamp(0.3, 6.0);
+    Osd { w, h, k }
+}
+
+/// Pasa un punto del widget (coords lógicas GTK) a píxeles del OSD, que es el
+/// sistema en el que dibujamos: proporción sobre el área real, sin suponer
+/// ninguna relación de aspecto.
+fn widget_to_osd(area: &gtk::GLArea, x: f64, y: f64) -> (f64, f64) {
+    let o = osd();
+    let w = area.allocated_width().max(1) as f64;
+    let h = area.allocated_height().max(1) as f64;
+    (x / w * o.w, y / h * o.h)
+}
+
+/// Medidas del bar ya resueltas en píxeles del OSD.
+#[derive(Clone, Copy)]
+struct BarGeom {
+    n: usize,
+    step: f64,
+    top: f64,
+    bot: f64,
+    icon_cy: f64,
+    label_y: f64,
+    center_x: f64,
+    k: f64,
+    osd: Osd,
+}
+
+fn bar_geom() -> BarGeom {
+    let o = osd();
+    let k = o.k;
+    let n = PLAYER_UI.with(|u| u.borrow().bar.len());
+    // Anclado al borde inferior real (54 y 160 son las medidas del diseño).
+    let bot = o.h - 54.0 * k;
+    let top = bot - 160.0 * k;
+    // En ventanas angostas los iconos se juntan antes que salirse de pantalla.
+    let step = if n > 0 {
+        (96.0 * k).min((o.w - 48.0 * k) / n as f64)
+    } else {
+        96.0 * k
+    };
+    BarGeom {
+        n,
+        step,
+        top,
+        bot,
+        icon_cy: bot - 100.0 * k,
+        label_y: bot - 38.0 * k,
+        center_x: o.w / 2.0,
+        k,
+        osd: o,
+    }
+}
+
+/// Centro X del icono `i` (fila centrada horizontalmente).
+fn bar_icon_cx(g: &BarGeom, i: usize) -> f64 {
+    g.center_x + (i as f64 - (g.n as f64 - 1.0) / 2.0) * g.step
+}
+
+/// ¿Sobre qué icono cae el punto (px del OSD)? None = fuera del bar.
+fn bar_hit(px: f64, py: f64) -> Option<usize> {
+    let g = bar_geom();
+    if py < g.top || py > g.bot {
+        return None;
+    }
+    (0..g.n).find(|&i| (px - bar_icon_cx(&g, i)).abs() <= g.step / 2.0)
+}
+
+/// Tamaño de fuente ASS escalado (nunca ilegible por redondeo).
+fn fs(k: f64, design: f64) -> i32 {
+    ((design * k).round() as i32).max(8)
+}
+
+/// Recorta un texto al ancho disponible (px del OSD). Aproxima el avance medio
+/// de la fuente en 0.5 × el tamaño: no es tipografía exacta, pero evita que un
+/// título largo se salga del panel en ventanas angostas.
+fn ellipsize(text: &str, width_px: f64, size: i32) -> String {
+    let max_chars = ((width_px / (size as f64 * 0.5)).floor() as usize).max(6);
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let cut: String = text.chars().take(max_chars.saturating_sub(1)).collect();
+    format!("{}…", cut.trim_end())
+}
+
+/// Fondo: pill inferior oscuro semi-transparente, ancha según cuántos iconos hay.
+fn build_bar_bg() -> String {
+    let g = bar_geom();
+    let half = (g.n.max(1) as f64 * g.step) / 2.0 + 34.0 * g.k;
+    let l = (g.center_x - half).max(4.0) as i32;
+    let r = (g.center_x + half).min(g.osd.w - 4.0) as i32;
+    let t = g.top as i32;
+    let b = g.bot as i32;
+    let rad = (20.0 * g.k).round() as i32;
+    // \1a = transparencia (00 opaco … FF transp). Dark #0A0F12 → &H120F0A&.
+    // Rectángulo con las cuatro esquinas redondeadas (curvas Bézier de ASS).
+    format!(
+        "{{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H120F0A&\\1a&H30&\\p1}}\
+         m {l} {tr} b {l} {t} {lr} {t} {lr} {t} \
+         l {rr} {t} b {r} {t} {r} {t} {r} {tr} \
+         l {r} {br} b {r} {b} {rr} {b} {rr} {b} \
+         l {lr} {b} b {l} {b} {l} {b} {l} {br}{{\\p0}}",
+        l = l,
+        r = r,
+        t = t,
+        b = b,
+        lr = l + rad,
+        rr = r - rad,
+        tr = t + rad,
+        br = b - rad,
+    )
+}
+
+/// Bar con ICONOS (fuente Material Icons Round): un evento ASS por icono en su
+/// posición real (ver bar_icon_cx) + la etiqueta del enfocado debajo. El
+/// enfocado va naranja y más grande; con mouse el "foco" lo pone el hover.
 fn build_bar_ass(focus: usize) -> String {
     // Colores ASS = &HBBGGRR&. Naranja f97316 → &H1673F9&. Cream → &HE8E0D0&.
+    let g = bar_geom();
     let bar = PLAYER_UI.with(|u| u.borrow().bar.clone());
-    let mut row = String::new();
+    let mut ev: Vec<String> = Vec::with_capacity(bar.len() + 1);
     for (i, act) in bar.iter().enumerate() {
-        if i > 0 {
-            // Espaciador en fuente normal (no liga con el icono siguiente).
-            row.push_str("{\\rDefault\\fs50}    ");
-        }
-        if i == focus {
-            row.push_str(&format!(
-                "{{\\fn{ICON_FONT}\\fs58\\1c&H1673F9&\\bord0\\shad1.5\\4c&H000000&}}{}",
-                act.icon()
-            ));
+        let cx = bar_icon_cx(&g, i) as i32;
+        let cy = g.icon_cy as i32;
+        let (size, color) = if i == focus {
+            (fs(g.k, 58.0), "&H1673F9&")
         } else {
-            row.push_str(&format!(
-                "{{\\fn{ICON_FONT}\\fs42\\1c&HB9B3A6&\\bord0\\shad1.5\\4c&H000000&}}{}",
-                act.icon()
-            ));
-        }
+            (fs(g.k, 42.0), "&HB9B3A6&")
+        };
+        ev.push(format!(
+            "{{\\an5\\pos({cx},{cy})\\fn{ICON_FONT}\\fs{size}\\1c{color}\\bord0\\shad1.5\\4c&H000000&}}{}",
+            act.icon()
+        ));
     }
-    let label = bar.get(focus).map(|a| a.label()).unwrap_or("");
-    format!(
-        "{{\\an5\\pos(640,572)\\bord0\\shad1.5\\4c&H000000&}}{row}\
-         \\N{{\\rDefault\\fs26\\1c&HE8E0D0&\\b1}}{label}"
-    )
+    let size = fs(g.k, 26.0);
+    let label = ellipsize(
+        bar.get(focus).map(|a| a.label()).unwrap_or(""),
+        g.osd.w - 40.0 * g.k,
+        size,
+    );
+    ev.push(format!(
+        "{{\\an5\\pos({},{})\\fs{size}\\1c&HE8E0D0&\\b1\\bord0\\shad1.5\\4c&H000000&}}{label}",
+        g.center_x as i32, g.label_y as i32,
+    ));
+    ev.join("\n")
+}
+
+/// Manda un overlay ASS declarando la resolución REAL del OSD, para que una
+/// unidad del dibujo sea un píxel y el hit-test del mouse coincida.
+fn put_overlay(id: &str, data: &str) {
+    let o = osd();
+    let (rx, ry) = ((o.w as i64).to_string(), (o.h as i64).to_string());
+    mpv_cmd2(
+        "osd-overlay",
+        &[id, "ass-events", data, &rx, &ry, "0", "no", "no"],
+    );
 }
 
 /// Dibuja/actualiza el bar (fondo + textos).
 fn draw_bar() {
     let focus = PLAYER_UI.with(|u| u.borrow().focus);
-    let bg = build_bar_bg();
-    mpv_cmd2("osd-overlay", &[BAR_BG_ID, "ass-events", &bg, "1280", "720", "0", "no", "no"]);
-    let fg = build_bar_ass(focus);
-    mpv_cmd2("osd-overlay", &[BAR_FG_ID, "ass-events", &fg, "1280", "720", "0", "no", "no"]);
+    put_overlay(BAR_BG_ID, &build_bar_bg());
+    put_overlay(BAR_FG_ID, &build_bar_ass(focus));
 }
 
 /// Quita el bar (fondo + textos).
 fn clear_bar() {
-    mpv_cmd2("osd-overlay", &[BAR_BG_ID, "none", "", "1280", "720", "0", "no", "no"]);
-    mpv_cmd2("osd-overlay", &[BAR_FG_ID, "none", "", "1280", "720", "0", "no", "no"]);
+    for id in [BAR_BG_ID, BAR_FG_ID] {
+        mpv_cmd2("osd-overlay", &[id, "none", "", "0", "0", "0", "no", "no"]);
+    }
 }
 
 /// Pausa y muestra el bar (foco en Reanudar). Reconstruye las acciones según
@@ -370,6 +544,7 @@ fn enter_paused() {
     PLAYER_UI.with(|u| {
         let mut b = u.borrow_mut();
         b.paused = true;
+        b.bar_visible = true;
         b.focus = 1;
         b.bar = bar;
     });
@@ -381,11 +556,67 @@ fn enter_paused() {
 
 /// Reanuda y oculta el bar.
 fn resume_play() {
-    PLAYER_UI.with(|u| u.borrow_mut().paused = false);
+    PLAYER_UI.with(|u| {
+        let mut b = u.borrow_mut();
+        b.paused = false;
+        b.bar_visible = false;
+    });
     if let Some(mpv) = MPV.get() {
         let _ = mpv.set_property("pause", false);
     }
     clear_bar();
+}
+
+/// Muestra el bar SIN pausar (mouse) y programa su auto-ocultado. Si ya está
+/// visible solo reprograma el timer. Con la reproducción pausada el bar queda
+/// fijo: no se auto-oculta.
+fn show_bar_transient() {
+    let redraw = PLAYER_UI.with(|u| {
+        let mut b = u.borrow_mut();
+        if !b.bar_visible {
+            b.bar_visible = true;
+            b.bar = Vec::new(); // se rellena abajo (necesita leer las pistas)
+            true
+        } else {
+            false
+        }
+    });
+    if redraw {
+        let bar = build_bar_actions();
+        PLAYER_UI.with(|u| {
+            let mut b = u.borrow_mut();
+            b.focus = b.focus.min(bar.len().saturating_sub(1));
+            b.bar = bar;
+        });
+    }
+    draw_bar();
+    schedule_bar_hide();
+}
+
+/// Oculta el bar (si no estamos pausados ni con un menú abierto).
+fn hide_bar_transient() {
+    let paused = PLAYER_UI.with(|u| u.borrow().paused);
+    let menu_open = MENU.with(|m| m.borrow().is_some());
+    if paused || menu_open {
+        return;
+    }
+    PLAYER_UI.with(|u| u.borrow_mut().bar_visible = false);
+    clear_bar();
+}
+
+/// Reprograma el auto-ocultado del bar a 4s sin actividad de mouse.
+fn schedule_bar_hide() {
+    let gen = BAR_GEN.with(|g| {
+        let n = g.get().wrapping_add(1);
+        g.set(n);
+        n
+    });
+    glib::timeout_add_local(std::time::Duration::from_millis(4000), move || {
+        if BAR_GEN.with(|g| g.get()) == gen {
+            hide_bar_transient();
+        }
+        glib::ControlFlow::Break
+    });
 }
 
 /// Space: alterna pausa/reanudar (y el bar).
@@ -421,7 +652,14 @@ fn activate_focus() {
             mpv_cmd2("seek", &["-10"]);
             mpv_cmd2("show-text", &["⏪ -10s   ${time-pos}", "1200"]);
         }
-        Some(BarAction::Resume) => resume_play(),
+        Some(BarAction::Resume) => {
+            // Bar abierto con el mouse sin pausar → este icono pausa.
+            if PLAYER_UI.with(|u| u.borrow().paused) {
+                resume_play();
+            } else {
+                enter_paused();
+            }
+        }
         Some(BarAction::SeekFwd) => {
             mpv_cmd2("seek", &["10"]);
             mpv_cmd2("show-text", &["⏩ +10s   ${time-pos}", "1200"]);
@@ -649,56 +887,159 @@ fn menu_window(menu: &Menu) -> (usize, usize) {
     (start, start + MENU_MAX_VISIBLE)
 }
 
+// Geometría del menú, también en píxeles reales del OSD (ver `osd()`): filas de
+// alto fijo escalado, centradas en la ventana, para que hover y click caigan
+// donde el usuario ve cada ítem sin importar el tamaño ni la proporción.
+
+/// Medidas del menú resueltas en píxeles del OSD.
+#[derive(Clone, Copy)]
+struct MenuGeom {
+    row_h: f64,
+    cy: f64,
+    l: f64,
+    r: f64,
+    k: f64,
+    start: usize,
+    end: usize,
+    rows: usize,
+    /// Fila en la que empieza la lista de ítems (tras título y separador).
+    first: usize,
+}
+
+fn menu_geom(menu: &Menu) -> MenuGeom {
+    let o = osd();
+    let n = menu.items.len();
+    let (start, end) = menu_window(menu);
+    let first = 2 + (start > 0) as usize; // título + blanco + [▲]
+    let rows = first + (end - start) + (end < n) as usize;
+    // Panel de 680 de ancho en el diseño, sin salirse en ventanas angostas.
+    let half = (340.0 * o.k).min(o.w / 2.0 - 12.0);
+    MenuGeom {
+        row_h: 44.0 * o.k,
+        cy: o.h / 2.0,
+        l: o.w / 2.0 - half,
+        r: o.w / 2.0 + half,
+        k: o.k,
+        start,
+        end,
+        rows,
+        first,
+    }
+}
+
+/// Centro Y de la fila `k`.
+fn menu_row_cy(g: &MenuGeom, k: usize) -> f64 {
+    g.cy - (g.rows as f64 - 1.0) * g.row_h / 2.0 + k as f64 * g.row_h
+}
+
+/// ¿Sobre qué ítem del menú cae el punto (px del OSD)? None = fuera.
+fn menu_hit(px: f64, py: f64) -> Option<usize> {
+    MENU.with(|m| {
+        let b = m.borrow();
+        let menu = b.as_ref()?;
+        let g = menu_geom(menu);
+        if px < g.l || px > g.r {
+            return None;
+        }
+        for (j, i) in (g.start..g.end).enumerate() {
+            let y = menu_row_cy(&g, g.first + j);
+            if (py - y).abs() <= g.row_h / 2.0 {
+                return Some(i);
+            }
+        }
+        None
+    })
+}
+
 /// Fondo del menú: panel centrado, alto según filas visibles.
-fn build_menu_bg(rows: usize) -> String {
-    let h = ((rows as i32) * 44 + 40).clamp(160, 660);
-    let cy = 360;
-    let (top, bot) = (cy - h / 2, cy + h / 2);
+fn build_menu_bg(g: &MenuGeom) -> String {
+    let h = (g.rows as f64 * g.row_h + 40.0 * g.k).min(g.cy * 2.0 - 16.0);
+    let top = (g.cy - h / 2.0) as i32;
+    let bot = (g.cy + h / 2.0) as i32;
+    let (l, r) = (g.l as i32, g.r as i32);
     format!(
         "{{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H120F0A&\\1a&H22&\\p1}}\
-         m 300 {top} l 980 {top} 980 {bot} 300 {bot}{{\\p0}}"
+         m {l} {top} l {r} {top} {r} {bot} {l} {bot}{{\\p0}}"
     )
 }
 
-/// Texto del menú: título + ventana de ítems (scroll) con indicadores ▲/▼.
-fn build_menu_ass(menu: &Menu) -> String {
+/// Texto del menú: un evento ASS por fila en su Y real (título + ventana de
+/// ítems con indicadores ▲/▼), para que hover y click sepan dónde caen.
+fn build_menu_ass(menu: &Menu, g: &MenuGeom) -> String {
     let n = menu.items.len();
-    let (start, end) = menu_window(menu);
-    let mut lines: Vec<String> = Vec::new();
-    lines.push(format!("{{\\fs32\\1c&H3BA1F9&\\b1}}{}", menu.title));
-    lines.push(String::new());
-    if start > 0 {
-        lines.push(format!("{{\\fs22\\1c&H9A9488&\\b0}}▲  {} más", start));
+    let cx = ((g.l + g.r) / 2.0) as i32;
+    let mut ev: Vec<String> = Vec::new();
+    let row = |k: usize, body: String| {
+        format!(
+            "{{\\an5\\pos({cx},{})\\bord0\\shad1.2\\4c&H000000&}}{body}",
+            menu_row_cy(g, k) as i32
+        )
+    };
+    let title_fs = fs(g.k, 32.0);
+    ev.push(row(
+        0,
+        format!(
+            "{{\\fs{title_fs}\\1c&H3BA1F9&\\b1}}{}",
+            ellipsize(&menu.title, (g.r - g.l) - 40.0 * g.k, title_fs)
+        ),
+    ));
+    if g.start > 0 {
+        ev.push(row(
+            2,
+            format!("{{\\fs{}\\1c&H9A9488&\\b0}}▲  {} más", fs(g.k, 22.0), g.start),
+        ));
     }
-    for i in start..end {
-        let it = &menu.items[i];
-        if i == menu.sel {
-            lines.push(format!("{{\\fs28\\1c&H1673F9&\\b1}}▸  {}", it.label));
+    let item_fs = fs(g.k, 28.0);
+    let item_w = (g.r - g.l) - 40.0 * g.k;
+    for (j, i) in (g.start..g.end).enumerate() {
+        let label = ellipsize(&menu.items[i].label, item_w, item_fs);
+        let body = if i == menu.sel {
+            format!("{{\\fs{item_fs}\\1c&H1673F9&\\b1}}▸  {label}")
         } else {
-            lines.push(format!("{{\\fs28\\1c&HE8E0D0&\\b0}}     {}", it.label));
-        }
+            format!("{{\\fs{item_fs}\\1c&HE8E0D0&\\b0}}     {label}")
+        };
+        ev.push(row(g.first + j, body));
     }
-    if end < n {
-        lines.push(format!("{{\\fs22\\1c&H9A9488&\\b0}}▼  {} más", n - end));
+    if g.end < n {
+        ev.push(row(
+            g.first + (g.end - g.start),
+            format!(
+                "{{\\fs{}\\1c&H9A9488&\\b0}}▼  {} más",
+                fs(g.k, 22.0),
+                n - g.end
+            ),
+        ));
     }
-    format!(
-        "{{\\an5\\pos(640,360)\\bord0\\shad1.2\\4c&H000000&}}{}",
-        lines.join("\\N")
-    )
+    ev.join("\n")
 }
 
 fn draw_menu() {
     let drawn = MENU.with(|m| {
         m.borrow().as_ref().map(|menu| {
-            let n = menu.items.len();
-            let (start, end) = menu_window(menu);
-            let rows = 2 + (start > 0) as usize + (end - start) + (end < n) as usize;
-            (build_menu_bg(rows), build_menu_ass(menu))
+            let g = menu_geom(menu);
+            (build_menu_bg(&g), build_menu_ass(menu, &g))
         })
     });
     if let Some((bg, fg)) = drawn {
-        mpv_cmd2("osd-overlay", &[BAR_BG_ID, "ass-events", &bg, "1280", "720", "0", "no", "no"]);
-        mpv_cmd2("osd-overlay", &[BAR_FG_ID, "ass-events", &fg, "1280", "720", "0", "no", "no"]);
+        put_overlay(BAR_BG_ID, &bg);
+        put_overlay(BAR_FG_ID, &fg);
+    }
+}
+
+/// Mueve la selección del menú a un ítem concreto (hover del mouse).
+fn menu_select(i: usize) {
+    let changed = MENU.with(|m| {
+        let mut b = m.borrow_mut();
+        match b.as_mut() {
+            Some(menu) if menu.sel != i && i < menu.items.len() => {
+                menu.sel = i;
+                true
+            }
+            _ => false,
+        }
+    });
+    if changed {
+        draw_menu();
     }
 }
 
@@ -707,6 +1048,7 @@ fn reset_player_ui() {
     PLAYER_UI.with(|u| {
         let mut b = u.borrow_mut();
         b.paused = false;
+        b.bar_visible = false;
         b.focus = 1;
     });
     MENU.with(|m| *m.borrow_mut() = None);
@@ -788,6 +1130,28 @@ fn config_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
     cands.into_iter().find(|c| c.exists())
 }
 
+/// Ruta del yt-dlp vendorizado, para que ytdl_hook lo encuentre sin depender
+/// del PATH del sistema. Sin esto los trailers de YouTube no cargan en una
+/// máquina que no traiga yt-dlp instalado.
+fn ytdlp_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    use tauri::Manager;
+    #[cfg(windows)]
+    let exe = "yt-dlp.exe";
+    #[cfg(not(windows))]
+    let exe = "yt-dlp";
+    let mut cands: Vec<PathBuf> = Vec::new();
+    if let Ok(res) = app.path().resource_dir() {
+        cands.push(res.join("vendor").join(exe));
+    }
+    cands.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("vendor").join(exe));
+    if let Ok(p) = std::env::current_exe() {
+        if let Some(dir) = p.parent() {
+            cands.push(dir.join("vendor").join(exe));
+        }
+    }
+    cands.into_iter().find(|c| c.exists())
+}
+
 /// Inicializa el reproductor embebido. Debe llamarse en el hilo main (setup()).
 /// Crea el handle mpv, reparenta el webview en un Overlay y mete el GtkGLArea.
 pub fn init(app: &tauri::AppHandle, window: &tauri::WebviewWindow) -> Result<(), String> {
@@ -803,12 +1167,18 @@ pub fn init(app: &tauri::AppHandle, window: &tauri::WebviewWindow) -> Result<(),
     // mpv: opciones ANTES de init. vo=libmpv activa la Render API; config=yes +
     // config-dir cargan mpv.conf y los scripts (uosc).
     let cfg = config_dir(app);
+    let ytdlp = ytdlp_path(app);
     let mpv = Mpv::with_initializer(|init| {
         init.set_option("vo", "libmpv")?;
         init.set_option("config", "yes")?;
         if let Some(dir) = &cfg {
             init.set_option("config-dir", dir.to_string_lossy().as_ref())?;
         }
+        // uosc fuera: es mouse-first y duplicaba la UI (dos barras distintas,
+        // y la suya no puede pedir subtítulos porque un script Lua no emite
+        // eventos Tauri). Nuestro bar es ahora la única UI, mouse + teclado.
+        // El camino no-Linux (mpv proceso externo) sí sigue cargando uosc.
+        init.set_option("load-scripts", "no")?;
         init.set_option("terminal", "no")?;
         init.set_option("force-window", "no")?;
         // El idle mantiene mpv vivo entre archivos sin cerrar el render context.
@@ -817,6 +1187,15 @@ pub fn init(app: &tauri::AppHandle, window: &tauri::WebviewWindow) -> Result<(),
         // display de cada frame (la doc de la Render API lo dice) → con red
         // lenta la UI se cuelga. En 0 no bloquea; el ritmo lo da queue_render.
         init.set_option("video-timing-offset", "0")?;
+        // Trailers de YouTube: ytdl_hook mezcla los streams DASH (video y audio
+        // van por separado, ya casi no hay formatos progresivos) — es la única
+        // vía que los reproduce completos. Le damos la ruta del yt-dlp propio.
+        if let Some(y) = &ytdlp {
+            init.set_option(
+                "script-opts",
+                format!("ytdl_hook-ytdl_path={}", y.to_string_lossy()).as_str(),
+            )?;
+        }
         Ok(())
     })
     .map_err(|e| format!("mpv init: {e}"))?;
@@ -951,15 +1330,33 @@ fn build_surface(vbox: &gtk::Box) {
             }
             return glib::Propagation::Stop;
         }
-        // Esc/Backspace: salir del video a menús (no van a mpv → no lo matan).
+        // Esc/Backspace: volver a los menús DEJANDO la sesión viva (pausada, o
+        // sonando si es IPTV). No van a mpv → no lo matan. Cerrar del todo es
+        // el botón ✕ Salir del bar.
         if matches!(kn, "Escape" | "BackSpace") {
-            let _ = stop();
+            let _ = suspend();
             return glib::Propagation::Stop;
         }
         // Espacio: alterna pausa/bar en cualquier modo.
         if kn == "space" {
             toggle_pause();
             return glib::Propagation::Stop;
+        }
+        // Atajos directos a los menús propios (antes los servía uosc).
+        match kn {
+            "c" => {
+                open_sub_menu();
+                return glib::Propagation::Stop;
+            }
+            "a" => {
+                open_audio_menu();
+                return glib::Propagation::Stop;
+            }
+            "v" => {
+                open_video_menu();
+                return glib::Propagation::Stop;
+            }
+            _ => {}
         }
         let paused = PLAYER_UI.with(|u| u.borrow().paused);
         if !paused {
@@ -993,46 +1390,93 @@ fn build_surface(vbox: &gtk::Box) {
         }
         glib::Propagation::Stop
     });
+    // Mouse: el bar (y el menú) son NUESTROS, dibujados en el canvas 1280×720
+    // del OSD; convertimos la posición del widget a ese canvas y resolvemos el
+    // hover/click acá. Mover el mouse saca el bar sin pausar (se auto-oculta).
     glarea.connect_motion_notify_event(|area, ev| {
         let (x, y) = ev.position();
-        mpv_mouse_move(x, y, area.scale_factor());
-        cursor_activity(area); // muestra cursor y reprograma el autohide
-        glib::Propagation::Proceed
+        let (cx, cy) = widget_to_osd(area, x, y);
+        cursor_activity(area); // muestra cursor y reprograma su autohide
+        if MENU.with(|m| m.borrow().is_some()) {
+            if let Some(i) = menu_hit(cx, cy) {
+                menu_select(i);
+            }
+            return glib::Propagation::Stop;
+        }
+        show_bar_transient(); // cualquier movimiento lo muestra y reprograma
+        if let Some(i) = bar_hit(cx, cy) {
+            let changed = PLAYER_UI.with(|u| {
+                let mut b = u.borrow_mut();
+                let ch = b.focus != i;
+                b.focus = i;
+                ch
+            });
+            if changed {
+                draw_bar();
+            }
+        }
+        glib::Propagation::Stop
     });
     glarea.connect_button_press_event(|area, ev| {
-        let (x, y) = ev.position();
-        mpv_mouse_move(x, y, area.scale_factor());
-        if let Some(btn) = mpv_btn_name(ev.button()) {
-            mpv_key("keydown", btn);
-        }
         area.grab_focus();
-        glib::Propagation::Proceed
-    });
-    glarea.connect_button_release_event(|_area, ev| {
-        if let Some(btn) = mpv_btn_name(ev.button()) {
-            mpv_key("keyup", btn);
+        if ev.button() != 1 {
+            return glib::Propagation::Stop;
         }
-        glib::Propagation::Proceed
+        let (x, y) = ev.position();
+        let (cx, cy) = widget_to_osd(area, x, y);
+        if MENU.with(|m| m.borrow().is_some()) {
+            // Click en un ítem lo activa; fuera del panel cierra el menú.
+            match menu_hit(cx, cy) {
+                Some(i) => {
+                    menu_select(i);
+                    menu_activate();
+                }
+                None => close_menu(),
+            }
+            return glib::Propagation::Stop;
+        }
+        match bar_hit(cx, cy) {
+            Some(i) => {
+                PLAYER_UI.with(|u| u.borrow_mut().focus = i);
+                draw_bar();
+                activate_focus();
+            }
+            // Click en el video: pausa/reanuda, como cualquier reproductor.
+            None => toggle_pause(),
+        }
+        glib::Propagation::Stop
     });
+    // Rueda: volumen (con el menú abierto, recorre la lista).
     glarea.connect_scroll_event(|_area, ev| {
-        let key = match ev.direction() {
-            gtk::gdk::ScrollDirection::Up => Some("WHEEL_UP"),
-            gtk::gdk::ScrollDirection::Down => Some("WHEEL_DOWN"),
-            gtk::gdk::ScrollDirection::Left => Some("WHEEL_LEFT"),
-            gtk::gdk::ScrollDirection::Right => Some("WHEEL_RIGHT"),
-            _ => None,
+        let up = match ev.direction() {
+            gtk::gdk::ScrollDirection::Up => true,
+            gtk::gdk::ScrollDirection::Down => false,
+            _ => return glib::Propagation::Stop,
         };
-        if let Some(k) = key {
-            mpv_key("keypress", k);
+        if MENU.with(|m| m.borrow().is_some()) {
+            menu_move(if up { -1 } else { 1 });
+        } else {
+            mpv_cmd2("add", &["volume", if up { "5" } else { "-5" }]);
+            show_bar_transient();
         }
-        glib::Propagation::Proceed
+        glib::Propagation::Stop
     });
     glarea.connect_leave_notify_event(|_area, _ev| {
-        // Saca el cursor del OSD → uosc se esconde.
-        if let Some(mpv) = MPV.get() {
-            let _ = mpv.command("mouse", &["-1", "-1"]);
-        }
+        // El puntero salió del video: el bar se va (salvo pausa o menú).
+        hide_bar_transient();
         glib::Propagation::Proceed
+    });
+
+    // La geometría de bar y menús se calcula contra el OSD real, así que al
+    // redimensionar hay que redibujar (diferido: el resize corre en el render).
+    glarea.connect_resize(|_area, _w, _h| {
+        glib::idle_add_local_once(|| {
+            if MENU.with(|m| m.borrow().is_some()) {
+                draw_menu();
+            } else if PLAYER_UI.with(|u| u.borrow().bar_visible) {
+                draw_bar();
+            }
+        });
     });
 
     // Segundo hijo del box, expandido. Solo uno (webview o glarea) visible a la
@@ -1104,9 +1548,16 @@ pub fn is_running() -> bool {
     RUNNING.load(Ordering::SeqCst)
 }
 
+/// `network-timeout` tal como lo dejó mpv.conf, leído la primera vez que se
+/// reproduce algo. Ver el uso en `play()`.
+static NET_TIMEOUT_CONF: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
 /// Reproduce una URL única. Reemplaza lo que estuviera sonando.
 pub fn play(url: &str, title: Option<&str>, start_secs: Option<u64>) -> Result<(), String> {
     let mpv = MPV.get().ok_or("mpv no inicializado")?;
+    // Empezar algo nuevo descarta cualquier trailer y su sesión guardada.
+    TRAILER.store(false, Ordering::SeqCst);
+    clear_pending();
     if let Some(t) = title {
         let _ = mpv.set_property("force-media-title", t);
     }
@@ -1118,10 +1569,30 @@ pub fn play(url: &str, title: Option<&str>, start_secs: Option<u64>) -> Result<(
             let _ = mpv.set_property("start", "none");
         }
     }
+    // Stream del cliente torrent local (127.0.0.1): las pausas ahí NO son
+    // problemas de red sino piezas que aún no llegan del swarm, y pueden durar
+    // bastante más que el network-timeout=15 de mpv.conf. Sin esto mpv aborta
+    // la reproducción a mitad de un tramo lento. Para todo lo demás (debrid,
+    // IPTV) el timeout corto sigue siendo lo correcto: ahí un corte largo sí
+    // es un servidor caído y conviene fallar rápido.
+    let local = url.starts_with("http://127.0.0.1:");
+    // El valor de mpv.conf se guarda la primera vez para poder restaurarlo sin
+    // duplicar la constante acá.
+    let por_defecto = NET_TIMEOUT_CONF.get_or_init(|| {
+        mpv.get_property::<String>("network-timeout")
+            .unwrap_or_else(|_| "15".into())
+    });
+    let _ = mpv.set_property(
+        "network-timeout",
+        if local { "0" } else { por_defecto.as_str() },
+    );
     eprintln!("[mpv-embed] play loadfile…");
     mpv.command("loadfile", &[url, "replace"])
         .map_err(|e| format!("loadfile: {e}"))?;
     eprintln!("[mpv-embed] play loadfile OK → show_surface");
+    LIVE.store(false, Ordering::SeqCst);
+    SUSPENDED.store(false, Ordering::SeqCst);
+    let _ = mpv.set_property("pause", false);
     show_surface();
     notify_state(true);
     eprintln!("[mpv-embed] play listo");
@@ -1131,21 +1602,202 @@ pub fn play(url: &str, title: Option<&str>, start_secs: Option<u64>) -> Result<(
 /// Reproduce un playlist m3u (IPTV) arrancando en `start`.
 pub fn play_iptv(playlist_path: &str, start: usize) -> Result<(), String> {
     let mpv = MPV.get().ok_or("mpv no inicializado")?;
+    TRAILER.store(false, Ordering::SeqCst);
+    clear_pending();
     let _ = mpv.set_property("playlist-start", start as i64);
     mpv.command("loadlist", &[playlist_path, "replace"])
         .map_err(|e| format!("loadlist: {e}"))?;
+    LIVE.store(true, Ordering::SeqCst);
+    SUSPENDED.store(false, Ordering::SeqCst);
+    let _ = mpv.set_property("pause", false);
     show_surface();
     notify_state(true);
     Ok(())
 }
 
-/// Para la reproducción y oculta la superficie (vuelve al webview).
-pub fn stop() -> Result<(), String> {
+/// Reproduce un trailer SIN destruir lo que estuviera en curso.
+///
+/// Un trailer no es una película: al salir no debe quedarse "en espera" en la
+/// pill, y no puede llevarse por delante la película que sí estaba esperando.
+/// Como mpv es una sola instancia, guardamos qué había cargado (ruta + posición)
+/// y lo recargamos al terminar el trailer, otra vez en pausa y fuera de pantalla.
+pub fn play_trailer(url: &str, title: Option<&str>) -> Result<(), String> {
     let mpv = MPV.get().ok_or("mpv no inicializado")?;
-    let _ = mpv.command("stop", &[]);
+    // Un trailer sobre otro trailer no pisa la sesión guardada.
+    if !TRAILER.load(Ordering::SeqCst) {
+        let path = get_string("path");
+        let pending = (RUNNING.load(Ordering::SeqCst) || SUSPENDED.load(Ordering::SeqCst))
+            .then(|| ())
+            .filter(|_| !path.is_empty())
+            .map(|_| Pending {
+                path,
+                pos: get_f64("time-pos"),
+                title: get_string("media-title"),
+                live: LIVE.load(Ordering::SeqCst),
+            });
+        set_pending(pending);
+    }
+    TRAILER.store(true, Ordering::SeqCst);
+    if let Some(t) = title {
+        let _ = mpv.set_property("force-media-title", t);
+    }
+    let _ = mpv.set_property("start", "none");
+    let _ = mpv.set_property("pause", false);
+    mpv.command("loadfile", &[url, "replace"])
+        .map_err(|e| format!("loadfile trailer: {e}"))?;
+    LIVE.store(false, Ordering::SeqCst);
+    SUSPENDED.store(false, Ordering::SeqCst);
+    show_surface();
+    notify_state(true);
+    notify_session();
+    watch_trailer_end();
+    Ok(())
+}
+
+/// Cuando el trailer llega al final se cierra solo (mpv queda idle con pantalla
+/// negra si no). No hay bucle de eventos de libmpv en este módulo, así que lo
+/// sondeamos desde el hilo GTK una vez por segundo mientras dure el trailer.
+fn watch_trailer_end() {
+    let Some(app) = APP.get() else { return };
+    let _ = app.run_on_main_thread(|| {
+        glib::timeout_add_local(std::time::Duration::from_millis(1000), || {
+            if !TRAILER.load(Ordering::SeqCst) {
+                return glib::ControlFlow::Break;
+            }
+            if get_bool("idle-active") || get_bool("eof-reached") {
+                let _ = end_trailer();
+                return glib::ControlFlow::Break;
+            }
+            glib::ControlFlow::Continue
+        });
+    });
+}
+
+/// Cierra el trailer: si había algo esperando lo devuelve a la pill (pausado en
+/// su minuto), y si no, sale a los menús sin dejar nada colgando.
+fn end_trailer() -> Result<(), String> {
+    let mpv = MPV.get().ok_or("mpv no inicializado")?;
+    TRAILER.store(false, Ordering::SeqCst);
+    // Overlays del bar/menú fuera antes de ocultar (viven en el hilo GTK).
+    if let Some(app) = APP.get() {
+        let _ = app.run_on_main_thread(reset_player_ui);
+    }
+    let Some(p) = take_pending() else {
+        return stop_inner();
+    };
+    // Un canal IPTV vuelve sonando; una película vuelve pausada en su minuto.
+    let _ = mpv.set_property("pause", !p.live);
+    let _ = mpv.set_property("force-media-title", p.title.as_str());
+    if p.live || p.pos <= 0.0 {
+        let _ = mpv.set_property("start", "none");
+    } else {
+        let _ = mpv.set_property("start", format!("+{}", p.pos as u64).as_str());
+    }
+    mpv.command("loadfile", &[p.path.as_str(), "replace"])
+        .map_err(|e| format!("loadfile restaurar: {e}"))?;
+    LIVE.store(p.live, Ordering::SeqCst);
+    SUSPENDED.store(true, Ordering::SeqCst);
     hide_surface();
     notify_state(false);
+    notify_session();
     Ok(())
+}
+
+fn set_pending(p: Option<Pending>) {
+    if let Ok(mut g) = PENDING.lock() {
+        *g = p;
+    }
+}
+
+fn take_pending() -> Option<Pending> {
+    PENDING.lock().ok().and_then(|mut g| g.take())
+}
+
+fn clear_pending() {
+    set_pending(None);
+}
+
+/// Para la reproducción y oculta la superficie (vuelve al webview).
+///
+/// Durante un trailer significa "cerrar el trailer": la película que estaba
+/// esperando vuelve a la pill en vez de morir con él.
+pub fn stop() -> Result<(), String> {
+    if TRAILER.load(Ordering::SeqCst) {
+        return end_trailer();
+    }
+    stop_inner()
+}
+
+fn stop_inner() -> Result<(), String> {
+    let mpv = MPV.get().ok_or("mpv no inicializado")?;
+    let _ = mpv.command("stop", &[]);
+    TRAILER.store(false, Ordering::SeqCst);
+    clear_pending();
+    SUSPENDED.store(false, Ordering::SeqCst);
+    LIVE.store(false, Ordering::SeqCst);
+    hide_surface();
+    notify_state(false);
+    notify_session();
+    Ok(())
+}
+
+/// Esc: vuelve a los menús SIN cerrar el archivo. Película → pausa; IPTV →
+/// sigue en vivo de fondo (se oye mientras navegas). La superficie se oculta y
+/// el webview recupera el teclado, igual que en un stop, pero la sesión queda
+/// lista para `resume()`.
+pub fn suspend() -> Result<(), String> {
+    // Esc en un trailer no lo deja esperando: lo cierra y punto.
+    if TRAILER.load(Ordering::SeqCst) {
+        return end_trailer();
+    }
+    let mpv = MPV.get().ok_or("mpv no inicializado")?;
+    if !RUNNING.load(Ordering::SeqCst) {
+        return Ok(());
+    }
+    if !LIVE.load(Ordering::SeqCst) {
+        let _ = mpv.set_property("pause", true);
+    }
+    // Overlays del bar/menú fuera antes de ocultar (viven en el hilo GTK).
+    if let Some(app) = APP.get() {
+        let _ = app.run_on_main_thread(reset_player_ui);
+    }
+    SUSPENDED.store(true, Ordering::SeqCst);
+    hide_surface();
+    notify_state(false);
+    notify_session();
+    Ok(())
+}
+
+/// Retoma la sesión suspendida: vuelve a mostrar el video y despausa.
+pub fn resume() -> Result<(), String> {
+    let mpv = MPV.get().ok_or("mpv no inicializado")?;
+    if !SUSPENDED.load(Ordering::SeqCst) {
+        return Err("no hay reproducción en pausa".into());
+    }
+    SUSPENDED.store(false, Ordering::SeqCst);
+    let _ = mpv.set_property("pause", false);
+    show_surface();
+    notify_state(true);
+    notify_session();
+    Ok(())
+}
+
+/// ¿Hay una sesión suspendida esperando volver?
+pub fn is_suspended() -> bool {
+    SUSPENDED.load(Ordering::SeqCst)
+}
+
+/// ¿La sesión actual es IPTV (vivo)?
+pub fn is_live() -> bool {
+    LIVE.load(Ordering::SeqCst)
+}
+
+/// Avisa a la UI de que cambió la sesión suspendida (la pill se redibuja).
+fn notify_session() {
+    if let Some(app) = APP.get() {
+        use tauri::Emitter;
+        let _ = app.emit("mpv:suspended", SUSPENDED.load(Ordering::SeqCst));
+    }
 }
 
 /// Ejecuta un comando de mpv venido del frontend como array JSON, ej:

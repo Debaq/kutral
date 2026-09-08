@@ -4,6 +4,7 @@
   // no quede capturado y Esc/Backspace siempre puedan cerrar.
 
   import { onMount } from "svelte";
+  import { WEB_PLAYER_ENABLED } from "$lib/features";
 
   type Action = {
     id: string;
@@ -69,8 +70,7 @@
     progressLabel,
     posterUrl = null,
     backdropUrl = null,
-    trailerKey = "",
-    appleTrailerUrl = "",
+    hasTrailer = false,
     hasRd,
     onContinue,
     onRestart,
@@ -84,8 +84,8 @@
     progressLabel: string | null;
     posterUrl?: string | null;
     backdropUrl?: string | null;
-    trailerKey?: string;
-    appleTrailerUrl?: string;
+    /** Hay trailer que mostrar (se reproduce en mpv o se ofrece por QR). */
+    hasTrailer?: boolean;
     hasRd: boolean;
     onContinue: () => void;
     onRestart: () => void;
@@ -94,8 +94,6 @@
     onTrailer: () => void;
     onClose: () => void;
   } = $props();
-
-  const hasTrailer = $derived(!!(trailerKey || appleTrailerUrl));
 
   // Despachador estable: el botón solo pasa el id, evitando que closures
   // capturen versiones viejas de las props.
@@ -126,19 +124,26 @@
   type ActionItem = { id: string; label: string; primary?: boolean };
 
   const actions: ActionItem[] = $derived.by(() => {
-    // Acciones del player WEB (vidapi). Con debrid pasan a ser secundarias.
+    // Acciones del player WEB (vidapi). Ver WEB_PLAYER_ENABLED: hoy apagadas.
     const web: ActionItem[] = [];
-    if (progressLabel) {
-      web.push({ id: "cont", label: `▶  Continuar (${progressLabel})` });
-      web.push({ id: "restart", label: "↻  Empezar de nuevo" });
-    } else {
-      web.push({ id: "discover", label: hasRd ? "🌐  Ver en web" : "▶  Descubrir" });
+    if (WEB_PLAYER_ENABLED) {
+      if (progressLabel) {
+        web.push({ id: "cont", label: `▶  Continuar (${progressLabel})` });
+        web.push({ id: "restart", label: "↻  Empezar de nuevo" });
+      } else {
+        web.push({ id: "discover", label: hasRd ? "🌐  Ver en web" : "▶  Descubrir" });
+      }
     }
 
     const a: ActionItem[] = [];
-    if (hasRd) {
+    if (hasRd || !web.length) {
       // Prioridad: si hay RealDebrid, va debrid primero (mejor calidad, directo
       // a mpv) y el player web queda como alternativa.
+      //
+      // Sin debrid Y sin player web no queda ninguna vía de reproducción, pero
+      // igual mostramos "Ver con debrid": SourcePicker responde con "Vincula tu
+      // debrid en Configuración para reproducir", que es accionable. Un menú
+      // vacío no le dice nada al user.
       a.push({ id: "rd", label: "⚡  Ver con debrid", primary: true });
       a.push({ id: "research", label: "🔄  Rebuscar fuentes" });
       a.push(...web);

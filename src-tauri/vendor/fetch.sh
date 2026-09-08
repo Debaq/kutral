@@ -47,6 +47,18 @@ else
   chmod +x mpv
 fi
 
+echo ">> yt-dlp (trailers de YouTube)"
+# El iframe de YouTube no funciona dentro del webview de Tauri (origen
+# tauri://localhost → "error 153" siempre), así que los trailers se resuelven a
+# un mp4 progresivo con yt-dlp. Binario self-contained, sin dependencias.
+if [ -f yt-dlp ]; then
+  echo "  ya está"
+else
+  curl -sSL -o yt-dlp \
+    "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux"
+  chmod +x yt-dlp
+fi
+
 echo ">> uosc (UI moderna de mpv)"
 # Scripts + fonts de uosc dentro de mpv-config/. Los .conf (mpv.conf,
 # input.conf, iptv-input.conf) son nuestros y SÍ se versionan; uosc no.
@@ -66,4 +78,4 @@ else
 fi
 
 echo ">> listo"
-ls -lh retroarch mpv cores/*.so
+ls -lh retroarch mpv yt-dlp cores/*.so

@@ -46,6 +46,12 @@ if (-not (Test-Path "mpv.exe")) {
   Remove-Item "mpv.7z"
 }
 
+# --- yt-dlp (trailers de YouTube: el iframe da error 153 en el webview) ---
+if (-not (Test-Path "yt-dlp.exe")) {
+  Write-Host ">> yt-dlp"
+  Get-File "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" "yt-dlp.exe"
+}
+
 Write-Host ">> listo"
-Get-ChildItem retroarch.exe, mpv.exe
+Get-ChildItem retroarch.exe, mpv.exe, yt-dlp.exe
 Get-ChildItem cores

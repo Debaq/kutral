@@ -3,6 +3,8 @@ retroarch
 retroarch.exe
 mpv
 mpv.exe
+yt-dlp
+yt-dlp.exe
 cores/*.so
 cores/*.dll
 # Soporte de RetroArch Windows (dlls + assets extraídos junto al .exe).
