@@ -56,6 +56,8 @@ if [[ "$LANG_UI" == "es" ]]; then
     T_BUILD_ALL_STEP2="Paso 2/2: Build Web..."
     T_BUILD_ALL_DONE_FMT="Build completo en %s"
     T_BINARY_FMT="Binario: %s"
+    T_VENDOR_FMT="Recursos: %s (mpv.conf, yt-dlp, cores)"
+    T_VENDOR_MISSING="vendor/ no encontrado: corre src-tauri/vendor/fetch.sh"
     T_WEB_ZIP_FMT="ZIP web: %s"
     T_DIST_NOT_FOUND="dist/ no encontrado, ¿fallo build web?"
     T_ARTIFACTS_IN="Artefactos en out/"
@@ -140,6 +142,8 @@ else
     T_BUILD_ALL_STEP2="Step 2/2: Web build..."
     T_BUILD_ALL_DONE_FMT="Full build in %s"
     T_BINARY_FMT="Binary: %s"
+    T_VENDOR_FMT="Resources: %s (mpv.conf, yt-dlp, cores)"
+    T_VENDOR_MISSING="vendor/ not found: run src-tauri/vendor/fetch.sh"
     T_WEB_ZIP_FMT="Web ZIP: %s"
     T_DIST_NOT_FOUND="dist/ not found, web build failed?"
     T_ARTIFACTS_IN="Artifacts in out/"
@@ -350,6 +354,10 @@ cmd_build_all() {
 
 collect_artifacts_tauri() {
     local out="$PROJECT_DIR/out"
+    # out/ se REHACE en cada build. Antes solo se copiaba encima del .bin, así
+    # que lo que alguien dejara ahí (pruebas, libs sueltas) se quedaba para
+    # siempre y se colaba en el paquete que se reparte.
+    rm -rf "$out"
     mkdir -p "$out"
     local bin
     bin="$(find_binary || echo '')"
@@ -359,6 +367,31 @@ collect_artifacts_tauri() {
         chmod +x "$target"
         success "$(printf "$T_BINARY_FMT" "$target")"
     fi
+    collect_vendor "$out"
+}
+
+# El binario SUELTO no es autocontenido: mpv_embed::config_dir() busca
+# vendor/mpv-config junto al ejecutable (su 3er candidato), y ytdlp_path() hace
+# lo mismo. Sin eso mpv arranca sin mpv.conf — y sin network-timeout un link de
+# debrid estancado cuelga la ventana entera —, los trailers mueren sin yt-dlp y
+# la emulación sin los cores. Por eso vendor/ viaja al lado del .bin.
+#
+# Se excluye vendor/mpv (48 MB): ese binario solo lo usa el camino no-Linux
+# (player.rs vive tras #[cfg(not(target_os = "linux"))]); acá va libmpv
+# embebido. Y fetch.sh / README son de desarrollo, no se reparten.
+collect_vendor() {
+    local out="$1"
+    local src="$TAURI_DIR/vendor"
+    if [[ ! -d "$src" ]]; then
+        warn "$T_VENDOR_MISSING"
+        return 0
+    fi
+    mkdir -p "$out/vendor"
+    local item
+    for item in mpv-config cores retroarch yt-dlp; do
+        [[ -e "$src/$item" ]] && cp -r "$src/$item" "$out/vendor/"
+    done
+    success "$(printf "$T_VENDOR_FMT" "$out/vendor")"
 }
 
 collect_artifacts_web() {

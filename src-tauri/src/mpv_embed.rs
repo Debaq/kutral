@@ -1371,7 +1371,20 @@ fn config_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
             cands.push(dir.join("vendor").join("mpv-config"));
         }
     }
-    cands.into_iter().find(|c| c.exists())
+    let found = cands.into_iter().find(|c| c.exists());
+    // Se avisa SIEMPRE. Que esto cayera en None sin decir nada costó caro: el
+    // 2º candidato es el CARGO_MANIFEST_DIR compilado, que existe en la máquina
+    // de desarrollo y en ninguna otra. Repartiendo el binario suelto sin
+    // vendor/ al lado, mpv arrancaba sin mpv.conf y sin fuentes, y el síntoma
+    // aparecía a kilómetros del origen.
+    match &found {
+        Some(p) => eprintln!("[mpv] config-dir: {}", p.display()),
+        None => eprintln!(
+            "[mpv] SIN config-dir: no encontré vendor/mpv-config. mpv arranca sin \
+             mpv.conf (sin network-timeout ni cache). Deja vendor/ junto al ejecutable."
+        ),
+    }
+    found
 }
 
 /// Ruta del yt-dlp vendorizado, para que ytdl_hook lo encuentre sin depender
