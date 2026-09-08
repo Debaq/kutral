@@ -178,6 +178,7 @@ fn media_to_item(m: &serde_json::Value) -> TmdbItem {
 /// solo aplican si vienen ambos.
 #[tauri::command]
 pub async fn anilist_discover(
+    app: tauri::AppHandle,
     page: u32,
     sort: Option<String>,
     genres: Option<String>,
@@ -185,17 +186,49 @@ pub async fn anilist_discover(
     season: Option<String>,
     season_year: Option<u32>,
 ) -> Result<TmdbListResp, String> {
+    // Caché en disco de la página, igual que el discover de TMDb. La búsqueda
+    // queda afuera: cada tecla es una consulta distinta y llenaría el disco de
+    // páginas que nadie vuelve a pedir.
+    let buscando = search.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+    let clave = crate::cache::clave(&[
+        "anilist",
+        &page.to_string(),
+        sort.as_deref().unwrap_or(""),
+        genres.as_deref().unwrap_or(""),
+        season.as_deref().unwrap_or(""),
+        &season_year.map(|y| y.to_string()).unwrap_or_default(),
+    ]);
+    if !buscando {
+        if let Some(json) = crate::cache::lista_get(&app, &clave) {
+            if let Ok(r) = serde_json::from_str::<TmdbListResp>(&json) {
+                return Ok(r);
+            }
+        }
+    }
+
     // Ruta normal. Si AniList está caída (o se cae en este intento), el
     // catálogo lo sirve Kitsu con el MISMO vocabulario de entrada.
+    let mut resp: Option<TmdbListResp> = None;
     if !anilist_is_down() {
         match discover_anilist(page, sort.clone(), genres.clone(), search.clone(), season.clone(), season_year).await {
-            Ok(r) => return Ok(r),
+            Ok(r) => resp = Some(r),
             Err(e) => eprintln!("[anilist] discover falló: {e}"),
         }
     }
-    crate::kitsu::discover(page, sort, genres, search, season, season_year)
-        .await
-        .map_err(|e| format!("El catálogo de anime no está disponible ahora mismo. ({e})"))
+    let resp = match resp {
+        Some(r) => r,
+        None => crate::kitsu::discover(page, sort, genres, search, season, season_year)
+            .await
+            .map_err(|e| format!("El catálogo de anime no está disponible ahora mismo. ({e})"))?,
+    };
+    // Vacío no se cachea: suele ser AniList/Kitsu fallando, no un catálogo
+    // realmente vacío, y quedaría clavado 12 horas.
+    if !buscando && !resp.results.is_empty() {
+        if let Ok(json) = serde_json::to_string(&resp) {
+            crate::cache::lista_put(&app, &clave, &json);
+        }
+    }
+    Ok(resp)
 }
 
 async fn discover_anilist(

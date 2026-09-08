@@ -5,7 +5,8 @@
 //   - nominations: P1411 nominated for
 //
 // Sin key. UA propio (Wikidata bloquea defaults).
-// Llamadores deben cachear en frontend; este comando no cachea.
+// Cachea en disco (crate::cache): los premios de una peli cambian una vez al
+// año como mucho, y esto se dispara por cada card del grid.
 
 use serde::{Deserialize, Serialize};
 
@@ -19,7 +20,10 @@ const SPARQL_URL: &str = "https://query.wikidata.org/sparql";
 const UA: &str = "Kutral/26.5 (https://github.com/Debaq/kutral; contacto@kutral.app)";
 
 #[tauri::command]
-pub async fn wikidata_awards(imdb_id: String) -> Result<AwardsSummary, String> {
+pub async fn wikidata_awards(
+    app: tauri::AppHandle,
+    imdb_id: String,
+) -> Result<AwardsSummary, String> {
     // Validación mínima: imdb_id empieza con "tt" y tiene 7+ dígitos.
     if !imdb_id.starts_with("tt") || imdb_id.len() < 5 {
         return Ok(AwardsSummary { wins: 0, nominations: 0 });
@@ -27,6 +31,10 @@ pub async fn wikidata_awards(imdb_id: String) -> Result<AwardsSummary, String> {
     // Bloquear caracteres raros para evitar inyección en el literal SPARQL.
     if !imdb_id.chars().all(|c| c.is_ascii_alphanumeric()) {
         return Ok(AwardsSummary { wins: 0, nominations: 0 });
+    }
+
+    if let Some((wins, nominations)) = crate::cache::awards_get(&app, &imdb_id) {
+        return Ok(AwardsSummary { wins, nominations });
     }
 
     let query = format!(
@@ -70,8 +78,10 @@ pub async fn wikidata_awards(imdb_id: String) -> Result<AwardsSummary, String> {
             .unwrap_or(0)
     };
 
-    Ok(AwardsSummary {
+    let out = AwardsSummary {
         wins: read_u32("wins"),
         nominations: read_u32("noms"),
-    })
+    };
+    crate::cache::awards_put(&app, &imdb_id, out.wins, out.nominations);
+    Ok(out)
 }

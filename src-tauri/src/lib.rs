@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 mod anilist;
 mod anime_web;
 mod awards;
+mod cache;
 mod creds;
 mod emu;
 mod kitsu;
@@ -422,6 +423,7 @@ async fn tmdb_genres(media_type: String, api_key: String) -> Result<Vec<GenreIte
 
 #[tauri::command]
 async fn tmdb_discover(
+    app: tauri::AppHandle,
     media_type: String,
     page: u64,
     api_key: String,
@@ -528,7 +530,25 @@ async fn tmdb_discover(
     if let Some(k) = with_keywords.filter(|s| !s.is_empty()) {
         url.push_str(&format!("&with_keywords={}", k));
     }
-    fetch_json(&url).await
+
+    // Caché en disco de la página armada. La clave sale de la URL final SIN la
+    // api key: dos keys distintas ven exactamente el mismo catálogo, no tiene
+    // sentido bajarlo dos veces.
+    let clave = cache::clave(&["discover", &url.replace(&format!("api_key={}&", api_key), "")]);
+    if let Some(json) = cache::lista_get(&app, &clave) {
+        if let Ok(r) = serde_json::from_str::<TmdbListResp>(&json) {
+            return Ok(r);
+        }
+    }
+    let resp: TmdbListResp = fetch_json(&url).await?;
+    // Página vacía = casi siempre un hipo de TMDb. Cachearla dejaría el
+    // catálogo en blanco durante 12 horas.
+    if !resp.results.is_empty() {
+        if let Ok(json) = serde_json::to_string(&resp) {
+            cache::lista_put(&app, &clave, &json);
+        }
+    }
+    Ok(resp)
 }
 
 #[tauri::command]
@@ -1000,12 +1020,29 @@ struct ItemStatusRaw {
 }
 
 #[tauri::command]
-async fn item_status(media_type: String, id: u64, api_key: String) -> Result<ItemStatus, String> {
+async fn item_status(
+    app: tauri::AppHandle,
+    media_type: String,
+    id: u64,
+    api_key: String,
+) -> Result<ItemStatus, String> {
     if api_key.is_empty() {
         return Err("falta api key".into());
     }
     if media_type != "movie" && media_type != "tv" {
         return Err("media_type inválido".into());
+    }
+    // Caché: es UNA petición por card, o sea decenas por pantalla al paginar.
+    // Lo que devuelve (tiene imdb, tiene trailer, cuántas temporadas) no cambia
+    // de un día para otro, así que la card ya vista no vuelve a pegarle a la red.
+    if let Some(c) = cache::status_get(&app, &media_type, id) {
+        return Ok(ItemStatus {
+            id,
+            has_imdb: c.has_imdb,
+            imdb_id: c.imdb_id,
+            has_trailer: c.has_trailer,
+            number_of_seasons: c.seasons,
+        });
     }
     // UNA sola petición (append_to_response) en vez de 3 → 3× menos presión de
     // rate-limit en una grilla que sondea decenas de cards a la vez.
@@ -1030,6 +1067,17 @@ async fn item_status(media_type: String, id: u64, api_key: String) -> Result<Ite
         .unwrap_or_default()
         .iter()
         .any(|v| v.site == "YouTube" && (v.kind == "Trailer" || v.kind == "Teaser"));
+    cache::status_put(
+        &app,
+        &media_type,
+        id,
+        &cache::StatusRow {
+            has_imdb,
+            imdb_id: imdb_id.clone(),
+            has_trailer,
+            seasons: raw.number_of_seasons,
+        },
+    );
     Ok(ItemStatus { id, has_imdb, imdb_id, has_trailer, number_of_seasons: raw.number_of_seasons })
 }
 
@@ -2874,6 +2922,12 @@ pub fn run() {
 
     tauri::Builder::default()
         .setup(|app| {
+            // Limpieza de páginas de catálogo vencidas. En un hilo aparte:
+            // es I/O de disco y no tiene por qué demorar el arranque.
+            {
+                let h = app.handle().clone();
+                std::thread::spawn(move || cache::purgar(&h));
+            }
             // Activa MSE en el WebKitGTK del webview para que hls.js pueda
             // reproducir HLS (IPTV) DENTRO de la app. Sin esto el <video>
             // queda en negro porque el webview no expone MediaSource.
