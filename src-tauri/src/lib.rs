@@ -4,6 +4,7 @@ mod anilist;
 mod awards;
 mod creds;
 mod emu;
+mod kitsu;
 mod kodios;
 mod opensubtitles;
 mod probe;
@@ -12,6 +13,7 @@ mod player;
 #[cfg(target_os = "linux")]
 mod mpv_embed;
 mod screening;
+mod torrent;
 mod webserver;
 
 const TMDB_BASE: &str = "https://api.themoviedb.org/3";
@@ -25,11 +27,27 @@ fn ui_log(msg: String) {
 
 const BROWSER_UA: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
+/// Cliente HTTP compartido para TMDb/OMDb/imágenes.
+///
+/// `reqwest::Client` es un Arc por dentro: clonarlo reusa el pool de
+/// conexiones (keep-alive + TLS ya negociado). Construir uno por request
+/// tiraba el pool cada vez → un handshake TLS completo por cada card del grid.
+///
+/// El `timeout` es igual de importante: sin él, un request estancado (CDN que
+/// acepta la conexión y no responde) no termina NUNCA. El frontend deja
+/// `listLoading = true` para siempre y el grid queda congelado sin reintentar.
 fn client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .user_agent(BROWSER_UA)
-        .build()
-        .map_err(|e| e.to_string())
+    static HTTP: std::sync::OnceLock<Result<reqwest::Client, String>> = std::sync::OnceLock::new();
+    HTTP.get_or_init(|| {
+        reqwest::Client::builder()
+            .user_agent(BROWSER_UA)
+            .timeout(std::time::Duration::from_secs(15))
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
+            .build()
+            .map_err(|e| e.to_string())
+    })
+    .clone()
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -49,6 +67,17 @@ pub struct TmdbItem {
     pub release_date: Option<String>,
     #[serde(default)]
     pub first_air_date: Option<String>,
+    // Los tres campos de abajo TMDb ya los manda en /discover y /recommendations.
+    // Se agregan para que Vera pueda armar y rankear el pool con la respuesta
+    // del listado, sin un /detail por título (eran ~60 requests por ronda).
+    #[serde(default)]
+    pub genre_ids: Vec<u64>,
+    #[serde(default)]
+    pub vote_count: Option<u32>,
+    #[serde(default)]
+    pub popularity: Option<f32>,
+    #[serde(default)]
+    pub original_language: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -114,6 +143,12 @@ pub struct TmdbDetail {
     pub spoken_languages: Vec<String>,
     #[serde(default)]
     pub homepage: Option<String>,
+    /// Temas sensibles derivados de las keywords TMDb con el MISMO mapeo que
+    /// usa `vera_import_catalog` (`map_keyword_to_themes`). Viaja en el detail
+    /// para que Vera pueda filtrar por trigger warnings también en títulos que
+    /// no están en el catálogo local. Vacío = sin coincidencias (no "sin datos").
+    #[serde(default)]
+    pub sensitive_themes: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -190,6 +225,8 @@ struct DetailRaw {
     spoken_languages: Vec<NamedRaw>,
     #[serde(default)]
     homepage: Option<String>,
+    #[serde(default)]
+    keywords: Option<KeywordsField>,
 }
 
 #[derive(Deserialize)]
@@ -301,6 +338,70 @@ struct GenresResp {
     genres: Vec<GenreItem>,
 }
 
+// ========================================================================
+// Sinopsis en español para anime
+// ========================================================================
+
+/// Orden de preferencia para la sinopsis. `es-MX` primero a propósito: la
+/// marca escribe en español NEUTRO y las traducciones `es-ES` de TMDb están
+/// hechas para España (aparece algún "vosotros"). Después va España, después
+/// cualquier variante, y recién ahí quien llama se queda con el inglés.
+const OVERVIEW_ES_PREF: &[&str] = &["MX", "ES", "419", "AR", "CO", "US"];
+
+/// Sinopsis en español para un anime, vía su ficha equivalente en TMDb.
+///
+/// Ni AniList ni Kitsu tienen texto en español (sus `titles` traen locales,
+/// pero la sinopsis es siempre inglés). El `themoviedb_id` sale de ani.zip, en
+/// la MISMA llamada que ya se hace para episodios e IDs cruzados.
+///
+/// Una sola petición: `language=es-MX` resuelve el caso común, y
+/// `append_to_response=translations` trae el resto de variantes por si esa no
+/// existe — TMDb devuelve `overview` VACÍO cuando no hay traducción, no un
+/// error, así que sin el append no habría forma de distinguirlo.
+///
+/// Devuelve `None` si no hay español: quien llama conserva la sinopsis original.
+pub(crate) async fn tmdb_overview_es(
+    tmdb_type: Option<&str>,
+    tmdb_id: u64,
+    api_key: &str,
+) -> Option<String> {
+    if api_key.is_empty() || tmdb_id == 0 {
+        return None;
+    }
+    // ani.zip marca "MOVIE"/"TV"; ante la duda, serie (la mayoría del catálogo).
+    let kind = if tmdb_type.is_some_and(|t| t.eq_ignore_ascii_case("movie")) {
+        "movie"
+    } else {
+        "tv"
+    };
+    let url = format!(
+        "{}/{}/{}?api_key={}&language=es-MX&append_to_response=translations",
+        TMDB_BASE, kind, tmdb_id, api_key
+    );
+    let v: serde_json::Value = client().ok()?.get(&url).send().await.ok()?.json().await.ok()?;
+
+    let clean = |x: &serde_json::Value| {
+        x.as_str().map(str::trim).filter(|t| !t.is_empty()).map(str::to_string)
+    };
+    // Camino rápido: la propia respuesta ya vino en es-MX.
+    if let Some(o) = clean(&v["overview"]) {
+        return Some(o);
+    }
+    // Si no, elegimos entre las traducciones al español que haya.
+    let list = v["translations"]["translations"].as_array()?;
+    let es: Vec<&serde_json::Value> =
+        list.iter().filter(|t| t["iso_639_1"] == "es").collect();
+    for region in OVERVIEW_ES_PREF {
+        if let Some(t) = es.iter().find(|t| t["iso_3166_1"] == *region) {
+            if let Some(o) = clean(&t["data"]["overview"]) {
+                return Some(o);
+            }
+        }
+    }
+    // Cualquier variante de español con texto.
+    es.iter().find_map(|t| clean(&t["data"]["overview"]))
+}
+
 #[tauri::command]
 async fn tmdb_genres(media_type: String, api_key: String) -> Result<Vec<GenreItem>, String> {
     if api_key.is_empty() {
@@ -345,15 +446,37 @@ async fn tmdb_discover(
     if media_type != "movie" && media_type != "tv" {
         return Err("media_type inválido".into());
     }
+    let release_type = with_release_type
+        .filter(|s| !s.is_empty() && media_type == "movie");
+
     let sort = sort_by.unwrap_or_else(|| "popularity.desc".into());
+    // El sort tiene que mirar el MISMO campo que filtra la fecha (ver
+    // `date_field` abajo). Con with_release_type el filtro es sobre
+    // `release_date`, así que ordenar por `primary_release_date` mezclaba dos
+    // campos: una peli con estreno principal en 2027 pero con cualquier fecha
+    // vieja de tipo 6 (TV) pasaba el `.lte=hoy` y, ordenada por su fecha
+    // primaria futura, se iba al TOPE de la primera página. Medido: el primer
+    // resultado de "Más recientes" era un estreno de 2027-03-08.
+    let sort = match release_type.is_some() && sort.starts_with("primary_release_date") {
+        true => sort.replacen("primary_release_date", "release_date", 1),
+        false => sort,
+    };
+
     let mut url = format!(
         "{}/discover/{}?api_key={}&language={}&page={}&sort_by={}&include_adult=false",
         TMDB_BASE, media_type, api_key, LANG, page, sort
     );
-    // Si el caller pasa vote_count_gte se usa; si no, mantenemos el
-    // default histórico de 100 cuando el sort es por vote_average.
+    // Piso de votos. TMDb es editable por usuarios y su cola larga son fichas
+    // placeholder: sin póster, sin votos, muchas sin estrenar de verdad. Los
+    // órdenes por popularidad o votos se filtran solos, pero "Más recientes",
+    // "Más antiguas" y A→Z/Z→A entregaban esa cola cruda (medido: 15 de 20
+    // resultados con CERO votos en Z→A, y títulos que eran literalmente "!").
+    //
+    // 10 es el punto donde el ruido desaparece sin perder frescura: deja pasar
+    // estrenos de los últimos días, que legítimamente tienen pocos votos. Con
+    // 50 ya se perdía la última semana entera.
     let vcount = vote_count_gte.unwrap_or_else(|| {
-        if sort.starts_with("vote_average") { 100 } else { 0 }
+        if sort.starts_with("vote_average") { 100 } else { 10 }
     });
     if vcount > 0 {
         url.push_str(&format!("&vote_count.gte={}", vcount));
@@ -378,8 +501,6 @@ async fn tmdb_discover(
     if let Some(v) = vote_average_gte {
         url.push_str(&format!("&vote_average.gte={}", v));
     }
-    let release_type = with_release_type
-        .filter(|s| !s.is_empty() && media_type == "movie");
     // Campo de fecha según contexto: tv usa first_air_date; movie con
     // with_release_type debe usar release_date (TMDb filtra sobre las fechas
     // de esos tipos); movie a secas usa primary_release_date.
@@ -518,6 +639,215 @@ async fn tmdb_videos(
     Ok(filtered)
 }
 
+// ---------- Trailers ----------
+
+/// Quita acentos de los caracteres latinos comunes. No cubre todo Unicode:
+/// solo lo que aparece en títulos de TMDb en es-ES / en-US.
+fn deaccent(c: char) -> Option<&'static str> {
+    Some(match c {
+        'á' | 'à' | 'ä' | 'â' | 'ã' | 'å' => "a",
+        'é' | 'è' | 'ë' | 'ê' => "e",
+        'í' | 'ì' | 'ï' | 'î' => "i",
+        'ó' | 'ò' | 'ö' | 'ô' | 'õ' => "o",
+        'ú' | 'ù' | 'ü' | 'û' => "u",
+        'ñ' => "n",
+        'ç' => "c",
+        'ø' => "o",
+        'æ' => "ae",
+        'ß' => "ss",
+        _ => return None,
+    })
+}
+
+/// Normaliza un título para comparar: minúsculas, sin acentos, sin puntuación,
+/// espacios colapsados. "Amélie: Edición Especial" → "amelie edicion especial".
+fn norm_title(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut prev_space = true;
+    for ch in s.to_lowercase().chars() {
+        let mapped = deaccent(ch);
+        let piece: &str = match mapped {
+            Some(m) => m,
+            None if ch.is_alphanumeric() => {
+                out.push(ch);
+                prev_space = false;
+                continue;
+            }
+            None => {
+                if !prev_space {
+                    out.push(' ');
+                    prev_space = true;
+                }
+                continue;
+            }
+        };
+        out.push_str(piece);
+        prev_space = false;
+    }
+    out.trim().to_string()
+}
+
+fn levenshtein(a: &[char], b: &[char]) -> usize {
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0usize; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        cur[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            cur[j + 1] = (prev[j + 1] + 1).min(cur[j] + 1).min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
+}
+
+/// 1.0 = idénticos, 0.0 = nada en común.
+fn similarity(a: &str, b: &str) -> f32 {
+    if a == b {
+        return 1.0;
+    }
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    let ac: Vec<char> = a.chars().collect();
+    let bc: Vec<char> = b.chars().collect();
+    let d = levenshtein(&ac, &bc) as f32;
+    1.0 - d / ac.len().max(bc.len()) as f32
+}
+
+/// ¿El video de YouTube se puede embeber?
+///
+/// oEmbed responde 200 solo si existe Y permite embed. 401/403 = embed
+/// deshabilitado por el dueño (caso típico de trailers de distribuidoras, que
+/// dentro del webview aparecen como "error 153"), 404 = borrado o privado.
+/// Sin esta comprobación el iframe carga una pantalla negra y la app cree que
+/// el trailer se está viendo.
+/// (existe, permite embed). 200 = ambos; 401/403 = existe pero el dueño
+/// bloqueó el embed (yt-dlp igual lo puede reproducir); el resto = borrado,
+/// privado o key inválida.
+async fn yt_probe(key: &str) -> (bool, bool) {
+    let url = format!(
+        "https://www.youtube.com/oembed?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3D{}&format=json",
+        urlencoding::encode(key)
+    );
+    let c = match client() {
+        Ok(c) => c,
+        // Sin cliente HTTP no podemos descartar nada: lo damos por existente.
+        Err(_) => return (true, false),
+    };
+    match c.get(&url).send().await {
+        Ok(r) if r.status().is_success() => (true, true),
+        Ok(r) if r.status().as_u16() == 401 || r.status().as_u16() == 403 => (true, false),
+        Ok(_) => (false, false),
+        // Fallo de red: no asumir que el video no existe.
+        Err(_) => (true, false),
+    }
+}
+
+#[derive(Serialize)]
+pub struct TrailerKey {
+    pub key: String,
+    pub embeddable: bool,
+}
+
+/// Primer trailer de TMDb que además se puede embeber.
+///
+/// Si ninguno de los candidatos pasa la prueba devuelve el primero con
+/// `embeddable: false`: el frontend lo abre en el navegador externo en vez de
+/// mostrar un iframe roto.
+#[tauri::command]
+async fn tmdb_trailer_key(
+    media_type: String,
+    id: u64,
+    api_key: String,
+) -> Result<Option<TrailerKey>, String> {
+    let vids = tmdb_videos(media_type, id, api_key).await?;
+    let mut first: Option<String> = None;
+    // Tope de 5: cada comprobación es un request extra y la lista viene
+    // ordenada por relevancia (oficial + Trailer antes que Teaser). Se salta
+    // solo lo borrado: un video sin permiso de embed sigue sirviendo, porque
+    // el camino normal de reproducción es yt-dlp, no el iframe.
+    for v in vids.iter().take(5) {
+        if first.is_none() {
+            first = Some(v.key.clone());
+        }
+        let (exists, embeddable) = yt_probe(&v.key).await;
+        if exists {
+            return Ok(Some(TrailerKey { key: v.key.clone(), embeddable }));
+        }
+    }
+    Ok(first.map(|key| TrailerKey { key, embeddable: false }))
+}
+
+/// Ruta del binario yt-dlp: vendor/ del bundle primero, PATH después.
+fn ytdlp_bin(app: &tauri::AppHandle) -> String {
+    use tauri::Manager;
+    #[cfg(windows)]
+    let exe = "yt-dlp.exe";
+    #[cfg(not(windows))]
+    let exe = "yt-dlp";
+
+    let mut cands: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(res) = app.path().resource_dir() {
+        cands.push(res.join("vendor").join(exe));
+    }
+    cands.push(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("vendor").join(exe));
+    if let Ok(p) = std::env::current_exe() {
+        if let Some(dir) = p.parent() {
+            cands.push(dir.join("vendor").join(exe));
+        }
+    }
+    for c in cands {
+        if c.exists() {
+            return c.to_string_lossy().into_owned();
+        }
+    }
+    exe.to_string()
+}
+
+/// ¿yt-dlp puede resolver este video? (existe, no tiene bloqueo de edad/DRM)
+///
+/// No devolvemos la URL: los trailers de YouTube ya casi nunca traen formato
+/// progresivo (video y audio van por streams DASH separados), así que un
+/// `<video>` del webview no puede reproducirlos aunque le demos la URL. Quien
+/// los junta es mpv vía ytdl_hook, y para eso le pasamos la URL de YouTube tal
+/// cual. Esta comprobación solo sirve para saber si vale la pena abrir mpv o
+/// hay que mostrar el QR.
+#[tauri::command]
+async fn yt_playable(app: tauri::AppHandle, key: String) -> Result<bool, String> {
+    let k = key.trim().to_string();
+    if k.is_empty() || !k.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Ok(false);
+    }
+    let bin = ytdlp_bin(&app);
+    let url = format!("https://www.youtube.com/watch?v={}", k);
+
+    let mut cmd = tokio::process::Command::new(&bin);
+    let fut = cmd
+        .args([
+            "--no-playlist",
+            "--no-warnings",
+            "--socket-timeout", "10",
+            "-f", "bv*+ba/b",
+            "-g",
+            &url,
+        ])
+        .kill_on_drop(true)
+        .output();
+    // Tope duro: si yt-dlp se cuelga, el menú no puede quedarse esperando.
+    let out = match tokio::time::timeout(std::time::Duration::from_secs(30), fut).await {
+        Ok(r) => r.map_err(|e| format!("yt-dlp: {}", e))?,
+        Err(_) => return Err("yt-dlp: timeout".into()),
+    };
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("yt-dlp: {}", err.lines().next().unwrap_or("").trim()));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .any(|l| l.trim().starts_with("http")))
+}
+
 #[derive(Serialize)]
 pub struct AppleTrailer {
     pub url: String,
@@ -525,23 +855,23 @@ pub struct AppleTrailer {
     pub year: Option<String>,
 }
 
+/// Trailer desde iTunes (mp4 directo, sin restricciones de embed).
+///
+/// iTunes solo se puede consultar por texto — no tiene IDs de TMDb/IMDb — así
+/// que el match tiene que ser estricto o devuelve cualquier cosa: su búsqueda
+/// es difusa y para un título que no está en el catálogo US (cine coreano,
+/// indio, europeo) responde 25 películas sin relación. Antes se aceptaba "el
+/// primer candidato" y por eso salía el trailer de otra película.
+///
+/// Reglas: título normalizado con similitud >= 0.85 y año dentro de ±1. Sin
+/// año confiable se exige similitud >= 0.95. Si nada cumple → `None`.
 #[tauri::command]
 async fn apple_trailer(
     title: String,
+    original_title: String,
     year: String,
     media_type: String,
 ) -> Result<Option<AppleTrailer>, String> {
-    let t = title.trim();
-    if t.is_empty() {
-        return Ok(None);
-    }
-    let encoded = urlencoding::encode(t);
-    // Sin entity= : Apple bugea y devuelve vacío con entity=movie.
-    let url = format!(
-        "https://itunes.apple.com/search?term={}&country=us&limit=25",
-        encoded
-    );
-
     #[derive(Deserialize)]
     struct Resp {
         results: Vec<Item>,
@@ -555,68 +885,91 @@ async fn apple_trailer(
         release_date: Option<String>,
     }
 
-    let r: Resp = match fetch_json::<Resp>(&url).await {
-        Ok(v) => v,
-        Err(_) => return Ok(None),
-    };
+    // El título original va primero: iTunes US indexa en inglés / idioma
+    // original, no con el título en español de TMDb.
+    let mut queries: Vec<String> = Vec::new();
+    for cand in [original_title.trim(), title.trim()] {
+        if !cand.is_empty() && !queries.iter().any(|q| q.eq_ignore_ascii_case(cand)) {
+            queries.push(cand.to_string());
+        }
+    }
+    if queries.is_empty() {
+        return Ok(None);
+    }
 
+    // Una serie nunca debe matchear una película homónima.
     let want_kinds: &[&str] = if media_type == "tv" {
-        &["tv-episode", "feature-movie"]
+        &["tv-episode", "tv-season"]
     } else {
         &["feature-movie"]
     };
-
-    let candidates: Vec<&Item> = r
-        .results
+    let want_year: Option<i32> = year.get(..4).and_then(|y| y.parse().ok());
+    let targets: Vec<String> = queries
         .iter()
-        .filter(|i| {
-            i.preview_url.as_deref().map_or(false, |u| !u.is_empty())
-                && i.kind.as_deref().map_or(false, |k| want_kinds.contains(&k))
-        })
+        .map(|q| norm_title(q))
+        .filter(|s| !s.is_empty())
         .collect();
+    let min_sim = if want_year.is_some() { 0.85 } else { 0.95 };
 
-    let title_lc = t.to_lowercase();
-    let to_out = |i: &Item| AppleTrailer {
-        url: i.preview_url.clone().unwrap_or_default(),
-        title: i.track_name.clone().unwrap_or_default(),
-        year: i
-            .release_date
-            .as_ref()
-            .and_then(|d| d.get(..4).map(|s| s.to_string())),
-    };
+    for q in &queries {
+        // Sin entity= : Apple bugea y devuelve vacío con entity=movie.
+        let url = format!(
+            "https://itunes.apple.com/search?term={}&country=us&limit=25",
+            urlencoding::encode(q)
+        );
+        let r: Resp = match fetch_json::<Resp>(&url).await {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
 
-    // 1) match año + título contiene
-    if !year.is_empty() {
-        if let Some(found) = candidates.iter().find(|i| {
-            i.release_date
+        let mut best: Option<(f32, &Item)> = None;
+        for i in r.results.iter() {
+            if i.preview_url.as_deref().map_or(true, |u| u.is_empty()) {
+                continue;
+            }
+            if !i.kind.as_deref().map_or(false, |k| want_kinds.contains(&k)) {
+                continue;
+            }
+            let name = norm_title(i.track_name.as_deref().unwrap_or(""));
+            if name.is_empty() {
+                continue;
+            }
+            let sim = targets
+                .iter()
+                .map(|t| similarity(t, &name))
+                .fold(0.0f32, f32::max);
+            if sim < min_sim {
+                continue;
+            }
+            // iTunes fecha el estreno digital, no el de cines → tolerancia ±1.
+            let iy: Option<i32> = i
+                .release_date
                 .as_deref()
-                .map_or(false, |d| d.starts_with(&year))
-                && i.track_name
-                    .as_deref()
-                    .map_or(false, |n| n.to_lowercase().contains(&title_lc))
-        }) {
-            return Ok(Some(to_out(found)));
+                .and_then(|d| d.get(..4))
+                .and_then(|y| y.parse().ok());
+            let year_ok = match (want_year, iy) {
+                (Some(w), Some(v)) => (w - v).abs() <= 1,
+                (Some(_), None) => false,
+                (None, _) => true,
+            };
+            if !year_ok {
+                continue;
+            }
+            if best.map_or(true, |(s, _)| sim > s) {
+                best = Some((sim, i));
+            }
         }
-        // 2) solo año
-        if let Some(found) = candidates
-            .iter()
-            .find(|i| i.release_date.as_deref().map_or(false, |d| d.starts_with(&year)))
-        {
-            return Ok(Some(to_out(found)));
+
+        if let Some((_, found)) = best {
+            return Ok(Some(AppleTrailer {
+                url: found.preview_url.clone().unwrap_or_default(),
+                title: found.track_name.clone().unwrap_or_default(),
+                year: found
+                    .release_date
+                    .as_ref()
+                    .and_then(|d| d.get(..4).map(|s| s.to_string())),
+            }));
         }
-    }
-
-    // 3) título exacto
-    if let Some(found) = candidates
-        .iter()
-        .find(|i| i.track_name.as_deref().map_or(false, |n| n.to_lowercase() == title_lc))
-    {
-        return Ok(Some(to_out(found)));
-    }
-
-    // 4) primer candidato
-    if let Some(found) = candidates.first() {
-        return Ok(Some(to_out(found)));
     }
 
     Ok(None)
@@ -688,9 +1041,9 @@ async fn tmdb_detail(
         return Err("falta api key".into());
     }
     let extras = if media_type == "tv" {
-        "&append_to_response=external_ids,credits,images"
+        "&append_to_response=external_ids,credits,images,keywords"
     } else {
-        "&append_to_response=credits,images"
+        "&append_to_response=credits,images,keywords"
     };
     // include_image_language: backdrops sin texto (null) + es/en. Más variedad.
     let url = format!(
@@ -801,6 +1154,21 @@ async fn tmdb_detail(
         .collect();
     let release_date = if !date.is_empty() { Some(date) } else { None };
 
+    // Keywords → temas sensibles, con el mismo mapeo que el importador de
+    // catálogo (map_keyword_to_themes). /movie devuelve {keywords:[...]},
+    // /tv devuelve {results:[...]}; KeywordsField cubre ambos.
+    let mut sensitive_themes: Vec<String> = Vec::new();
+    if let Some(kw) = raw.keywords.as_ref() {
+        let items = if !kw.keywords.is_empty() { &kw.keywords } else { &kw.results };
+        for k in items {
+            for t in map_keyword_to_themes(&k.name.to_lowercase()) {
+                if !sensitive_themes.iter().any(|x| x == t) {
+                    sensitive_themes.push(t.to_string());
+                }
+            }
+        }
+    }
+
     Ok(TmdbDetail {
         id: raw.id,
         media_type,
@@ -831,6 +1199,7 @@ async fn tmdb_detail(
         production_countries,
         spoken_languages,
         homepage: raw.homepage.filter(|s| !s.is_empty()),
+        sensitive_themes,
     })
 }
 
@@ -1136,7 +1505,10 @@ async fn cache_image(
     hasher.update(url.as_bytes());
     if let Some(w) = max_w { hasher.update(w.to_le_bytes()); }
     let hash = hex::encode(hasher.finalize());
-    let filename = format!("{}.webp", &hash[..16]);
+    // .jpg, no .webp: ver el encoder más abajo. El cambio de extensión invalida
+    // solo el cache viejo (se regenera al vuelo); los .webp huérfanos los barre
+    // la limpieza de cache del sistema o un borrado manual de <cache>/imgs.
+    let filename = format!("{}.jpg", &hash[..16]);
 
     let cache_dir: PathBuf = app
         .path()
@@ -1160,7 +1532,14 @@ async fn cache_image(
         .await
         .map_err(|e| e.to_string())?;
 
-    // Decode + resize + WebP encode (en blocking thread, image es CPU-bound)
+    // Decode + resize + JPEG encode (en blocking thread, image es CPU-bound).
+    //
+    // Antes esto era WebPEncoder::new_lossless. El `image` crate SOLO sabe
+    // escribir WebP sin pérdida, y lossless sobre una foto (póster, backdrop,
+    // retrato) es lo peor de los dos mundos: decenas de veces más lento que
+    // JPEG y el archivo sale MÁS GRANDE que el original de TMDb. Con el grid
+    // pidiendo ~100 imágenes al scrollear, eso clavaba la CPU y la app se
+    // quedaba pegada. JPEG q=82 es visualmente indistinguible a este tamaño.
     let path_clone = path.clone();
     let max_w_val = max_w.unwrap_or(0);
     tokio::task::spawn_blocking(move || -> Result<(), String> {
@@ -1172,12 +1551,14 @@ async fn cache_image(
         } else {
             img
         };
-        let rgba = resized.to_rgba8();
-        let encoder = image::codecs::webp::WebPEncoder::new_lossless(std::fs::File::create(&path_clone).map_err(|e| e.to_string())?);
+        // JPEG no lleva alfa: rgb8, no rgba8.
+        let rgb = resized.to_rgb8();
+        let mut file = std::fs::File::create(&path_clone).map_err(|e| e.to_string())?;
+        let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut file, 82);
         use image::ImageEncoder;
         encoder
-            .write_image(rgba.as_raw(), rgba.width(), rgba.height(), image::ExtendedColorType::Rgba8)
-            .map_err(|e| format!("encode webp: {}", e))?;
+            .write_image(rgb.as_raw(), rgb.width(), rgb.height(), image::ExtendedColorType::Rgb8)
+            .map_err(|e| format!("encode jpeg: {}", e))?;
         Ok(())
     })
     .await
@@ -2455,6 +2836,38 @@ pub fn run() {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 5,
+            description: "unavailable_reset_screening_deprecated",
+            // El screening automático contra streamdata.vaplayer.ru dejó de ser
+            // confiable (404 intermitentes en pelis sanas) y ya no se dispara
+            // desde el frontend. Vaciamos lo acumulado por ese detector para no
+            // seguir ocultando el botón Descubrir con datos viejos y falsos.
+            // Los reportes manuales del user se vuelven a generar al vuelo.
+            sql: "DELETE FROM unavailable_items;",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 6,
+            description: "vera_setup_preferencias",
+            // Tres preferencias que el esquema v3 no contemplaba:
+            //   animation_pref  gusta | indiferente | no — la animación divide
+            //                   aguas y "no me gustan" no se podía expresar
+            //                   como simple exclusión de género sin perder el
+            //                   caso contrario ("me encantan").
+            //   languages_avoid idiomas que la persona no tolera escuchar.
+            //   runtime_max     tope de duración. Antes iba embutido en
+            //                   depth_profile como "auto:<min>"; ahora tiene
+            //                   columna propia y se lee de las dos formas para
+            //                   no perder lo ya guardado.
+            // Aditiva: ALTER TABLE ADD COLUMN no toca las filas existentes.
+            sql: "
+                ALTER TABLE vera_setup ADD COLUMN animation_pref TEXT NOT NULL DEFAULT 'indiferente';
+                ALTER TABLE vera_setup ADD COLUMN languages_avoid TEXT NOT NULL DEFAULT '[]';
+                ALTER TABLE vera_setup ADD COLUMN runtime_max INTEGER;
+            ",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -2505,6 +2918,8 @@ pub fn run() {
             tmdb_recommendations,
             tmdb_genres,
             tmdb_videos,
+            tmdb_trailer_key,
+            yt_playable,
             apple_trailer,
             item_status,
             tmdb_person,
@@ -2543,11 +2958,24 @@ pub fn run() {
             rd::rd_refresh,
             rd::rd_account,
             rd::rd_cleanup_torrents,
+            torrent::torrent_add,
+            torrent::torrent_status,
+            torrent::torrent_list,
+            torrent::torrent_pause,
+            torrent::torrent_resume,
+            torrent::torrent_remove,
+            torrent::torrent_init,
+            torrent::torrent_default_dir,
+            torrent::torrent_check_dir,
             player::imp::mpv_play,
+            player::imp::mpv_play_trailer,
             player::imp::mpv_play_iptv,
             player::imp::mpv_cmd,
             player::imp::mpv_open_picker,
             player::imp::mpv_stop,
+            player::imp::mpv_suspend,
+            player::imp::mpv_resume,
+            player::imp::mpv_session,
             player::imp::mpv_running,
             player::imp::mpv_status,
             player::imp::mpv_tracks,
@@ -2577,4 +3005,37 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+// ========================================================================
+// Smoke test de la sinopsis en español. Ver nota en `kitsu.rs::tests`.
+// Necesita una key de TMDb en el entorno:
+//   TMDB_KEY=xxxx cargo test --lib overview -- --ignored --nocapture
+// ========================================================================
+#[cfg(test)]
+mod overview_tests {
+    #[tokio::test]
+    #[ignore]
+    async fn sinopsis_en_espanol() {
+        let key = std::env::var("TMDB_KEY").unwrap_or_default();
+        assert!(!key.is_empty(), "falta TMDB_KEY en el entorno");
+
+        // (tipo, tmdb_id, título) — ids reales que da ani.zip.
+        let casos = [
+            (Some("TV"), 209867u64, "Frieren"),
+            (Some("MOVIE"), 372058, "Kimi no Na wa"),
+            (Some("MOVIE"), 129, "Spirited Away"),
+        ];
+        for (kind, id, name) in casos {
+            let o = super::tmdb_overview_es(kind, id, &key).await;
+            let txt = o.expect("sin sinopsis en español");
+            assert!(txt.len() > 40, "{name}: sinopsis sospechosamente corta");
+            eprintln!("\n{name} →\n  {}", &txt.chars().take(160).collect::<String>());
+        }
+
+        // Sin key no explota: devuelve None y quien llama deja el inglés.
+        assert!(super::tmdb_overview_es(Some("TV"), 209867, "").await.is_none());
+        // Id inexistente tampoco explota.
+        assert!(super::tmdb_overview_es(Some("TV"), 99999999, &key).await.is_none());
+    }
 }

@@ -23,7 +23,7 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "brotli", "json"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "sync", "io-util"] }
 urlencoding = "2"
 url = "2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
@@ -37,6 +37,9 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tiny_http = "0.12"
 local-ip-address = "0.6"
+# Cliente torrent embebido (plan B cuando RD bloquea un hash por DMCA/451).
+# rust-tls para compartir el backend TLS que ya usa reqwest (ring), sin openssl.
+librqbit = { version = "9.0.1", default-features = false, features = ["rust-tls"] }
 
 # Acceso directo al WebKitGTK del webview para activar MSE (Media Source
 # Extensions), necesario para que hls.js reproduzca HLS in-app. La versión
@@ -59,3 +62,6 @@ libloading = "0.8"
 # (decimal con coma) → sin esto mpv_create() devuelve NULL.
 libc = "0.2"
 
+[dev-dependencies]
+# Cliente HTTP bloqueante para el test e2e del servidor de streaming local.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking"] }

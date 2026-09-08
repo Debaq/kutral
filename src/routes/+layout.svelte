@@ -6,7 +6,10 @@
   import Header from "$lib/Header.svelte";
   import Ayuda from "$lib/atajos/Ayuda.svelte";
   import Updater from "$lib/Updater.svelte";
+  import ResumePill from "$lib/ResumePill.svelte";
+  import SubsService from "$lib/SubsService.svelte";
   import { config, loadConfig, initDetection, initRd } from "$lib/config.svelte";
+  import { initTorrentSession, startQueuePoll, stopQueuePoll } from "$lib/torrents.svelte";
   import { setConcurrenciaScreening } from "$lib/screening.svelte";
   import { ACCIONES, loadGamepadMap, gamepadCaptured, type GamepadMap } from "$lib/controls";
   let { children } = $props();
@@ -142,6 +145,14 @@
     void initRd();
     // Propagar concurrencia configurada al worker Rust.
     void setConcurrenciaScreening(config.screeningConcurrency);
+    // Descarga local activada: levanta la sesión torrent para recuperar la cola
+    // que quedó a medias del arranque anterior. Sin esta opción la app nunca
+    // abre un socket de BitTorrent.
+    if (config.torrentLocal) {
+      void initTorrentSession()
+        .then((n) => { if (n > 0) startQueuePoll(); })
+        .catch((e) => console.warn("[torrent init]", e));
+    }
     // Auto-arranque del servidor web si el user lo activó en config.
     // Falla silencioso (ej. puerto ocupado) — no rompe la app.
     if (config.webAutoStart) {
@@ -191,6 +202,7 @@
     cancelAnimationFrame(padRaf);
     window.removeEventListener("focusin", trackFocus);
     window.removeEventListener("gamepad-map-changed", onGamepadMapChanged);
+    stopQueuePoll();
   });
 
   let lastApplied: boolean | null = null;
@@ -215,6 +227,10 @@
 <!-- Overlay global: I abre/cierra desde cualquier ruta de Kütral. -->
 <Ayuda />
 <Updater />
+<!-- Esc en el video no cierra: suspende. Esta pill lo retoma (o P). -->
+<ResumePill />
+<!-- Subtítulos del reproductor: vive acá para sobrevivir al Esc y al IPTV. -->
+<SubsService />
 
 <style>
   :global(html, body) {

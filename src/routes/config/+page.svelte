@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import { goto } from "$app/navigation";
   import { invoke } from "@tauri-apps/api/core";
+  import { setNowPlaying } from "$lib/playerState.svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { getVersion } from "@tauri-apps/api/app";
   import { check, type Update } from "@tauri-apps/plugin-updater";
@@ -17,6 +18,13 @@
     GAME_REGIONS,
     SCREENING_MIN,
     SCREENING_MAX,
+    TORRENT_BUFFER_DEFAULT,
+    TORRENT_BUFFER_MIN,
+    TORRENT_BUFFER_MAX,
+    TORRENT_QUALITY_OPTIONS,
+    TORRENT_MAX_GB_DEFAULT,
+    TORRENT_MAX_GB_MIN,
+    TORRENT_MAX_GB_MAX,
     IPTV_DEFAULT_LISTS,
     type ModeOverride,
     type IptvList,
@@ -24,6 +32,7 @@
     type SourceSelect,
   } from "$lib/config.svelte";
   import { setConcurrenciaScreening } from "$lib/screening.svelte";
+  import { torrentDefaultDir, torrentCheckDir } from "$lib/torrents.svelte";
   import { notify } from "$lib/notifStore.svelte";
   import { ayuda } from "$lib/atajos/store.svelte";
   import Gamepad from "$lib/Gamepad.svelte";
@@ -130,6 +139,14 @@
   let osErr = $state("");
   let webAuto = $state(config.webAutoStart);
   let webPortInput = $state(config.webPort);
+  let torrentLocal = $state(config.torrentLocal);
+  let torrentBufferMb = $state(config.torrentBufferMb);
+  let torrentMaxQuality = $state(config.torrentMaxQuality);
+  let torrentMaxGb = $state(config.torrentMaxGb);
+  let torrentDirPath = $state("");
+  let torrentDirInput = $state(config.torrentDir);
+  let dirEstado = $state<"idle" | "probando" | "ok" | "error">("idle");
+  let dirMsg = $state("");
   let gameRegions = $state<string[]>([...config.gameRegions]);
   let iptvLists = $state<IptvList[]>(config.iptvLists.map((l) => ({ ...l })));
   let nuevaListaNombre = $state("");
@@ -227,6 +244,13 @@
     void refreshOsStatus();
     webAuto = config.webAutoStart;
     webPortInput = config.webPort;
+    torrentLocal = config.torrentLocal;
+    torrentBufferMb = config.torrentBufferMb;
+    torrentMaxQuality = config.torrentMaxQuality;
+    torrentMaxGb = config.torrentMaxGb;
+    torrentDirInput = config.torrentDir;
+    // Solo informativo; no levanta la sesión torrent si no está iniciada.
+    try { torrentDirPath = await torrentDefaultDir(); } catch {}
     gameRegions = [...config.gameRegions];
     iptvLists = config.iptvLists.map((l) => ({ ...l }));
     try { currentVer = await getVersion(); } catch {}
@@ -287,6 +311,7 @@
     config.webAutoStart = webAuto;
     config.webPort = Math.min(65535, Math.max(1024, Math.round(webPortInput) || 8080));
     webPortInput = config.webPort;
+    aplicarTorrent();
     config.gameRegions = [...gameRegions];
     const listas = iptvLists.filter((l) => l.url.trim());
     config.iptvLists = (listas.length ? listas : IPTV_DEFAULT_LISTS).map((l) => ({
@@ -298,6 +323,41 @@
     void setConcurrenciaScreening(conc);
     saved = true;
     setTimeout(() => { saved = false; }, 1800);
+  }
+
+  // Descarga local: los controles se aplican al toque, sin pasar por "Guardar".
+  // El panel se despliega apenas tildas la casilla, así que se lee como que ya
+  // quedó activo; dejarlo dependiendo del botón hacía que siguiera apagado.
+  function aplicarTorrent() {
+    config.torrentLocal = torrentLocal;
+    config.torrentBufferMb = Math.min(
+      TORRENT_BUFFER_MAX,
+      Math.max(TORRENT_BUFFER_MIN, Math.round(torrentBufferMb) || TORRENT_BUFFER_DEFAULT),
+    );
+    torrentBufferMb = config.torrentBufferMb;
+    config.torrentMaxQuality = torrentMaxQuality;
+    config.torrentMaxGb = Math.min(
+      TORRENT_MAX_GB_MAX,
+      Math.max(TORRENT_MAX_GB_MIN, Number(torrentMaxGb) || TORRENT_MAX_GB_DEFAULT),
+    );
+    torrentMaxGb = config.torrentMaxGb;
+    config.torrentDir = torrentDirInput.trim();
+    saveConfig();
+  }
+
+  // Comprueba que la carpeta exista y se pueda escribir antes de dejarla puesta.
+  async function probarCarpeta() {
+    dirEstado = "probando";
+    dirMsg = "";
+    try {
+      const real = await torrentCheckDir(torrentDirInput);
+      dirEstado = "ok";
+      dirMsg = real;
+      aplicarTorrent();
+    } catch (e) {
+      dirEstado = "error";
+      dirMsg = String(e);
+    }
   }
 
   function updateWyzieKey(value: string) {
@@ -535,6 +595,7 @@
     const log = testLogPush;
     if (!testUrl) { log("primero resuelve una URL (Probar)"); return; }
     try {
+      setNowPlaying("", "Prueba Kütral");
       await invoke("mpv_play", { url: testUrl, title: "Prueba Kütral" });
       log("▶ mpv lanzado");
     } catch (e) {
@@ -1103,6 +1164,112 @@
         </section>
 
         <section class="block">
+          <h2>Descarga local (si el debrid bloquea)</h2>
+          <p class="hint">
+            Real-Debrid rechaza ciertos torrents por DMCA (error 451). No es que
+            el torrent esté muerto: es cumplimiento legal de ellos. Con esto
+            activado, Kütral baja esa fuente por su cuenta y la reproduce
+            mientras se descarga.
+          </p>
+          <p class="warn-box">
+            <strong>Ojo con esto:</strong> el debrid funcionaba como intermediario
+            — los demás usuarios del torrent veían la IP de Real-Debrid, no la
+            tuya. Bajando en local tu IP queda visible para todos los que
+            comparten ese archivo. Actívalo solo si sabes lo que implica en tu
+            país y con tu proveedor de internet.
+          </p>
+          <label class="toggle-row">
+            <input type="checkbox" bind:checked={torrentLocal} onchange={aplicarTorrent} />
+            <span>Bajar en local cuando el debrid bloquee la fuente</span>
+          </label>
+          <p class="hint">Esta sección se aplica al instante, sin pulsar Guardar.</p>
+          {#if torrentLocal}
+            <p class="hint">
+              Con el debrid el peso del archivo daba lo mismo: lo servía él a
+              velocidad de fibra. Bajándolo tú hay que sostener el bitrate o el
+              video se corta — un 4K de 60 GB pide unos 67 Mbps constantes; un
+              1080p normal de 4 GB, unos 4,5 Mbps. Estos topes valen
+              <strong>solo</strong> para la descarga local.
+            </p>
+            <div class="mode-group">
+              {#each TORRENT_QUALITY_OPTIONS as q}
+                <label class="mode-card" class:sel={torrentMaxQuality === q.id}>
+                  <input
+                    type="radio"
+                    name="torrentMaxQuality"
+                    value={q.id}
+                    bind:group={torrentMaxQuality}
+                    onchange={aplicarTorrent}
+                  />
+                  <div>
+                    <strong>{q.label}</strong>
+                    <span>{q.hint}</span>
+                  </div>
+                </label>
+              {/each}
+            </div>
+            <label class="field">
+              <span class="field-label">Peso máximo por archivo (GB)</span>
+              <input
+                type="number"
+                min={TORRENT_MAX_GB_MIN}
+                max={TORRENT_MAX_GB_MAX}
+                step="0.5"
+                bind:value={torrentMaxGb}
+                onchange={aplicarTorrent}
+              />
+            </label>
+            <label class="field">
+              <span class="field-label">Buffer antes de reproducir (MB)</span>
+              <input
+                type="number"
+                min={TORRENT_BUFFER_MIN}
+                max={TORRENT_BUFFER_MAX}
+                bind:value={torrentBufferMb}
+                onchange={aplicarTorrent}
+              />
+            </label>
+            <p class="hint">
+              Más buffer = arranca más lento pero se corta menos si el torrent
+              tiene pocos usuarios compartiendo.
+            </p>
+            <label class="field">
+              <span class="field-label">Carpeta de descarga</span>
+              <input
+                type="text"
+                placeholder={torrentDirPath}
+                bind:value={torrentDirInput}
+                onblur={probarCarpeta}
+              />
+            </label>
+            <div class="dir-row">
+              <button class="link-tiny" onclick={probarCarpeta}>Comprobar carpeta</button>
+              {#if torrentDirInput.trim()}
+                <button
+                  class="link-tiny"
+                  onclick={() => { torrentDirInput = ""; dirEstado = "idle"; dirMsg = ""; aplicarTorrent(); }}
+                >
+                  Usar la de siempre
+                </button>
+              {/if}
+            </div>
+            {#if dirEstado === "probando"}
+              <p class="hint"><span class="spinner"></span> Comprobando…</p>
+            {:else if dirEstado === "ok"}
+              <p class="hint dir-ok">✓ Se puede escribir en <em>{dirMsg}</em></p>
+            {:else if dirEstado === "error"}
+              <p class="err">{dirMsg}</p>
+            {:else}
+              <p class="hint">
+                Vacío = <em>{torrentDirPath}</em>. Escribe una ruta completa para
+                cambiarla (por ejemplo un disco externo). Vale desde la próxima
+                descarga; las que ya están en la cola siguen donde estaban.
+              </p>
+            {/if}
+          {/if}
+        </section>
+
+        <section class="block">
           <h2>Juegos — Regiones aceptadas</h2>
           <p class="hint">
             Qué versiones de cada juego se muestran en el catálogo, según la
@@ -1326,6 +1493,20 @@
     font-size: 12.5px;
     line-height: 1.5;
   }
+  .warn-box {
+    margin: 0 0 12px;
+    padding: 10px 12px;
+    border: 1px solid #4a3a1c;
+    border-left: 3px solid #f3a951;
+    border-radius: 6px;
+    background: #1b160c;
+    color: #cbb489;
+    font-size: 12.5px;
+    line-height: 1.5;
+  }
+  .warn-box strong { color: #f3a951; }
+  .dir-row { display: flex; gap: 12px; margin: 0 0 8px; }
+  .dir-ok { color: #6cd37a; }
   .hint code {
     background: #0d0d12;
     padding: 2px 5px;

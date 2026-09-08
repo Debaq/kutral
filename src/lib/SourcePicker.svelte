@@ -4,8 +4,21 @@
   // Maneja su propio teclado (flechas/Enter/Esc) porque en este modo el page
   // no procesa navegación.
   import { invoke } from "@tauri-apps/api/core";
+  import { setNowPlaying } from "$lib/playerState.svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { config } from "$lib/config.svelte";
+  import { WEB_PLAYER_ENABLED } from "$lib/features";
+  import { notify } from "$lib/notifStore.svelte";
+  import {
+    addTorrent,
+    torrentStatus,
+    removeTorrent,
+    startQueuePoll,
+    fmtBytes,
+    fmtSpeed,
+    fmtEta,
+    type TorrentStatus,
+  } from "$lib/torrents.svelte";
 
   // Pista real del contenedor leída de mpv (verdad del archivo).
   type MpvTrack = {
@@ -72,6 +85,21 @@
   let playing = $state(false);
   let playingTitle = $state("");
   let mpvPoll: ReturnType<typeof setInterval> | null = null;
+
+  // Plan B: descarga local del torrent cuando el debrid lo bloquea (451/DMCA).
+  let torrenting = $state(false);
+  let torrentMsg = $state("");
+  let torrentStat = $state<TorrentStatus | null>(null);
+  // Swarm lento: pasado este tiempo sin buffer listo ofrecemos pasarlo a la cola.
+  let torrentSlow = $state(false);
+  let torrentId: number | null = null;
+  let torrentSrc: Src | null = null;
+  // Lo que suena viene de la descarga local, no del debrid. Se avisa en pantalla
+  // y en el centro de notificaciones: el usuario tiene que saber que ahí está
+  // bajando (y compartiendo) el archivo él mismo.
+  let desdeTorrent = $state(false);
+  let torrentCancel = false;
+  const SLOW_AFTER_MS = 45_000;
 
   const QLABEL: Record<string, string> = {
     p2160: "4K",
@@ -205,10 +233,13 @@
     return `${s.quality}|${t}`;
   }
 
-  // Índices de navegación: filas (0..n-1), luego "web" (n), luego "volver" (n+1)
-  const total = $derived(sources.length + 2);
-  const webIdx = $derived(sources.length);
-  const backIdx = $derived(sources.length + 1);
+  // Índices de navegación: filas (0..n-1), luego "web" (n), luego "volver" (n+1).
+  // Con el player web apagado (WEB_PLAYER_ENABLED) el pie pierde un botón, así
+  // que los índices se corren: si no, quedaría un slot fantasma que el teclado
+  // recorre sin nada enfocado y "volver" no respondería al Enter.
+  const total = $derived(sources.length + (WEB_PLAYER_ENABLED ? 2 : 1));
+  const webIdx = $derived(WEB_PLAYER_ENABLED ? sources.length : -1);
+  const backIdx = $derived(sources.length + (WEB_PLAYER_ENABLED ? 1 : 0));
 
   async function load() {
     loading = true;
@@ -285,6 +316,9 @@
   // Tope de fuentes inspeccionadas con ffprobe por intento de reproducción:
   // cada inspección cuesta resolver el magnet + leer el header (~5-15s).
   const MAX_PROBES = 4;
+  // Torrents que se intentan bajar en local antes de rendirse. Cada intento
+  // fallido cuesta el timeout de metadata del backend, así que son pocos.
+  const MAX_TORRENT_TRIES = 2;
 
   // ¿La pista del probe es español? lang ISO (spa/es/es-419…) o título
   // ("Latino", "Español (España)", "Spanish [LAS]"…).
@@ -315,6 +349,8 @@
   // Lanza mpv con una URL ya resuelta y deja el picker en estado "playing".
   async function launch(url: string, s: Src) {
     resolvingMsg = "Abriendo reproductor…";
+    // Contexto para el buscador de subtítulos global (SubsService).
+    setNowPlaying(imdbId, title);
     await invoke("mpv_play", { url, title });
     resolving = false;
     playing = true;
@@ -339,6 +375,7 @@
     }
     resolving = true;
     error = "";
+    desdeTorrent = false;
     let blocked = 0;
     let tried = 0;
     let probes = 0;
@@ -346,6 +383,10 @@
     let lastErr = "";
     // Mejor fuente que resolvió pero NO trae español: respaldo si ninguna trae.
     let fallback: { url: string; s: Src } | null = null;
+    // Fuentes que el debrid rechazó pero que SÍ tienen magnet: candidatas al
+    // plan B (bajarlas nosotros). El 451 es cumplimiento legal de RD, no falta
+    // de seeds, así que la mejor bloqueada suele bajarse sin problema.
+    const rechazadas: Src[] = [];
 
     for (let i = startIdx; i < sources.length && tried < MAX_TRIES; i++) {
       const s = sources[i];
@@ -382,6 +423,7 @@
       } catch (e) {
         lastErr = String(e);
         if (lastErr.includes("BLOQUEADO_DMCA")) blocked++;
+        if (s.magnet) rechazadas.push(s);
         // sigue con la próxima fuente
       }
     }
@@ -399,12 +441,148 @@
       }
     }
 
+    dbg(`fin RD: tried=${tried} blocked=${blocked} sinEs=${sinEs} lastErr=${lastErr.slice(0, 60)}`);
+
+    // Plan B: ninguna fuente pasó por el debrid, pero el torrent sigue vivo.
+    // Lo bajamos nosotros y lo reproducimos mientras se descarga. Acá el orden
+    // que importa es OTRO: con debrid mandaba la caché de RD, bajando en local
+    // manda cuánta gente está compartiendo el archivo.
+    let pesadas = 0;
+    if (config.torrentLocal && rechazadas.length) {
+      const aptas = rechazadas.filter((c) => {
+        if (cabeEnLocal(c)) return true;
+        pesadas++;
+        return false;
+      });
+      const porSeeders = aptas.sort((a, b) => (b.seeders || 0) - (a.seeders || 0));
+      for (const cand of porSeeders.slice(0, MAX_TORRENT_TRIES)) {
+        if (await playViaTorrent(cand)) return;
+        if (torrentCancel) return; // el usuario canceló o lo mandó a la cola
+      }
+    }
+
     resolving = false;
-    dbg(`fin: tried=${tried} blocked=${blocked} sinEs=${sinEs} lastErr=${lastErr.slice(0, 60)}`);
-    error =
-      blocked > 0
-        ? `Sin fuentes reproducibles: ${blocked} bloqueada(s) por el debrid (DMCA). Prueba "🔄 Rebuscar fuentes" u otra calidad.`
-        : `No se pudo reproducir ninguna fuente. ${lastErr}`;
+    if (error) return; // playViaTorrent ya dejó un mensaje más específico
+    if (blocked > 0 && !config.torrentLocal) {
+      error = `Sin fuentes reproducibles: ${blocked} bloqueada(s) por el debrid (DMCA). Activa "Descarga local" en Configuración para bajarlas igual, o prueba otra calidad.`;
+    } else if (pesadas > 0) {
+      // Sí había fuentes bajables, pero pasan el techo que puso el usuario.
+      error =
+        `Las ${pesadas} fuente(s) que quedan superan tu tope para descarga local ` +
+        `(${QLABEL[config.torrentMaxQuality]} y ${config.torrentMaxGb} GB). ` +
+        `Sube el tope en Configuración o busca una versión más liviana.`;
+    } else if (blocked > 0) {
+      error = `Sin fuentes reproducibles: ${blocked} bloqueada(s) por el debrid (DMCA) y la descarga local tampoco pudo. Prueba "🔄 Rebuscar fuentes" u otra calidad.`;
+    } else {
+      error = `No se pudo reproducir ninguna fuente. ${lastErr}`;
+    }
+  }
+
+  // ¿Esta fuente cabe dentro del techo de la descarga local? Con debrid el peso
+  // da lo mismo (lo sirve RD a velocidad de fibra); bajándolo tú hay que
+  // sostener el bitrate del archivo o el video se corta. Lo desconocido pasa:
+  // no vamos a descartar una fuente por falta de metadatos.
+  function cabeEnLocal(s: Src): boolean {
+    if ((QRANK[s.quality] || 0) > (QRANK[config.torrentMaxQuality] || 0)) return false;
+    if (s.size_bytes && s.size_bytes > config.torrentMaxGb * 1024 ** 3) return false;
+    return true;
+  }
+
+  // ---- Plan B: torrent local ---------------------------------------------
+
+  // Baja el torrent con el cliente local y arranca mpv apenas hay buffer. Lo
+  // que RD niega por DMCA se baja igual del swarm; el costo es que tu IP queda
+  // visible ahí (por eso config.torrentLocal es opt-in) y que la velocidad
+  // depende de los seeds, no de la fibra de RD.
+  async function playViaTorrent(s: Src): Promise<boolean> {
+    if (!s.magnet) return false;
+    resolving = false;
+    error = "";
+    torrenting = true;
+    torrentCancel = false;
+    torrentSlow = false;
+    torrentStat = null;
+    torrentSrc = s;
+    torrentId = null;
+    torrentMsg = "Buscando peers…";
+    const t0 = Date.now();
+    try {
+      const added = await addTorrent(s.magnet, title, config.torrentBufferMb);
+      if (torrentCancel) return false;
+      torrentId = added.id;
+      dbg(`torrent local id=${added.id} ${added.name} (${added.size_bytes} B)`);
+      torrentMsg = "Descargando el inicio…";
+      for (;;) {
+        if (torrentCancel) return false;
+        const st = await torrentStatus(added.id);
+        torrentStat = st;
+        if (st.state === "error") throw new Error(st.error || "el torrent falló");
+        if (st.buffer_ready) break;
+        torrentSlow = Date.now() - t0 > SLOW_AFTER_MS;
+        await sleep(1000);
+      }
+      if (torrentCancel) return false;
+      torrenting = false;
+      desdeTorrent = true;
+      // Sigue bajando de fondo mientras se ve: el poll de la cola lo muestra.
+      startQueuePoll();
+      await launch(added.stream_url, s);
+      notify(
+        "warn",
+        "Reproduciendo desde descarga local",
+        "El debrid bloqueó esta fuente por DMCA, así que el archivo lo estás bajando y compartiendo tú.",
+      );
+      void mpv([
+        "show-text",
+        "Desde descarga local: el debrid bloqueó esta fuente",
+        "5000",
+      ]);
+      return true;
+    } catch (e) {
+      torrenting = false;
+      dbg(`torrent local falló: ${String(e).slice(0, 100)}`);
+      error = `Descarga local: ${String(e)}`;
+      // No dejar el torrent muerto ocupando la cola y el disco.
+      const id = torrentId;
+      torrentId = null;
+      if (id !== null) {
+        try {
+          await removeTorrent(id, true);
+        } catch {
+          /* ya no estaba */
+        }
+      }
+      return false;
+    }
+  }
+
+  // "Que siga bajando de fondo": deja el torrent en la cola y vuelve al menú.
+  // Avisamos por notificación cuando termine.
+  function torrentToQueue() {
+    torrentCancel = true;
+    torrenting = false;
+    startQueuePoll();
+    notify(
+      "info",
+      "Descargando en segundo plano",
+      torrentSrc?.title || title,
+    );
+    onClose();
+  }
+
+  // Cancelar de verdad: saca el torrent y borra lo bajado a medias.
+  async function torrentAbort() {
+    torrentCancel = true;
+    torrenting = false;
+    const id = torrentId;
+    torrentId = null;
+    if (id !== null) {
+      try {
+        await removeTorrent(id, true);
+      } catch {
+        /* si ya no existe, da igual */
+      }
+    }
   }
 
   function startMpvPoll() {
@@ -553,110 +731,6 @@
     };
   });
 
-  // Opciones de subtítulos descargables de la última búsqueda (las indexa el
-  // picker in-video por id = posición). url directa (Wyzie) o fileId (OS).
-  type SubOpt = { label: string; lang: string; url?: string; fileId?: number };
-  let subOptions: SubOpt[] = [];
-
-  // Busca VARIOS subtítulos (Wyzie + OpenSubtitles lista) para el título actual.
-  async function searchSubOptions(): Promise<SubOpt[]> {
-    const lang = config.subsLang && config.subsLang !== "off" ? config.subsLang : "es";
-    const opts: SubOpt[] = [];
-    if (config.wyzieKey) {
-      try {
-        const subs = await invoke<{ url: string; label: string; lang: string }[]>(
-          "wyzie_search",
-          { imdbId, language: lang, apiKey: config.wyzieKey },
-        );
-        for (const s of subs)
-          opts.push({ url: s.url, label: s.label || s.lang || "Subtítulo", lang: s.lang || lang });
-      } catch (e) {
-        dbg(`wyzie list fail: ${String(e).slice(0, 60)}`);
-      }
-    }
-    try {
-      const list = await invoke<
-        { file_id: number; label: string; lang: string; downloads: number; hi: boolean }[]
-      >("os_list", { imdbId, language: lang });
-      for (const s of list)
-        opts.push({
-          fileId: s.file_id,
-          lang: s.lang,
-          label: `${s.label}  ·  ${s.downloads}⬇${s.hi ? "  ·  SDH" : ""}`,
-        });
-    } catch (e) {
-      dbg(`os list fail: ${String(e).slice(0, 60)}`);
-    }
-    return opts;
-  }
-
-  // "Descargar subtítulos…" del menú del reproductor → buscamos y abrimos un
-  // PICKER in-video para que el usuario ELIJA cuál bajar.
-  $effect(() => {
-    let un: UnlistenFn | undefined;
-    void listen("player:download-subs", async () => {
-      await mpv(["show-text", "Buscando subtítulos…", "5000"]);
-      const opts = await searchSubOptions();
-      if (opts.length === 0) {
-        await mpv(["show-text", "No se encontraron subtítulos", "2500"]);
-        return;
-      }
-      subOptions = opts;
-      await invoke("mpv_open_picker", {
-        title: "Elegí un subtítulo",
-        items: opts.map((o, i) => ({ label: o.label, id: String(i) })),
-      });
-    }).then((u) => (un = u));
-    return () => {
-      if (un) un();
-    };
-  });
-
-  // El usuario eligió un subtítulo en el picker in-video → lo descargamos,
-  // guardamos en Descargas y cargamos en mpv.
-  $effect(() => {
-    let un: UnlistenFn | undefined;
-    void listen<string>("player:menu-pick", async (e) => {
-      const o = subOptions[Number(e.payload)];
-      if (!o) return;
-      await mpv(["show-text", "Descargando subtítulo…", "8000"]);
-      // Resolver la URL: Wyzie ya la trae; OpenSubtitles la pide por fileId
-      // (acá sí gasta 1 de cuota, solo del elegido).
-      let url = o.url ?? "";
-      if (!url && o.fileId != null) {
-        try {
-          const os = await invoke<{ url: string; remaining: number }>("os_download", {
-            fileId: o.fileId,
-          });
-          url = os.url;
-        } catch (err) {
-          await mpv(["show-text", `No se pudo bajar: ${String(err).slice(0, 50)}`, "3000"]);
-          return;
-        }
-      }
-      if (!url) {
-        await mpv(["show-text", "Subtítulo sin enlace", "2500"]);
-        return;
-      }
-      let toLoad = url;
-      try {
-        const path = await invoke<string>("subtitle_save", {
-          url,
-          filename: `${title} [${o.lang}]`,
-        });
-        if (path) toLoad = path;
-      } catch (err) {
-        dbg(`save fail, uso URL: ${String(err).slice(0, 60)}`);
-      }
-      await mpv(["sub-add", toLoad, "select"]);
-      await mpv(["set", "sub-visibility", "yes"]);
-      await mpv(["show-text", "✓ Subtítulo cargado", "2000"]);
-    }).then((u) => (un = u));
-    return () => {
-      if (un) un();
-    };
-  });
-
   function move(d: number) {
     if (!total) return;
     let i = focusIdx + d;
@@ -686,6 +760,16 @@
       if (e.key === "Escape" || e.key === "Backspace" || e.key === "Enter") {
         e.preventDefault();
         void stopMpv();
+      }
+      return;
+    }
+    if (torrenting) {
+      if (e.key === "Escape" || e.key === "Backspace") {
+        e.preventDefault();
+        void torrentAbort();
+      } else if (e.key === "Enter" && torrentSlow) {
+        e.preventDefault();
+        torrentToQueue();
       }
       return;
     }
@@ -740,6 +824,12 @@
       <div class="sp-center">
         <p class="sp-playing">▶ Reproduciendo</p>
         <p class="sp-playing-title">{playingTitle}</p>
+        {#if desdeTorrent}
+          <p class="sp-desde-local">
+            📥 Desde descarga local — el debrid bloqueó esta fuente por DMCA.
+            Sigue bajando mientras la ves.
+          </p>
+        {/if}
         <button class="sp-foot-btn focused" onclick={stopMpv}>⏹ Detener y volver</button>
         <span class="sp-hint">Se cierra solo al terminar el video</span>
       </div>
@@ -747,6 +837,38 @@
       <div class="sp-center">
         <span class="sp-spinner"></span>
         <p>Buscando fuentes…</p>
+      </div>
+    {:else if torrenting}
+      <div class="sp-center">
+        <span class="sp-spinner"></span>
+        <p class="sp-tor-head">📥 Bajando del swarm</p>
+        <p class="sp-tor-why">
+          El debrid bloqueó esta fuente (DMCA). El torrent sigue vivo, así que
+          lo bajamos aquí y empieza apenas haya buffer.
+        </p>
+        {#if torrentStat}
+          {@const t = torrentStat}
+          {@const bufPct = t.buffer_target
+            ? Math.min(100, (t.buffered_bytes * 100) / t.buffer_target)
+            : 0}
+          <div class="sp-bar"><div class="sp-bar-fill" style="width: {bufPct}%"></div></div>
+          <p class="sp-tor-line">
+            Buffer {Math.round(bufPct)}% · {fmtBytes(t.buffered_bytes)} de
+            {fmtBytes(t.buffer_target)}
+          </p>
+          <p class="sp-tor-meta">
+            {fmtSpeed(t.download_bps)} · {t.peers} peers · listo en {fmtEta(t.eta_secs)}
+          </p>
+        {:else}
+          <p class="sp-tor-line">{torrentMsg}</p>
+        {/if}
+        {#if torrentSlow}
+          <p class="sp-tor-slow">Este swarm va lento.</p>
+          <button class="sp-foot-btn focused" onclick={torrentToQueue}>
+            📥 Seguir bajando de fondo y avisarme
+          </button>
+        {/if}
+        <span class="sp-hint">Esc para cancelar y borrar lo bajado</span>
       </div>
     {:else if resolving}
       <div class="sp-center">
@@ -791,15 +913,17 @@
       </div>
 
       <footer class="sp-foot">
-        <button
-          data-nav
-          class="sp-foot-btn"
-          class:focused={focusIdx === webIdx}
-          onclick={onWeb}
-          onmouseenter={() => (focusIdx = webIdx)}
-        >
-          🌐 Ver en web
-        </button>
+        {#if WEB_PLAYER_ENABLED}
+          <button
+            data-nav
+            class="sp-foot-btn"
+            class:focused={focusIdx === webIdx}
+            onclick={onWeb}
+            onmouseenter={() => (focusIdx = webIdx)}
+          >
+            🌐 Ver en web
+          </button>
+        {/if}
         <button
           data-nav
           class="sp-foot-btn"
@@ -884,6 +1008,24 @@
     color: #c8c8d0;
   }
   .sp-hint { color: #6e6e78; font-size: 12px; }
+  /* Plan B: descarga local del torrent (debrid bloqueado por DMCA). */
+  .sp-tor-head { margin: 0; font-size: 20px; font-weight: 700; color: #f3a951; }
+  .sp-tor-why {
+    margin: 0; max-width: 460px; text-align: center;
+    color: #9a9aa6; font-size: 13px; line-height: 1.45;
+  }
+  .sp-tor-line { margin: 0; color: #e6e6ea; font-size: 14px; }
+  .sp-tor-meta { margin: 0; color: #9a9aa6; font-size: 12px; }
+  .sp-tor-slow { margin: 6px 0 0; color: #f3a951; font-size: 13px; }
+  .sp-desde-local {
+    margin: 0; max-width: 460px; text-align: center;
+    color: #cbb489; font-size: 12.5px; line-height: 1.45;
+  }
+  .sp-bar {
+    width: min(420px, 70vw); height: 6px;
+    background: #2a2a36; border-radius: 3px; overflow: hidden;
+  }
+  .sp-bar-fill { height: 100%; background: #f3a951; transition: width .3s ease; }
   .sp-playing { margin: 0; font-size: 22px; font-weight: 700; color: #f3a951; }
   .sp-playing-title { margin: 0; color: #c8c8d0; font-size: 14px; max-width: 70%; text-align: center; }
   .sp-spinner {

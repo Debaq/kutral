@@ -9,9 +9,11 @@
   import BrightnessControl from "$lib/BrightnessControl.svelte";
   import WebServerControl from "$lib/WebServerControl.svelte";
   import Notifications from "$lib/Notifications.svelte";
+  import TorrentQueue from "$lib/TorrentQueue.svelte";
   import { player } from "$lib/playerState.svelte";
   import { config, isKioskActive } from "$lib/config.svelte";
   import { notify, unreadCount } from "$lib/notifStore.svelte";
+  import { torrents, activeCount } from "$lib/torrents.svelte";
 
   type WifiState = { online: boolean; connected_ssid: string | null };
 
@@ -31,18 +33,24 @@
   let volOpen = $state(false);
   let brOpen = $state(false);
   let notifOpen = $state(false);
+  let torOpen = $state(false);
   let webOpen = $state(false);
   let webRunning = $state(false);
   let webUrl = $state<string | null>(null);
   let prevOnline = true;
   const hidden = $derived(player.playing);
   const unread = $derived(unreadCount());
+  // El botón de descargas solo aparece si hay algo en la cola: sin plan B
+  // activo (o sin bloqueos DMCA) no ensucia el encabezado.
+  const torActivas = $derived(activeCount());
+  const torHay = $derived(torrents.list.length > 0);
 
-  function only<T extends "vol" | "br" | "notif" | "web">(which: T) {
+  function only<T extends "vol" | "br" | "notif" | "web" | "tor">(which: T) {
     volOpen = which === "vol" ? !volOpen : false;
     brOpen = which === "br" ? !brOpen : false;
     notifOpen = which === "notif" ? !notifOpen : false;
     webOpen = which === "web" ? !webOpen : false;
+    torOpen = which === "tor" ? !torOpen : false;
   }
 
   function fmtTime(d: Date): string {
@@ -218,6 +226,23 @@
     </div>
 
     <span class="sep" aria-hidden="true"></span>
+
+    {#if torHay}
+      <div class="pop-host">
+        <button
+          class="ic-btn nt-btn"
+          onclick={() => only("tor")}
+          title="Descargas"
+          aria-label="Descargas"
+        >
+          📥
+          {#if torActivas > 0}<span class="nt-badge">{torActivas > 9 ? "9+" : torActivas}</span>{/if}
+        </button>
+        <TorrentQueue bind:open={torOpen} />
+      </div>
+
+      <span class="sep" aria-hidden="true"></span>
+    {/if}
 
     <div class="pop-host">
       <button class="ic-btn nt-btn" onclick={() => only("notif")} title="Notificaciones" aria-label="Notificaciones">

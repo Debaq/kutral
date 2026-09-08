@@ -81,6 +81,32 @@ export function nameInRegions(name: string, regions: string[]): boolean {
 	});
 }
 
+// Tope de calidad para la descarga local. Con debrid da igual el peso (RD sirve
+// a velocidad de fibra), pero bajando del swarm hay que sostener el bitrate del
+// archivo o el video se corta: un 4K de 60 GB en 2 h pide ~67 Mbps constantes,
+// un 1080p normal de 4 GB pide ~4,5 Mbps. Por eso el plan B baja el techo.
+export type TorrentQuality = "p2160" | "p1080" | "p720";
+export const TORRENT_QUALITY_OPTIONS: {
+	id: TorrentQuality;
+	label: string;
+	hint: string;
+}[] = [
+	{ id: "p720", label: "720p", hint: "Para internet lento. Arranca casi siempre." },
+	{ id: "p1080", label: "1080p", hint: "Recomendado. Buen equilibrio." },
+	{ id: "p2160", label: "4K", hint: "Solo con fibra y torrents muy compartidos." },
+];
+
+// Peso máximo del archivo aceptado para bajar en local, en GB.
+export const TORRENT_MAX_GB_DEFAULT = 6;
+export const TORRENT_MAX_GB_MIN = 1;
+export const TORRENT_MAX_GB_MAX = 80;
+
+// Buffer inicial (MB) del torrent local antes de lanzar el reproductor. Más
+// buffer = arranque más lento pero menos cortes si el swarm es irregular.
+export const TORRENT_BUFFER_DEFAULT = 24;
+export const TORRENT_BUFFER_MIN = 8;
+export const TORRENT_BUFFER_MAX = 200;
+
 export const SUB_LANGS: { id: string; label: string }[] = [
 	{ id: "es", label: "Español" },
 	{ id: "en", label: "English" },
@@ -144,6 +170,18 @@ export const config = $state({
 	webPort: 8080,
 	// Horas tras las cuales auto-eliminar torrents de la lista RD. 0 = nunca.
 	rdCleanupHours: 0,
+	// Plan B cuando el debrid bloquea un hash por DMCA (451): bajar el torrent
+	// localmente y reproducirlo mientras se descarga. OPT-IN: sin debrid de por
+	// medio tu IP queda expuesta en el swarm (RD hacía de proxy).
+	torrentLocal: false,
+	// MB a bufferear antes de abrir el reproductor con el torrent local.
+	torrentBufferMb: TORRENT_BUFFER_DEFAULT,
+	// Techo de calidad y peso SOLO para la descarga local. Con debrid no aplica:
+	// ahí el peso no cuesta nada porque no lo bajas tú.
+	torrentMaxQuality: "p1080" as TorrentQuality,
+	torrentMaxGb: TORRENT_MAX_GB_DEFAULT,
+	// Carpeta de descarga. Vacío = la que propone el sistema (Descargas/Kutral).
+	torrentDir: "",
 	// Regiones de ROM aceptadas en Juegos (ids de GAME_REGIONS).
 	gameRegions: [...GAME_REGIONS_DEFAULT] as string[],
 	// IPTV: varias playlists M3U que alimentan /iptv. Editables en config.
@@ -188,6 +226,20 @@ export function loadConfig() {
 	config.webPort = Number.isFinite(wp) && wp >= 1024 && wp <= 65535 ? wp : 8080;
 	const rch = parseInt(localStorage.getItem("rd_cleanup_hours") || "", 10);
 	config.rdCleanupHours = RD_CLEANUP_OPTIONS.some((o) => o.h === rch) ? rch : 0;
+	config.torrentLocal = localStorage.getItem("torrent_local") === "1";
+	const tbm = parseInt(localStorage.getItem("torrent_buffer_mb") || "", 10);
+	config.torrentBufferMb = Number.isFinite(tbm)
+		? Math.min(TORRENT_BUFFER_MAX, Math.max(TORRENT_BUFFER_MIN, tbm))
+		: TORRENT_BUFFER_DEFAULT;
+	const tq = localStorage.getItem("torrent_max_quality") as TorrentQuality | null;
+	config.torrentMaxQuality = TORRENT_QUALITY_OPTIONS.some((o) => o.id === tq)
+		? (tq as TorrentQuality)
+		: "p1080";
+	const tgb = parseFloat(localStorage.getItem("torrent_max_gb") || "");
+	config.torrentMaxGb = Number.isFinite(tgb)
+		? Math.min(TORRENT_MAX_GB_MAX, Math.max(TORRENT_MAX_GB_MIN, tgb))
+		: TORRENT_MAX_GB_DEFAULT;
+	config.torrentDir = localStorage.getItem("torrent_dir") || "";
 	const gr = localStorage.getItem("game_regions");
 	if (gr !== null) {
 		const ids = gr.split(",").filter((x) => GAME_REGIONS.some((r) => r.id === x));
@@ -243,6 +295,11 @@ export function saveConfig() {
 	localStorage.setItem("web_autostart", config.webAutoStart ? "1" : "0");
 	localStorage.setItem("web_port", String(config.webPort));
 	localStorage.setItem("rd_cleanup_hours", String(config.rdCleanupHours));
+	localStorage.setItem("torrent_local", config.torrentLocal ? "1" : "0");
+	localStorage.setItem("torrent_buffer_mb", String(config.torrentBufferMb));
+	localStorage.setItem("torrent_max_quality", config.torrentMaxQuality);
+	localStorage.setItem("torrent_max_gb", String(config.torrentMaxGb));
+	localStorage.setItem("torrent_dir", config.torrentDir.trim());
 	localStorage.setItem("game_regions", config.gameRegions.join(","));
 	const listas = (config.iptvLists.length ? config.iptvLists : IPTV_DEFAULT_LISTS)
 		.filter((l) => l.url.trim())
