@@ -77,5 +77,20 @@ else
   rm /tmp/uosc.zip
 fi
 
+echo ">> Material Icons Round (iconos del bar del reproductor)"
+# El bar del player embebido dibuja sus iconos con ASS (\fnMaterial Icons Round).
+# Si el archivo falta, libass cae a una fuente normal y en pantalla salen los
+# NOMBRES de los iconos en vez de los iconos. mpv-config/fonts/ está en
+# .gitignore, así que este script es la ÚNICA vía por la que llega a un build
+# limpio o a la CI. Apache-2.0.
+MI_OTF="mpv-config/fonts/MaterialIconsRound-Regular.otf"
+if [ -f "$MI_OTF" ]; then
+  echo "  ya está"
+else
+  mkdir -p mpv-config/fonts
+  curl -sSL -o "$MI_OTF" \
+    "https://raw.githubusercontent.com/google/material-design-icons/master/font/MaterialIconsRound-Regular.otf"
+fi
+
 echo ">> listo"
 ls -lh retroarch mpv yt-dlp cores/*.so

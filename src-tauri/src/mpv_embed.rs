@@ -220,21 +220,28 @@ impl BarAction {
         }
     }
 
-    /// Nombre de ligadura Material Icons Round (la fuente lo convierte a icono).
+    /// Glifo de Material Icons Round por CODEPOINT, no por ligadura.
+    ///
+    /// La fuente también acepta el nombre ("play_arrow") y lo convierte a icono
+    /// vía ligadura, pero eso depende del shaper de libass: si no aplica `liga`
+    /// aparece el NOMBRE escrito en pantalla. El codepoint no depende de nadie.
+    /// Valores del .codepoints oficial de MaterialIconsRound-Regular.
     fn icon(self) -> &'static str {
         match self {
-            BarAction::SeekBack => "replay_10",
-            BarAction::Resume => "play_arrow",
-            BarAction::SeekFwd => "forward_10",
-            BarAction::Subs => "subtitles",
-            BarAction::Audio => "graphic_eq",
-            BarAction::Video => "movie",
-            BarAction::Exit => "close",
+            BarAction::SeekBack => "\u{e059}",  // replay_10
+            BarAction::Resume => "\u{e037}",    // play_arrow
+            BarAction::SeekFwd => "\u{e056}",   // forward_10
+            BarAction::Subs => "\u{e048}",      // subtitles
+            BarAction::Audio => "\u{e1b8}",     // graphic_eq
+            BarAction::Video => "\u{e02c}",     // movie
+            BarAction::Exit => "\u{e5cd}",      // close
         }
     }
 }
 
-/// Nombre de la fuente de iconos (Material Icons Round, en vendor/fonts).
+/// Fuente de iconos. El archivo vive en vendor/mpv-config/fonts/ y lo repuebla
+/// fetch.sh (ese directorio está en .gitignore): mpv suma esa carpeta al set de
+/// fontconfig, así que libass la encuentra sin instalarla en el sistema.
 const ICON_FONT: &str = "Material Icons Round";
 
 struct PlayerUi {
@@ -255,6 +262,8 @@ thread_local! {
     static BAR_GEN: Cell<u64> = const { Cell::new(0) };
     /// Menú de pistas abierto (audio/subs). None = no hay menú (modo bar).
     static MENU: RefCell<Option<Menu>> = const { RefCell::new(None) };
+    /// Ya hay un tick de la barra de progreso corriendo (evita apilar timers).
+    static SEEK_TICK: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Cuenta pistas de un tipo ("video"/"audio"/"sub").
@@ -313,9 +322,10 @@ fn mpv_cmd2(name: &str, args: &[&str]) {
     }
 }
 
-// osd-overlay ids: 46 = fondo (pill), 47 = textos. Canvas virtual 1280×720.
+// osd-overlay ids: 46 = fondo (pill), 47 = textos, 48 = barra de progreso.
 const BAR_BG_ID: &str = "46";
 const BAR_FG_ID: &str = "47";
+const BAR_SEEK_ID: &str = "48";
 
 // ─────────────────────── geometría real del OSD ───────────────────────────
 //
@@ -379,6 +389,40 @@ fn widget_to_osd(area: &gtk::GLArea, x: f64, y: f64) -> (f64, f64) {
     (x / w * o.w, y / h * o.h)
 }
 
+/// Posición y duración actuales, o None si no hay nada que buscar: en vivo
+/// (IPTV) `duration` es 0 y dibujar una barra de progreso ahí sería mentira.
+fn seek_info() -> Option<(f64, f64)> {
+    let dur = get_f64("duration");
+    if dur <= 0.5 {
+        return None;
+    }
+    Some((get_f64("time-pos").clamp(0.0, dur), dur))
+}
+
+/// "12:34" o "1:23:45" — la hora solo aparece si de verdad hay horas.
+fn fmt_hms(t: f64) -> String {
+    let t = t.max(0.0) as u64;
+    let (h, m, sec) = (t / 3600, (t % 3600) / 60, t % 60);
+    if h > 0 {
+        format!("{h}:{m:02}:{sec:02}")
+    } else {
+        format!("{m}:{sec:02}")
+    }
+}
+
+/// Medidas de la barra de progreso, en píxeles del OSD.
+#[derive(Clone, Copy)]
+struct SeekGeom {
+    /// Centro vertical de la fila (riel y tiempos comparten esta línea).
+    cy: f64,
+    track_l: f64,
+    track_r: f64,
+    /// Grosor del riel.
+    h: f64,
+    pos: f64,
+    dur: f64,
+}
+
 /// Medidas del bar ya resueltas en píxeles del OSD.
 #[derive(Clone, Copy)]
 struct BarGeom {
@@ -391,22 +435,27 @@ struct BarGeom {
     center_x: f64,
     k: f64,
     osd: Osd,
+    /// None en directo: sin duración no hay barra y la pill queda más baja.
+    seek: Option<SeekGeom>,
 }
 
 fn bar_geom() -> BarGeom {
     let o = osd();
     let k = o.k;
     let n = PLAYER_UI.with(|u| u.borrow().bar.len());
+    let si = seek_info();
     // Anclado al borde inferior real (54 y 160 son las medidas del diseño).
+    // Con barra de progreso la pill crece hacia ARRIBA: los iconos y la
+    // etiqueta no se mueven, así que el músculo memoria del usuario se mantiene.
     let bot = o.h - 54.0 * k;
-    let top = bot - 160.0 * k;
+    let top = bot - if si.is_some() { 208.0 } else { 160.0 } * k;
     // En ventanas angostas los iconos se juntan antes que salirse de pantalla.
     let step = if n > 0 {
         (96.0 * k).min((o.w - 48.0 * k) / n as f64)
     } else {
         96.0 * k
     };
-    BarGeom {
+    let mut g = BarGeom {
         n,
         step,
         top,
@@ -416,7 +465,36 @@ fn bar_geom() -> BarGeom {
         center_x: o.w / 2.0,
         k,
         osd: o,
+        seek: None,
+    };
+    if let Some((pos, dur)) = si {
+        let (l, r) = pill_x(&g, true);
+        // Reserva a cada lado para los tiempos: "1:23:45" a fs 22 ≈ 80 px.
+        let pad = 96.0 * k;
+        g.seek = Some(SeekGeom {
+            cy: top + 34.0 * k,
+            track_l: l + pad,
+            track_r: (r - pad).max(l + pad + 20.0 * k),
+            h: 6.0 * k,
+            pos,
+            dur,
+        });
     }
+    g
+}
+
+/// Extremos horizontales de la pill. Lo comparten el fondo y el riel: si cada
+/// uno calculara los suyos, el riel se saldría del fondo en cuanto cambie uno.
+fn pill_x(g: &BarGeom, has_seek: bool) -> (f64, f64) {
+    let mut half = (g.n.max(1) as f64 * g.step) / 2.0 + 34.0 * g.k;
+    // Con riel la pill nunca es angosta: una barra de 200 px no se puede
+    // apuntar con el mouse ni con el control.
+    if has_seek {
+        half = half.max(330.0 * g.k);
+    }
+    let l = (g.center_x - half).max(4.0);
+    let r = (g.center_x + half).min(g.osd.w - 4.0);
+    (l, r)
 }
 
 /// Centro X del icono `i` (fila centrada horizontalmente).
@@ -428,6 +506,11 @@ fn bar_icon_cx(g: &BarGeom, i: usize) -> f64 {
 fn bar_hit(px: f64, py: f64) -> Option<usize> {
     let g = bar_geom();
     if py < g.top || py > g.bot {
+        return None;
+    }
+    // Sin esto, un click en el riel caería en la columna del icono que tenga
+    // debajo y en vez de saltar en el tiempo abriría el menú de subtítulos.
+    if seek_hit(&g, px, py).is_some() {
         return None;
     }
     (0..g.n).find(|&i| (px - bar_icon_cx(&g, i)).abs() <= g.step / 2.0)
@@ -450,23 +533,15 @@ fn ellipsize(text: &str, width_px: f64, size: i32) -> String {
     format!("{}…", cut.trim_end())
 }
 
-/// Fondo: pill inferior oscuro semi-transparente, ancha según cuántos iconos hay.
-fn build_bar_bg() -> String {
-    let g = bar_geom();
-    let half = (g.n.max(1) as f64 * g.step) / 2.0 + 34.0 * g.k;
-    let l = (g.center_x - half).max(4.0) as i32;
-    let r = (g.center_x + half).min(g.osd.w - 4.0) as i32;
-    let t = g.top as i32;
-    let b = g.bot as i32;
-    let rad = (20.0 * g.k).round() as i32;
-    // \1a = transparencia (00 opaco … FF transp). Dark #0A0F12 → &H120F0A&.
-    // Rectángulo con las cuatro esquinas redondeadas (curvas Bézier de ASS).
+/// Rectángulo de esquinas redondeadas en modo dibujo ASS (\p1), con curvas
+/// Bézier. Con rad = alto/2 = ancho/2 sale un círculo (la perilla del riel).
+fn ass_round_rect(l: i32, t: i32, r: i32, b: i32, rad: i32) -> String {
+    let rad = rad.min((r - l) / 2).min((b - t) / 2).max(0);
     format!(
-        "{{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H120F0A&\\1a&H30&\\p1}}\
-         m {l} {tr} b {l} {t} {lr} {t} {lr} {t} \
+        "m {l} {tr} b {l} {t} {lr} {t} {lr} {t} \
          l {rr} {t} b {r} {t} {r} {t} {r} {tr} \
          l {r} {br} b {r} {b} {rr} {b} {rr} {b} \
-         l {lr} {b} b {l} {b} {l} {b} {l} {br}{{\\p0}}",
+         l {lr} {b} b {l} {b} {l} {b} {l} {br}",
         l = l,
         r = r,
         t = t,
@@ -476,6 +551,106 @@ fn build_bar_bg() -> String {
         tr = t + rad,
         br = b - rad,
     )
+}
+
+/// Fondo: pill inferior oscuro semi-transparente, ancha según cuántos iconos hay.
+fn build_bar_bg() -> String {
+    let g = bar_geom();
+    let (l, r) = pill_x(&g, g.seek.is_some());
+    let rad = (20.0 * g.k).round() as i32;
+    // \1a = transparencia (00 opaco … FF transp). Dark #0A0F12 → &H120F0A&.
+    format!(
+        "{{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H120F0A&\\1a&H30&\\p1}}{}{{\\p0}}",
+        ass_round_rect(l as i32, g.top as i32, r as i32, g.bot as i32, rad)
+    )
+}
+
+/// Barra de progreso: riel, porción reproducida, perilla y los dos tiempos.
+/// Vive en su propio overlay para poder refrescarla sola 4 veces por segundo
+/// sin volver a componer los iconos, que no cambian.
+fn build_seek_ass(g: &BarGeom) -> String {
+    let Some(s) = g.seek else { return String::new() };
+    let frac = (s.pos / s.dur).clamp(0.0, 1.0);
+    let (l, r) = (s.track_l as i32, s.track_r as i32);
+    let (t, b) = ((s.cy - s.h / 2.0) as i32, (s.cy + s.h / 2.0) as i32);
+    let cy = s.cy as i32;
+    let rad = (s.h / 2.0) as i32;
+    let fill_r = (s.track_l + (s.track_r - s.track_l) * frac) as i32;
+    let mut ev: Vec<String> = Vec::with_capacity(5);
+    // Riel: cream muy transparente.
+    ev.push(format!(
+        "{{\\an7\\pos(0,0)\\bord0\\shad0\\1c&HE8E0D0&\\1a&HA0&\\p1}}{}{{\\p0}}",
+        ass_round_rect(l, t, r, b, rad)
+    ));
+    // Reproducido: naranja f97316 → &H1673F9&.
+    if fill_r > l {
+        ev.push(format!(
+            "{{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H1673F9&\\p1}}{}{{\\p0}}",
+            ass_round_rect(l, t, fill_r, b, rad)
+        ));
+    }
+    // Perilla: círculo en la punta de lo reproducido.
+    let kr = (9.0 * g.k).round().max(3.0) as i32;
+    ev.push(format!(
+        "{{\\an7\\pos(0,0)\\bord0\\shad1.5\\4c&H000000&\\1c&H1673F9&\\p1}}{}{{\\p0}}",
+        ass_round_rect(fill_r - kr, cy - kr, fill_r + kr, cy + kr, kr)
+    ));
+    // Tiempos: transcurrido pegado al inicio del riel, total al final.
+    let size = fs(g.k, 22.0);
+    ev.push(format!(
+        "{{\\an6\\pos({},{cy})\\fs{size}\\1c&HE8E0D0&\\bord0\\shad1.5\\4c&H000000&}}{}",
+        (s.track_l - 14.0 * g.k) as i32,
+        fmt_hms(s.pos)
+    ));
+    ev.push(format!(
+        "{{\\an4\\pos({},{cy})\\fs{size}\\1c&HB9B3A6&\\bord0\\shad1.5\\4c&H000000&}}{}",
+        (s.track_r + 14.0 * g.k) as i32,
+        fmt_hms(s.dur)
+    ));
+    ev.join("\n")
+}
+
+/// Fracción [0,1] si el punto cae en la fila del riel. La banda de acierto es
+/// mucho más alta que el riel (6 px de diseño): con mouse o control remoto hay
+/// que poder apuntarlo sin precisión de cirujano.
+fn seek_hit(g: &BarGeom, px: f64, py: f64) -> Option<f64> {
+    let s = g.seek?;
+    if (py - s.cy).abs() > 24.0 * g.k {
+        return None;
+    }
+    let w = s.track_r - s.track_l;
+    if w <= 1.0 {
+        return None;
+    }
+    Some(((px - s.track_l) / w).clamp(0.0, 1.0))
+}
+
+/// Salta a una fracción del archivo. `exact` para caer donde el usuario apuntó
+/// y no en el keyframe más cercano, que en un anime de 24 min se nota.
+fn seek_to_fraction(frac: f64) {
+    let pct = format!("{:.4}", frac.clamp(0.0, 1.0) * 100.0);
+    mpv_cmd2("seek", &[&pct, "absolute-percent", "exact"]);
+}
+
+/// Refresca SOLO el overlay del riel mientras el bar está en pantalla.
+/// Redibujar el bar entero a este ritmo sería desperdicio: los iconos no
+/// cambian. Se corta solo al ocultarse el bar, al abrirse un menú o en directo.
+fn start_seek_tick() {
+    if SEEK_TICK.with(|c| c.get()) {
+        return;
+    }
+    SEEK_TICK.with(|c| c.set(true));
+    glib::timeout_add_local(std::time::Duration::from_millis(250), || {
+        let visible = PLAYER_UI.with(|u| u.borrow().bar_visible);
+        let menu_open = MENU.with(|m| m.borrow().is_some());
+        let g = bar_geom();
+        if !visible || menu_open || g.seek.is_none() {
+            SEEK_TICK.with(|c| c.set(false));
+            return glib::ControlFlow::Break;
+        }
+        put_overlay(BAR_SEEK_ID, &build_seek_ass(&g));
+        glib::ControlFlow::Continue
+    });
 }
 
 /// Bar con ICONOS (fuente Material Icons Round): un evento ASS por icono en su
@@ -526,14 +701,28 @@ fn put_overlay(id: &str, data: &str) {
 /// Dibuja/actualiza el bar (fondo + textos).
 fn draw_bar() {
     let focus = PLAYER_UI.with(|u| u.borrow().focus);
+    let g = bar_geom();
     put_overlay(BAR_BG_ID, &build_bar_bg());
     put_overlay(BAR_FG_ID, &build_bar_ass(focus));
+    if g.seek.is_some() {
+        put_overlay(BAR_SEEK_ID, &build_seek_ass(&g));
+        start_seek_tick();
+    } else {
+        // En directo no hay riel: hay que borrarlo por si veníamos de un
+        // archivo con duración (la sesión de mpv se reutiliza entre videos).
+        hide_overlay(BAR_SEEK_ID);
+    }
+}
+
+/// Apaga un overlay por id.
+fn hide_overlay(id: &str) {
+    mpv_cmd2("osd-overlay", &[id, "none", "", "0", "0", "0", "no", "no"]);
 }
 
 /// Quita el bar (fondo + textos).
 fn clear_bar() {
-    for id in [BAR_BG_ID, BAR_FG_ID] {
-        mpv_cmd2("osd-overlay", &[id, "none", "", "0", "0", "0", "no", "no"]);
+    for id in [BAR_BG_ID, BAR_FG_ID, BAR_SEEK_ID] {
+        hide_overlay(id);
     }
 }
 
@@ -1023,6 +1212,9 @@ fn draw_menu() {
     if let Some((bg, fg)) = drawn {
         put_overlay(BAR_BG_ID, &bg);
         put_overlay(BAR_FG_ID, &fg);
+        // El menú reusa los ids 46/47, pero el riel es el 48: sin esto quedaría
+        // flotando encima del panel de pistas. close_menu lo repone.
+        hide_overlay(BAR_SEEK_ID);
     }
 }
 
@@ -1434,6 +1626,16 @@ fn build_surface(vbox: &gtk::Box) {
                 None => close_menu(),
             }
             return glib::Propagation::Stop;
+        }
+        // Click en el riel = saltar ahí. Va ANTES que los iconos porque la
+        // fila del riel cae dentro de la pill.
+        if PLAYER_UI.with(|u| u.borrow().bar_visible) {
+            if let Some(frac) = seek_hit(&bar_geom(), cx, cy) {
+                seek_to_fraction(frac);
+                draw_bar();
+                schedule_bar_hide();
+                return glib::Propagation::Stop;
+            }
         }
         match bar_hit(cx, cy) {
             Some(i) => {
@@ -1856,4 +2058,97 @@ pub fn tracks() -> Vec<(i64, String, String, String, bool)> {
         out.push((id, kind, lang, title, selected));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// BarGeom de laboratorio: 7 iconos en 1280×720 (k = 1), con riel.
+    fn geom_con_riel(pos: f64, dur: f64) -> BarGeom {
+        let osd = Osd { w: 1280.0, h: 720.0, k: 1.0 };
+        let bot = 720.0 - 54.0;
+        let top = bot - 208.0;
+        let mut g = BarGeom {
+            n: 7,
+            step: 96.0,
+            top,
+            bot,
+            icon_cy: bot - 100.0,
+            label_y: bot - 38.0,
+            center_x: 640.0,
+            k: 1.0,
+            osd,
+            seek: None,
+        };
+        let (l, r) = pill_x(&g, true);
+        g.seek = Some(SeekGeom {
+            cy: top + 34.0,
+            track_l: l + 96.0,
+            track_r: r - 96.0,
+            h: 6.0,
+            pos,
+            dur,
+        });
+        g
+    }
+
+    #[test]
+    fn fmt_hms_omite_la_hora_si_no_hay() {
+        assert_eq!(fmt_hms(0.0), "0:00");
+        assert_eq!(fmt_hms(65.4), "1:05");
+        assert_eq!(fmt_hms(3600.0), "1:00:00");
+        assert_eq!(fmt_hms(5025.0), "1:23:45");
+        // Un time-pos negativo no debe producir un desbordamiento.
+        assert_eq!(fmt_hms(-3.0), "0:00");
+    }
+
+    #[test]
+    fn seek_hit_mapea_los_extremos_y_el_centro() {
+        let g = geom_con_riel(0.0, 100.0);
+        let s = g.seek.unwrap();
+        assert_eq!(seek_hit(&g, s.track_l, s.cy), Some(0.0));
+        assert_eq!(seek_hit(&g, s.track_r, s.cy), Some(1.0));
+        let mid = seek_hit(&g, (s.track_l + s.track_r) / 2.0, s.cy).unwrap();
+        assert!((mid - 0.5).abs() < 1e-9, "centro dio {mid}");
+    }
+
+    #[test]
+    fn seek_hit_recorta_fuera_del_riel_pero_no_fuera_de_la_fila() {
+        let g = geom_con_riel(0.0, 100.0);
+        let s = g.seek.unwrap();
+        // A los costados del riel (sobre los tiempos) el valor se recorta,
+        // no se sale del rango.
+        assert_eq!(seek_hit(&g, s.track_l - 60.0, s.cy), Some(0.0));
+        assert_eq!(seek_hit(&g, s.track_r + 60.0, s.cy), Some(1.0));
+        // Fuera de la banda vertical no hay acierto: esa zona es de los iconos.
+        assert!(seek_hit(&g, s.track_l, s.cy + 40.0).is_none());
+        assert!(seek_hit(&g, s.track_l, g.icon_cy).is_none());
+    }
+
+    #[test]
+    fn sin_riel_no_hay_acierto() {
+        let mut g = geom_con_riel(0.0, 100.0);
+        let cy = g.seek.unwrap().cy;
+        g.seek = None;
+        assert!(seek_hit(&g, 640.0, cy).is_none());
+    }
+
+    #[test]
+    fn el_riel_cabe_dentro_de_la_pill() {
+        let g = geom_con_riel(10.0, 100.0);
+        let (l, r) = pill_x(&g, true);
+        let s = g.seek.unwrap();
+        assert!(s.track_l > l, "riel se sale por la izquierda");
+        assert!(s.track_r < r, "riel se sale por la derecha");
+        assert!(s.cy > g.top && s.cy < g.icon_cy, "la fila pisa los iconos");
+    }
+
+    #[test]
+    fn ass_round_rect_recorta_el_radio_a_la_mitad_del_lado() {
+        // Radio absurdo sobre una caja chica: no debe generar coordenadas
+        // cruzadas (que libass dibujaría como un borrón).
+        let d = ass_round_rect(0, 0, 10, 10, 999);
+        assert!(d.starts_with("m 0 5"), "salió: {d}");
+    }
 }
