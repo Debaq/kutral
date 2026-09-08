@@ -220,29 +220,62 @@ impl BarAction {
         }
     }
 
-    /// Glifo de Material Icons Round por CODEPOINT, no por ligadura.
+    /// Trazos del icono en una caja de 100×100 centrada en el origen. Cada
+    /// elemento es un polígono CERRADO y RELLENO — nada de contornos con
+    /// hueco, que dependen de la regla de relleno de libass.
     ///
-    /// La fuente también acepta el nombre ("play_arrow") y lo convierte a icono
-    /// vía ligadura, pero eso depende del shaper de libass: si no aplica `liga`
-    /// aparece el NOMBRE escrito en pantalla. El codepoint no depende de nadie.
-    /// Valores del .codepoints oficial de MaterialIconsRound-Regular.
-    fn icon(self) -> &'static str {
+    /// Son vectores, no glifos, y esa es toda la gracia: dibujarlos con una
+    /// fuente de iconos ató la UI a que un .otf estuviera presente Y que
+    /// fontconfig lo resolviera igual en cada máquina. No pasó: unos veían los
+    /// nombres escritos ("play_arrow") y otros caracteres corruptos. El
+    /// dibujo ASS no depende de fuentes, ni de fontconfig, ni del locale, ni
+    /// de qué empaquetó linuxdeploy — es el mismo camino con el que ya se
+    /// pintan el fondo de la pill y el riel, que sí se ven en todas partes.
+    fn shapes(self) -> Vec<Vec<(f64, f64)>> {
         match self {
-            BarAction::SeekBack => "\u{e059}",  // replay_10
-            BarAction::Resume => "\u{e037}",    // play_arrow
-            BarAction::SeekFwd => "\u{e056}",   // forward_10
-            BarAction::Subs => "\u{e048}",      // subtitles
-            BarAction::Audio => "\u{e1b8}",     // graphic_eq
-            BarAction::Video => "\u{e02c}",     // movie
-            BarAction::Exit => "\u{e5cd}",      // close
+            // ◀◀ — dos triángulos a la izquierda.
+            BarAction::SeekBack => vec![
+                vec![(-4.0, -32.0), (-42.0, 0.0), (-4.0, 32.0)],
+                vec![(40.0, -32.0), (2.0, 0.0), (40.0, 32.0)],
+            ],
+            // ▶ — un triángulo a la derecha.
+            BarAction::Resume => vec![vec![(-28.0, -38.0), (36.0, 0.0), (-28.0, 38.0)]],
+            // ▶▶ — espejo de SeekBack.
+            BarAction::SeekFwd => vec![
+                vec![(4.0, -32.0), (42.0, 0.0), (4.0, 32.0)],
+                vec![(-40.0, -32.0), (-2.0, 0.0), (-40.0, 32.0)],
+            ],
+            // Marco de subtítulos: cuatro barras (no un contorno hueco) y dos
+            // líneas de texto dentro.
+            BarAction::Subs => vec![
+                vec![(-44.0, -32.0), (44.0, -32.0), (44.0, -25.0), (-44.0, -25.0)],
+                vec![(-44.0, 25.0), (44.0, 25.0), (44.0, 32.0), (-44.0, 32.0)],
+                vec![(-44.0, -32.0), (-37.0, -32.0), (-37.0, 32.0), (-44.0, 32.0)],
+                vec![(37.0, -32.0), (44.0, -32.0), (44.0, 32.0), (37.0, 32.0)],
+                vec![(-30.0, 2.0), (0.0, 2.0), (0.0, 12.0), (-30.0, 12.0)],
+                vec![(8.0, 2.0), (30.0, 2.0), (30.0, 12.0), (8.0, 12.0)],
+            ],
+            // Ecualizador: cuatro barras de distinta altura, alineadas abajo.
+            BarAction::Audio => vec![
+                vec![(-39.0, 8.0), (-27.0, 8.0), (-27.0, 34.0), (-39.0, 34.0)],
+                vec![(-17.0, -20.0), (-5.0, -20.0), (-5.0, 34.0), (-17.0, 34.0)],
+                vec![(5.0, -4.0), (17.0, -4.0), (17.0, 34.0), (5.0, 34.0)],
+                vec![(27.0, -28.0), (39.0, -28.0), (39.0, 34.0), (27.0, 34.0)],
+            ],
+            // Claqueta: cuerpo + barra inclinada. Se eligió sobre un marco con
+            // triángulo porque a 42 px eso se confundía con el de subtítulos.
+            BarAction::Video => vec![
+                vec![(-44.0, -10.0), (44.0, -10.0), (44.0, 32.0), (-44.0, 32.0)],
+                vec![(-44.0, -32.0), (40.0, -32.0), (44.0, -14.0), (-40.0, -14.0)],
+            ],
+            // ✕ — dos barras cruzadas a 45°, como rectángulos girados.
+            BarAction::Exit => vec![
+                vec![(-28.3, -39.7), (39.7, 28.3), (28.3, 39.7), (-39.7, -28.3)],
+                vec![(39.7, -28.3), (-28.3, 39.7), (-39.7, 28.3), (28.3, -39.7)],
+            ],
         }
     }
 }
-
-/// Fuente de iconos. El archivo vive en vendor/mpv-config/fonts/ y lo repuebla
-/// fetch.sh (ese directorio está en .gitignore): mpv suma esa carpeta al set de
-/// fontconfig, así que libass la encuentra sin instalarla en el sistema.
-const ICON_FONT: &str = "Material Icons Round";
 
 struct PlayerUi {
     paused: bool,
@@ -653,9 +686,26 @@ fn start_seek_tick() {
     });
 }
 
-/// Bar con ICONOS (fuente Material Icons Round): un evento ASS por icono en su
-/// posición real (ver bar_icon_cx) + la etiqueta del enfocado debajo. El
-/// enfocado va naranja y más grande; con mouse el "foco" lo pone el hover.
+/// Escala los trazos de un icono (caja 100×100 centrada) a su posición real y
+/// los emite como comandos de dibujo ASS. `size` es el lado de la caja en
+/// píxeles del OSD.
+fn icon_drawing(act: BarAction, cx: f64, cy: f64, size: f64) -> String {
+    let s = size / 100.0;
+    let mut out = String::new();
+    for poly in act.shapes() {
+        for (i, (x, y)) in poly.iter().enumerate() {
+            let (px, py) = (cx + x * s, cy + y * s);
+            // `m` abre un contorno, `l` encadena vértices. Un contorno por
+            // polígono: libass los rellena todos en el mismo evento.
+            out.push_str(&format!("{} {:.1} {:.1} ", if i == 0 { "m" } else { "l" }, px, py));
+        }
+    }
+    out.trim_end().to_string()
+}
+
+/// Bar con ICONOS VECTORIALES: un evento ASS por icono en su posición real
+/// (ver bar_icon_cx) + la etiqueta del enfocado debajo. El enfocado va naranja
+/// y más grande; con mouse el "foco" lo pone el hover.
 fn build_bar_ass(focus: usize) -> String {
     // Colores ASS = &HBBGGRR&. Naranja f97316 → &H1673F9&. Cream → &HE8E0D0&.
     let g = bar_geom();
@@ -664,14 +714,16 @@ fn build_bar_ass(focus: usize) -> String {
     for (i, act) in bar.iter().enumerate() {
         let cx = bar_icon_cx(&g, i) as i32;
         let cy = g.icon_cy as i32;
+        // Antes eran tamaños de FUENTE; ahora son el lado de la caja del
+        // dibujo. Los valores bajan porque un glifo solo ocupa ~0.8 del em.
         let (size, color) = if i == focus {
-            (fs(g.k, 58.0), "&H1673F9&")
+            (56.0 * g.k, "&H1673F9&")
         } else {
-            (fs(g.k, 42.0), "&HB9B3A6&")
+            (40.0 * g.k, "&HB9B3A6&")
         };
         ev.push(format!(
-            "{{\\an5\\pos({cx},{cy})\\fn{ICON_FONT}\\fs{size}\\1c{color}\\bord0\\shad1.5\\4c&H000000&}}{}",
-            act.icon()
+            "{{\\an7\\pos(0,0)\\bord0\\shad1.5\\4c&H000000&\\1c{color}\\p1}}{}{{\\p0}}",
+            icon_drawing(*act, cx as f64, cy as f64, size)
         ));
     }
     let size = fs(g.k, 26.0);
@@ -2145,10 +2197,95 @@ mod tests {
     }
 
     #[test]
+    fn todo_icono_tiene_trazos_dentro_de_su_caja() {
+        for a in [
+            BarAction::SeekBack,
+            BarAction::Resume,
+            BarAction::SeekFwd,
+            BarAction::Subs,
+            BarAction::Audio,
+            BarAction::Video,
+            BarAction::Exit,
+        ] {
+            let polys = a.shapes();
+            assert!(!polys.is_empty(), "{:?} sin trazos", a.label());
+            for p in &polys {
+                // Menos de 3 vértices no rellena nada: sale un icono invisible.
+                assert!(p.len() >= 3, "{} tiene un polígono de {} vértices", a.label(), p.len());
+                for (x, y) in p {
+                    assert!(
+                        x.abs() <= 50.0 && y.abs() <= 50.0,
+                        "{} se sale de la caja 100×100 en ({x},{y})",
+                        a.label()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn icon_drawing_escala_y_centra() {
+        // Caja de 100 px centrada en (500,300): el triángulo de play llega
+        // hasta x = 500 + 36 y no más.
+        let d = icon_drawing(BarAction::Resume, 500.0, 300.0, 100.0);
+        assert!(d.starts_with("m 472.0 262.0"), "salió: {d}");
+        assert!(d.contains("l 536.0 300.0"), "salió: {d}");
+        // A la mitad de tamaño, la mitad de desplazamiento respecto al centro.
+        let mitad = icon_drawing(BarAction::Resume, 500.0, 300.0, 50.0);
+        assert!(mitad.starts_with("m 486.0 281.0"), "salió: {mitad}");
+    }
+
+    #[test]
+    fn cada_poligono_abre_su_propio_contorno() {
+        // Dos triángulos = dos `m`. Si se encadenaran con `l`, libass los
+        // uniría en una figura sola y saldría un borrón.
+        let d = icon_drawing(BarAction::SeekFwd, 0.0, 0.0, 100.0);
+        assert_eq!(d.matches("m ").count(), 2, "salió: {d}");
+    }
+
+    #[test]
     fn ass_round_rect_recorta_el_radio_a_la_mitad_del_lado() {
         // Radio absurdo sobre una caja chica: no debe generar coordenadas
         // cruzadas (que libass dibujaría como un borrón).
         let d = ass_round_rect(0, 0, 10, 10, 999);
         assert!(d.starts_with("m 0 5"), "salió: {d}");
+    }
+}
+
+#[cfg(test)]
+mod icon_dump {
+    use super::*;
+
+    /// Escupe un .ass con los 7 iconos para mirarlos renderizados de verdad:
+    ///   cargo test --lib volcar_iconos -- --ignored --nocapture
+    ///   mpv --sub-file=/tmp/iconos.ass --vo=image ...
+    #[test]
+    #[ignore]
+    fn volcar_iconos() {
+        let acts = [
+            BarAction::SeekBack,
+            BarAction::Resume,
+            BarAction::SeekFwd,
+            BarAction::Subs,
+            BarAction::Audio,
+            BarAction::Video,
+            BarAction::Exit,
+        ];
+        let mut ev = String::new();
+        for (i, a) in acts.iter().enumerate() {
+            let cx = 130.0 + i as f64 * 170.0;
+            ev.push_str(&format!(
+                "Dialogue: 0,0:00:00.00,0:00:05.00,D,,0,0,0,,{{\\an7\\pos(0,0)\\bord0\\shad1.5\\4c&H000000&\\1c&HE8E0D0&\\p1}}{}{{\\p0}}\n",
+                icon_drawing(*a, cx, 200.0, 96.0)
+            ));
+        }
+        let doc = format!(
+            "[Script Info]\nScriptType: v4.00+\nPlayResX: 1280\nPlayResY: 400\n\n\
+             [V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, Alignment, MarginL, MarginR, MarginV, Encoding\n\
+             Style: D,Arial,40,&H00FFFFFF,7,0,0,0,1\n\n\
+             [Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n{ev}"
+        );
+        std::fs::write("/tmp/iconos.ass", doc).unwrap();
+        println!("escrito /tmp/iconos.ass");
     }
 }
