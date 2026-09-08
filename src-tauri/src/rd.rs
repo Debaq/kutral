@@ -246,6 +246,26 @@ pub async fn rd_resolve(app: tauri::AppHandle, magnet: String) -> Result<String,
     resolve_magnet(&token, &magnet).await
 }
 
+/// Desbloquea un link de hoster (Mega, Streamtape, Voe, Mixdrop, MP4Upload…)
+/// a URL directa reproducible. Es el MISMO endpoint que usa la ruta magnet,
+/// expuesto aparte para las fuentes web cuyos servidores son hosters.
+///
+/// Bonus de geobloqueo: el archivo se sirve desde los servidores de RD, así
+/// que el video no toca el dominio bloqueado por el operador — solo el scrape
+/// del HTML lo hace.
+///
+/// Si RD no soporta el hoster devuelve error; el llamador debe probar el
+/// siguiente servidor, no rendirse.
+#[tauri::command]
+pub async fn rd_unrestrict(app: tauri::AppHandle, link: String) -> Result<String, String> {
+    if link.trim().is_empty() {
+        return Err("link vacío".into());
+    }
+    let token = crate::creds::token(&app)?;
+    let cli = client()?;
+    unrestrict(&cli, &token, link.trim()).await
+}
+
 /// Devuelve qué info_hashes ya están cacheados en RD (para badge "instantáneo").
 #[tauri::command]
 pub async fn rd_instant_available(

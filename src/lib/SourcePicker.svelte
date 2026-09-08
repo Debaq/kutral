@@ -39,6 +39,10 @@
     seeders: number | null;
     quality: string;
     rd_cached: boolean | null;
+    // Sub QUEMADO en el video (jkanime y similares): "lat"/"cast"/"en".
+    // null = torrent normal. Cambia todo el flujo: no hay pistas que elegir
+    // ni subtítulos que bajar, y no necesita debrid para reproducirse.
+    hardsub: string | null;
     _count?: number; // cuántas fuentes equivalentes se apilaron en esta
     // Veredicto de la verificación REAL de pistas (ffprobe sobre la URL
     // resuelta): qué español embebido trae el archivo de verdad.
@@ -54,6 +58,7 @@
     season = null,
     episode = null,
     title,
+    originalTitle = null,
     backdrop = null,
     kitsuId = null,
     rdLinked,
@@ -66,6 +71,9 @@
     season?: number | null;
     episode?: number | null;
     title: string;
+    // Título ROMAJI (AniList `original_title`). jkanime no indexa títulos en
+    // inglés: sin esto, "Frieren: Beyond Journey's End" no encuentra nada.
+    originalTitle?: string | null;
     backdrop?: string | null;
     // ID Kitsu (anime, mapeado vía ani.zip): habilita Torrentio kitsu:{id}:{ep}
     // en kodios. Permite reproducir anime SIN imdb_id.
@@ -79,6 +87,11 @@
   let loading = $state(true);
   let error = $state("");
   let sources = $state<Src[]>([]);
+  // Familia de fuente en pantalla. Un anime devuelve ~50 torrents y 1 enlace
+  // directo: sin este filtro la fuente en español queda perdida entre releases
+  // japoneses.
+  type Fam = "all" | "hardsub" | "torrent";
+  let famFilter = $state<Fam>("all");
   let focusIdx = $state(0);
   let resolving = $state(false);
   let resolvingMsg = $state("");
@@ -109,6 +122,14 @@
     cam: "CAM",
     unknown: "—",
   };
+  // Etiqueta de las fuentes web: se reproducen desde su URL tal cual, sin
+  // pasar por el debrid ni por el swarm.
+  const HARDSUB_LABEL: Record<string, string> = {
+    lat: "🔗 Enlace directo",
+    cast: "🔗 Enlace directo",
+    en: "🔗 Enlace directo",
+  };
+
   const QRANK: Record<string, number> = {
     p2160: 5,
     p1080: 4,
@@ -140,6 +161,29 @@
     if (multi) return 4; // multi: trae VO + subs ES
     if (latino || cast) return 2; // doblado: menos ideal pero hay ES
     return 3; // VO puro: audio original, subs externos si hace falta
+  }
+
+  // POOL DE IDIOMA: qué FAMILIA de fuente conviene según el idioma de la app,
+  // por encima de calidad y seeders. La lógica es asimétrica a propósito:
+  //  - Español latino: la ruta torrent casi no trae subs latinos, así que el
+  //    hardsub de jkanime gana.
+  //  - Castellano: al revés — hardsub castellano casi no existe online, pero
+  //    OpenSubtitles sí lo tiene, así que el torrent va primero.
+  //  - Inglés y el resto: la ruta torrent (softsub EN, SubsPlease) es MEJOR que
+  //    cualquier hardsub español, y el hardsub además es irreversible: hunde.
+  function poolScore(s: Src): number {
+    const hs = s.hardsub || "";
+    if (config.lang === "es-CL") {
+      if (hs === "lat") return 3;
+      if (hs) return 1; // hardsub de otro español: sirve, pero de última
+      return 2;
+    }
+    if (config.lang === "es-ES") {
+      if (hs === "cast") return 3;
+      if (hs) return 1;
+      return 2;
+    }
+    return hs ? 0 : 2;
   }
 
   // Fuente preferida por el usuario, SEGÚN el tipo de contenido (película/serie/
@@ -230,16 +274,56 @@
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 45);
-    return `${s.quality}|${t}`;
+    // El hardsub va en su propia clave: apilarlo con un torrent de nombre
+    // parecido escondería la única fuente con español garantizado.
+    return `${s.quality}|${s.hardsub || ""}|${t}`;
   }
 
   // Índices de navegación: filas (0..n-1), luego "web" (n), luego "volver" (n+1).
   // Con el player web apagado (WEB_PLAYER_ENABLED) el pie pierde un botón, así
   // que los índices se corren: si no, quedaría un slot fantasma que el teclado
   // recorre sin nada enfocado y "volver" no respondería al Enter.
-  const total = $derived(sources.length + (WEB_PLAYER_ENABLED ? 2 : 1));
-  const webIdx = $derived(WEB_PLAYER_ENABLED ? sources.length : -1);
-  const backIdx = $derived(sources.length + (WEB_PLAYER_ENABLED ? 1 : 0));
+  const nHardsub = $derived(sources.filter((s) => s.hardsub).length);
+  const nTorrent = $derived(sources.length - nHardsub);
+  // Las pestañas solo aparecen si de verdad hay dos familias entre las que
+  // elegir. Con una sola serían ruido en pantalla.
+  const showTabs = $derived(nHardsub > 0 && nTorrent > 0);
+  const TABS: { id: Fam; label: string }[] = [
+    { id: "all", label: "Todas" },
+    { id: "hardsub", label: "🔗 Enlace directo" },
+    { id: "torrent", label: "🧲 Torrent" },
+  ];
+  function tabCount(f: Fam): number {
+    return f === "all" ? sources.length : f === "hardsub" ? nHardsub : nTorrent;
+  }
+
+  // La lista que se ve Y sobre la que se reproduce. Todo lo demás (foco,
+  // índices del pie, salto a la siguiente fuente) va contra esto: si el usuario
+  // eligió "Enlace directo", caer a un torrent japonés traicionaría la elección.
+  const view = $derived(
+    famFilter === "all" ? sources
+    : famFilter === "hardsub" ? sources.filter((s) => s.hardsub)
+    : sources.filter((s) => !s.hardsub),
+  );
+
+  const total = $derived(view.length + (WEB_PLAYER_ENABLED ? 2 : 1));
+  const webIdx = $derived(WEB_PLAYER_ENABLED ? view.length : -1);
+  const backIdx = $derived(view.length + (WEB_PLAYER_ENABLED ? 1 : 0));
+
+  function setFam(f: Fam) {
+    if (famFilter === f) return;
+    famFilter = f;
+    focusIdx = 0; // los índices viejos apuntan a otra lista
+    scrollFocused();
+  }
+
+  /// Cambia de pestaña con ←/→ (mando y teclado). Solo entre las que existen.
+  function cycleFam(d: number) {
+    if (!showTabs) return;
+    const i = TABS.findIndex((t) => t.id === famFilter);
+    const next = TABS[(i + d + TABS.length) % TABS.length];
+    setFam(next.id);
+  }
 
   async function load() {
     loading = true;
@@ -255,6 +339,7 @@
         imdbId,
         kind,
         title,
+        originalTitle: originalTitle ?? undefined,
         season: season ?? undefined,
         episode: episode ?? undefined,
         kitsuId: kitsuId ?? undefined,
@@ -278,6 +363,10 @@
         // Fuente preferida por el usuario: máxima prioridad (sube al tope).
         const p = prefScore(b) - prefScore(a);
         if (p) return p;
+        // Pool de idioma antes que "instantáneo": de nada sirve que cargue
+        // rápido si no entiendes lo que dice.
+        const pool = poolScore(b) - poolScore(a);
+        if (pool) return pool;
         const c = (b.rd_cached ? 1 : 0) - (a.rd_cached ? 1 : 0);
         if (c) return c;
         // Preferencia de idioma (doblado/subtitulado) por sobre la calidad: de
@@ -356,6 +445,13 @@
     playing = true;
     playingTitle = s.title;
     startMpvPoll();
+    // Hardsub: el subtítulo está QUEMADO en la imagen. No hay pista que
+    // seleccionar ni subtítulo externo que bajar — buscarlos solo gastaría
+    // cuota de OpenSubtitles y podría superponer dos textos en pantalla.
+    if (s.hardsub) {
+      dbg(`hardsub ${s.hardsub}: sin selección de pistas ni subs externos`);
+      return;
+    }
     // Niveles 2-3: confirmar audio/subs REALES del archivo y elegir la
     // pista ES; si no existe, bajar subtítulos externos. No bloquea el play.
     void applyPreferredTracks();
@@ -368,8 +464,11 @@
   // y salta las fuentes sin español embebido; si ninguna de las inspeccionadas
   // trae, reproduce la mejor igual (los subs externos siguen de respaldo).
   async function playFrom(startIdx: number) {
-    dbg(`playFrom start=${startIdx} n=${sources.length} rd=${rdLinked} verify=${config.verifyEsTracks}`);
-    if (!rdLinked) {
+    dbg(`playFrom start=${startIdx} n=${view.length} fam=${famFilter} rd=${rdLinked} verify=${config.verifyEsTracks}`);
+    // Sin debrid solo se puede reproducir lo que YA trae URL directa (fuentes
+    // web tipo jkanime). Los magnets sí lo necesitan, así que se filtran en el
+    // bucle en vez de bloquear todo el picker.
+    if (!rdLinked && !view.some((s) => s.url)) {
       error = "Vincula tu debrid en Configuración para reproducir.";
       return;
     }
@@ -388,14 +487,15 @@
     // de seeds, así que la mejor bloqueada suele bajarse sin problema.
     const rechazadas: Src[] = [];
 
-    for (let i = startIdx; i < sources.length && tried < MAX_TRIES; i++) {
-      const s = sources[i];
+    for (let i = startIdx; i < view.length && tried < MAX_TRIES; i++) {
+      const s = view[i];
       if (!s.magnet && !s.url) { dbg(`#${i} SKIP (sin magnet ni url)`); continue; }
+      if (!rdLinked && !s.url) { dbg(`#${i} SKIP (magnet sin debrid)`); continue; }
       dbg(`#${i} intento url=${!!s.url} magnet=${!!s.magnet} ${(s.title || "").slice(0, 40)}`);
       tried++;
       focusIdx = i;
       resolvingMsg =
-        `Probando fuente ${i + 1}/${sources.length}${s.rd_cached ? " ⚡" : ""}…` +
+        `Probando fuente ${i + 1}/${view.length}${s.rd_cached ? " ⚡" : ""}…` +
         (blocked ? ` (${blocked} bloqueada${blocked > 1 ? "s" : ""})` : "") +
         (sinEs ? ` (${sinEs} sin español)` : "");
       try {
@@ -406,7 +506,10 @@
           : await invoke<string>("rd_resolve", { magnet: s.magnet });
 
         // Verificación de español real (activable en Configuración).
-        if (config.verifyEsTracks && probes < MAX_PROBES) {
+        // El hardsub no expone pistas ES (está quemado en la imagen): ffprobe
+        // diría "none" y la saltaríamos justo por traer el español que
+        // buscábamos. Se verifica solo lo que tiene pistas de verdad.
+        if (config.verifyEsTracks && !s.hardsub && probes < MAX_PROBES) {
           probes++;
           resolvingMsg = `Inspeccionando pistas de la fuente ${i + 1}… 🔎`;
           const verdict = await probeEs(url);
@@ -744,7 +847,7 @@
     dbg(`activate focusIdx=${focusIdx} back=${backIdx} web=${webIdx}`);
     if (focusIdx === backIdx) return onClose();
     if (focusIdx === webIdx) return onWeb();
-    if (sources[focusIdx]) void playFrom(focusIdx);
+    if (view[focusIdx]) void playFrom(focusIdx);
   }
 
   function scrollFocused() {
@@ -789,6 +892,14 @@
         e.preventDefault();
         move(-1);
         break;
+      case "ArrowLeft":
+        e.preventDefault();
+        cycleFam(-1);
+        break;
+      case "ArrowRight":
+        e.preventDefault();
+        cycleFam(1);
+        break;
       case "Enter":
       case " ":
         e.preventDefault();
@@ -817,7 +928,11 @@
   <div class="sp-content">
     <header class="sp-head">
       <h2 class="sp-title-h">{title}</h2>
-      <span class="sp-sub">Elige una fuente</span>
+      <span class="sp-sub">
+        {#if famFilter === "hardsub"}Enlace directo
+        {:else if famFilter === "torrent"}Torrents vía debrid
+        {:else}Elige una fuente{/if}
+      </span>
     </header>
 
     {#if playing}
@@ -881,8 +996,21 @@
         <p class="sp-error">{error}</p>
       {/if}
 
+      {#if showTabs}
+        <div class="sp-tabs">
+          {#each TABS as t}
+            <button
+              class="sp-tab"
+              class:on={famFilter === t.id}
+              onclick={() => setFam(t.id)}
+            >{t.label} <span class="sp-tab-n">{tabCount(t.id)}</span></button>
+          {/each}
+          <span class="sp-tab-hint">← → cambia</span>
+        </div>
+      {/if}
+
       <div class="sp-list">
-        {#each sources as s, i (s.info_hash || i)}
+        {#each view as s, i (s.info_hash || s.url || i)}
           <button
             data-nav
             class="sp-row"
@@ -896,6 +1024,7 @@
               <div class="sp-chips">
                 {#if prefScore(s)}<span class="sp-pref">★ Preferida</span>{/if}
                 {#if s.rd_cached}<span class="sp-cached">⚡ Instantáneo</span>{/if}
+                {#if s.hardsub}<span class="sp-hardsub">{HARDSUB_LABEL[s.hardsub] || "🔗 Enlace directo"}</span>{/if}
                 {#if s._es === "audio"}<span class="sp-es-ok">🗣 Audio ES ✓</span>
                 {:else if s._es === "subs"}<span class="sp-es-ok">💬 Subs ES ✓</span>
                 {:else if s._es === "none"}<span class="sp-es-no">Sin español</span>{/if}
@@ -1112,6 +1241,47 @@
     color: #ffd76b;
     background: #2e2410;
     border: 1px solid #5a4520;
+    padding: 2px 7px;
+    border-radius: 5px;
+  }
+  .sp-tabs {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
+  .sp-tab {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #c0c0c8;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    padding: 5px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  .sp-tab.on {
+    color: #0d1b12;
+    background: #8ce0a6;
+    border-color: #8ce0a6;
+  }
+  .sp-tab-n {
+    opacity: 0.65;
+    font-weight: 700;
+    margin-left: 2px;
+  }
+  .sp-tab-hint {
+    font-size: 11px;
+    color: #7a7a85;
+    margin-left: auto;
+  }
+  .sp-hardsub {
+    font-size: 10.5px;
+    font-weight: 700;
+    color: #b6f0c2;
+    background: #12301b;
+    border: 1px solid #2c5a38;
     padding: 2px 7px;
     border-radius: 5px;
   }

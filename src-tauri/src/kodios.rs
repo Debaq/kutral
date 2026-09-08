@@ -58,6 +58,11 @@ pub struct Source {
     pub seeders: Option<u32>,
     pub quality: Quality,
     pub rd_cached: Option<bool>,
+    /// Subtítulo QUEMADO en el video (fuentes web tipo jkanime): "lat" latino,
+    /// "cast" castellano, "en" inglés. None = torrent normal, donde el idioma
+    /// depende de las pistas del archivo. El picker lo usa para ordenar según
+    /// el idioma de la app y para saltarse la búsqueda de subtítulos externos.
+    pub hardsub: Option<String>,
 }
 
 fn http() -> Result<reqwest::Client, String> {
@@ -83,13 +88,23 @@ pub async fn kodios_search(
     season: Option<u32>,
     episode: Option<u32>,
     title: Option<String>,
+    original_title: Option<String>,
     kitsu_id: Option<u64>,
 ) -> Result<Vec<Source>, String> {
     let imdb_ok = imdb_id.starts_with("tt");
     if !imdb_ok && !(kind == "anime" && (kitsu_id.is_some() || title.is_some())) {
         return Err("imdb_id inválido (esperado ttXXXXXXX)".into());
     }
-    Ok(aggregate(imdb_id, kind, season, episode, title.unwrap_or_default(), kitsu_id).await)
+    Ok(aggregate(
+        imdb_id,
+        kind,
+        season,
+        episode,
+        title.unwrap_or_default(),
+        original_title.unwrap_or_default(),
+        kitsu_id,
+    )
+    .await)
 }
 
 async fn aggregate(
@@ -98,6 +113,7 @@ async fn aggregate(
     season: Option<u32>,
     episode: Option<u32>,
     title: String,
+    original_title: String,
     kitsu_id: Option<u64>,
 ) -> Vec<Source> {
     eprintln!("[kodios] search imdb={imdb} kind={kind} s={season:?} e={episode:?} kitsu={kitsu_id:?}");
@@ -138,6 +154,18 @@ async fn aggregate(
                 tasks.push(tokio::spawn(async move { animetosho_search(&t, episode).await }));
                 let t = title.clone();
                 tasks.push(tokio::spawn(async move { nyaa_search(&t, episode).await }));
+            }
+            // jkanime: HLS con sub español QUEMADO. Va con el romaji PRIMERO
+            // porque el sitio no indexa títulos en inglés ("Sousou no Frieren"
+            // sí, "Frieren: Beyond Journey's End" no).
+            let titles: Vec<String> = [original_title.clone(), title.clone()]
+                .into_iter()
+                .filter(|t| !t.trim().is_empty())
+                .collect();
+            if !titles.is_empty() {
+                tasks.push(tokio::spawn(async move {
+                    crate::anime_web::jkanime_search(&titles, episode).await
+                }));
             }
         }
         _ => {}
@@ -289,6 +317,7 @@ async fn stremio_search(
             size_bytes,
             seeders,
             rd_cached: if pre { Some(true) } else { None },
+            hardsub: None,
         });
     }
     Ok(out)
@@ -372,6 +401,7 @@ async fn torrentio_kitsu_search(kitsu_id: u64, episode: Option<u32>) -> Result<V
             size_bytes,
             seeders,
             rd_cached: None,
+            hardsub: None,
         });
     }
     Ok(out)
@@ -449,6 +479,7 @@ async fn yts_search(imdb: &str) -> Result<Vec<Source>, String> {
                 size_bytes: if t.size_bytes > 0 { Some(t.size_bytes) } else { None },
                 seeders: Some(t.seeds),
                 rd_cached: None,
+                hardsub: None,
                 title: name,
             });
         }
@@ -521,6 +552,7 @@ async fn eztv_search(
             size_bytes: t.size_bytes.parse::<u64>().ok().filter(|n| *n > 0),
             seeders: Some(t.seeds),
             rd_cached: None,
+            hardsub: None,
             title: t.title,
         });
     }
@@ -575,6 +607,7 @@ async fn animetosho_search(title: &str, episode: Option<u32>) -> Result<Vec<Sour
             size_bytes: tosho_num(&it["total_size"]).filter(|n| *n > 0),
             seeders: tosho_num(&it["seeders"]).map(|n| n as u32),
             rd_cached: None,
+            hardsub: None,
             title: name,
         });
     }
@@ -624,6 +657,7 @@ async fn nyaa_search(title: &str, episode: Option<u32>) -> Result<Vec<Source>, S
             size_bytes: size,
             seeders,
             rd_cached: None,
+            hardsub: None,
             title,
         });
     }
@@ -721,4 +755,36 @@ fn build_magnet(hash: &str, name: &str, trackers: Option<&[String]>) -> String {
         }
     }
     m
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Humo del agregador anime contra las fuentes REALES. Ignorado por
+    /// defecto (depende de la red). Verifica que jkanime sobreviva al deadline
+    /// por fuente y al merge, y que llegue con URL directa + hardsub:
+    ///   cargo test --lib aggregate_anime_e2e -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore]
+    async fn aggregate_anime_e2e() {
+        let out = aggregate(
+            String::new(),
+            "anime".into(),
+            None,
+            Some(1),
+            "Frieren: Beyond Journey's End".into(),
+            "Sousou no Frieren".into(),
+            None,
+        )
+        .await;
+        println!("total fuentes: {}", out.len());
+        let jk: Vec<_> = out.iter().filter(|s| s.source == "jkanime").collect();
+        for s in &jk {
+            println!("  {} hardsub={:?} url={:?}", s.title, s.hardsub, s.url);
+        }
+        assert!(!jk.is_empty(), "jkanime no llegó al agregado");
+        assert!(jk[0].url.as_deref().unwrap_or("").contains(".m3u8"));
+        assert_eq!(jk[0].hardsub.as_deref(), Some("lat"));
+    }
 }

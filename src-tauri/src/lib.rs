@@ -1,11 +1,13 @@
 use serde::{Deserialize, Serialize};
 
 mod anilist;
+mod anime_web;
 mod awards;
 mod creds;
 mod emu;
 mod kitsu;
 mod kodios;
+mod net;
 mod opensubtitles;
 mod probe;
 mod rd;
@@ -2954,6 +2956,7 @@ pub fn run() {
             anilist::anizip_episodes,
             probe::ffprobe_tracks,
             rd::rd_resolve,
+            rd::rd_unrestrict,
             rd::rd_instant_available,
             rd::rd_refresh,
             rd::rd_account,

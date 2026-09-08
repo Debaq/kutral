@@ -2077,6 +2077,7 @@
     season={sourcesSeason}
     episode={sourcesEpisode}
     title={selected.title}
+    originalTitle={selected.original_title ?? null}
     backdrop={selected.backdrop_path ? art(selected.backdrop_path, "w1280", 1280) : null}
     kitsuId={selected.kitsu_id ?? null}
     rdLinked={config.rdLinked}
