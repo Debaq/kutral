@@ -15,6 +15,15 @@
   import { ANIME_GENRES, ANILIST_SORTS, anilistGenresCSV, animeSeasonOptions } from "$lib/anime";
   import RemoteQr from "$lib/RemoteQr.svelte";
   import {
+    guardarCatalogo,
+    leerCatalogo,
+    guardarFiltros,
+    leerFiltros,
+    guardarPrimeraPagina,
+    leerPrimeraPagina,
+  } from "$lib/catalogo";
+  import { leerImgCache, guardarImgCache } from "$lib/imgcache";
+  import {
     cargarNoDisponiblesIniciales,
     pausarScreening,
     suscribirScreening,
@@ -175,9 +184,22 @@
 
   const IMG = "https://image.tmdb.org/t/p";
 
-  // Cache local WebP — guarda URL→file path una vez bajado
-  let cachedImgs = $state<Map<string, string>>(new Map());
+  // Cache local WebP — guarda URL→file path una vez bajado.
+  // Se hidrata de localStorage: sin esto, cada arranque pintaba primero desde
+  // image.tmdb.org y recién después cambiaba al archivo del disco, aunque el
+  // archivo ya estuviera ahí. Guardamos el path crudo y convertimos al leer.
+  let cachedImgs = $state<Map<string, string>>(new Map(leerImgCache()));
   const cacheInflight = new Set<string>();
+  let imgPersistTimer: ReturnType<typeof setTimeout> | null = null;
+  // Escribir en cada póster bajado sería un JSON.stringify por imagen: se
+  // agenda una sola pasada cuando la ráfaga termina.
+  function persistirImgCache() {
+    if (imgPersistTimer) clearTimeout(imgPersistTimer);
+    imgPersistTimer = setTimeout(() => {
+      imgPersistTimer = null;
+      guardarImgCache(Array.from(cachedImgs));
+    }, 1500);
+  }
   async function ensureCached(url: string, maxW: number) {
     const key = `${url}::${maxW}`;
     if (cachedImgs.has(key) || cacheInflight.has(key)) return;
@@ -185,8 +207,9 @@
     try {
       const path = await invoke<string>("cache_image", { url, maxW });
       const m = new Map(cachedImgs);
-      m.set(key, convertFileSrc(path));
+      m.set(key, path);
       cachedImgs = m;
+      persistirImgCache();
     } catch (e) {
       // Si falla, dejamos URL original
     } finally {
@@ -197,9 +220,24 @@
     if (!url) return "";
     const key = `${url}::${maxW}`;
     const cached = cachedImgs.get(key);
-    if (cached) return cached;
+    if (cached) return convertFileSrc(cached);
     ensureCached(url, maxW);
     return url;
+  }
+  // El archivo cacheado puede no estar (limpieza del sistema, borrado manual).
+  // Sacamos la entrada y el re-render vuelve solo a la URL remota, que a su vez
+  // dispara ensureCached de nuevo.
+  function onImgError(e: Event) {
+    const src = (e.currentTarget as HTMLImageElement | null)?.src;
+    if (!src || !src.includes("asset")) return;
+    for (const [k, path] of cachedImgs) {
+      if (convertFileSrc(path) !== src) continue;
+      const m = new Map(cachedImgs);
+      m.delete(k);
+      cachedImgs = m;
+      persistirImgCache();
+      return;
+    }
   }
   // Como img() pero acepta fragmento TMDb ("/abc.jpg") O URL completa:
   // AniList/ani.zip mandan https://… directo, sin base TMDb.
@@ -253,6 +291,16 @@
   let gridEl: HTMLDivElement | null = $state(null);
   let gridCols = $state(6);
   let gridResizeObs: ResizeObserver | null = null;
+  // Contenedor con el scroll real del grid. Lo necesitamos para guardar y
+  // restaurar la posición al salir/volver de la ruta.
+  let gridWrapEl: HTMLDivElement | null = $state(null);
+  // Scroll pendiente de restaurar tras volver de otra ruta (-1 = nada).
+  let scrollPendiente = -1;
+  // Último scroll conocido del grid. Plano (sin runa) a propósito: lo escribe
+  // el onscroll y no debe disparar re-renders. Hace falta porque <main> se
+  // desmonta entero al entrar al player/menú, y al volver el contenedor nace
+  // con scrollTop 0.
+  let scrollGrid = 0;
   function measureGridCols() {
     if (!gridEl) return;
     const tc = getComputedStyle(gridEl).gridTemplateColumns;
@@ -313,6 +361,29 @@
   let genres = $state<{ id: number; name: string }[]>([]);
   let selectedGenres = $state<Set<number>>(new Set());
 
+  // Filtros recordados entre sesiones, uno por tab.
+  //
+  // Validar al leer no es opcional: "trending" solo existe en anime, y las
+  // temporadas de anime se calculan a partir de la fecha de hoy, así que la que
+  // el user dejó guardada puede haber salido de la lista. Un valor inválido
+  // deja el desplegable mostrando algo que no está en sus opciones.
+  function aplicarFiltrosGuardados(t: Tab) {
+    const f = leerFiltros(t);
+    const opciones = t === "anime" ? [...SORTS, ...ANIME_SORTS] : SORTS;
+    sortId = f && opciones.some((o) => o.id === f.sortId) ? f.sortId : "popular";
+    seasonId =
+      t === "anime" && f && SEASON_OPTS.some((o) => o.id === f.seasonId) ? f.seasonId : "";
+    selectedGenres = new Set(f?.genres ?? []);
+  }
+
+  function persistirFiltros() {
+    guardarFiltros(tab, {
+      sortId,
+      seasonId,
+      genres: Array.from(selectedGenres),
+    });
+  }
+
   let items = $state<ListItem[]>([]);
   let focusedIdx = $state(0);
   let cardEls: (HTMLButtonElement | null)[] = $state([]);
@@ -320,15 +391,54 @@
   let listError = $state("");
   let initialFocusPending = $state(true);
 
+  // Card real más cercana a idx. Los títulos con status "none" no se
+  // renderizan, así que cardEls tiene huecos: buscamos hacia afuera antes de
+  // caer en la primera.
+  function cardCercana(idx: number): HTMLButtonElement | null {
+    if (cardEls[idx]) return cardEls[idx];
+    for (let d = 1; d < cardEls.length; d++) {
+      const a = cardEls[idx - d];
+      if (a) return a;
+      const b = cardEls[idx + d];
+      if (b) return b;
+    }
+    return null;
+  }
+
+  // Devuelve el foco a la card donde estaba el user. Se llama al cerrar
+  // cualquier overlay (player, menú, persona, carrusel): sin esto el foco cae
+  // en body, se dispara el focus-guard y el catálogo saltaba a la primera card.
+  function volverAlGrid() {
+    const el = cardCercana(focusedIdx);
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    // preventScroll + scrollTop guardado: la vista queda idéntica a como se
+    // dejó. Si no hay scroll guardado, basta con asegurar que la card se vea.
+    if (gridWrapEl && scrollGrid > 0) gridWrapEl.scrollTop = scrollGrid;
+    else el.scrollIntoView({ block: "nearest", behavior: "auto" });
+  }
+
   $effect(() => {
     if (!initialFocusPending) return;
     if (listLoading) return;
     if (showKey) return;
-    const el = cardEls[0];
+    // Al volver de otra ruta queremos la card donde estábamos, no la primera.
+    // Si esa card todavía no montó, esperamos al próximo flush.
+    const idx = focusedIdx;
+    const el = cardCercana(idx);
     if (!el) return;
     initialFocusPending = false;
-    el.focus({ preventScroll: false });
-    focusedIdx = 0;
+    if (scrollPendiente >= 0) {
+      // Restaurar scroll ANTES de que el foco lo mueva: preventScroll evita
+      // que el navegador reposicione y el scrollTop guardado manda.
+      el.focus({ preventScroll: true });
+      const top = scrollPendiente;
+      scrollPendiente = -1;
+      if (gridWrapEl) gridWrapEl.scrollTop = top;
+    } else {
+      el.focus({ preventScroll: false });
+      focusedIdx = idx;
+    }
   });
 
   $effect(() => {
@@ -385,6 +495,28 @@
   let awardsQueue: string[] = [];
   let awardsActive = 0;
   const AWARDS_CONCURRENCY = 3;
+
+  // Una sola píldora: "🏆 3 · 5 nom.". Dos emojis de medalla apilados eran
+  // indistinguibles a 10px en la esquina del póster — y el title= es tooltip
+  // de mouse, que en la tele no existe. Sin premios ganados no va el trofeo:
+  // mentiría. La palabra "nom." es lo que desambigua.
+  function awardsLabel(aw: AwardsSummary): string {
+    const partes: string[] = [];
+    if (aw.wins > 0) partes.push(`🏆 ${aw.wins}`);
+    if (aw.nominations > 0) partes.push(`${aw.nominations} nom.`);
+    return partes.join(" · ");
+  }
+
+  function awardsTitle(aw: AwardsSummary): string {
+    const partes: string[] = [];
+    if (aw.wins > 0) partes.push(`${aw.wins} ${aw.wins === 1 ? "premio" : "premios"}`);
+    if (aw.nominations > 0) {
+      partes.push(
+        `${aw.nominations} ${aw.nominations === 1 ? "nominación" : "nominaciones"}`,
+      );
+    }
+    return partes.join(" · ");
+  }
 
   function enqueueAwards(imdb: string) {
     if (!imdb || awardsMap.has(imdb)) return;
@@ -472,6 +604,48 @@
       showKey = !k0;
     }
 
+    // Volver de otra ruta (/config, /vera, /juegos, /iptv) remonta esta página.
+    // Si hay snapshot, restauramos el catálogo tal cual estaba en vez de
+    // recargarlo desde la página 1. Sync y antes de cualquier await: el
+    // afterNavigate del handoff de Vera puede correr entremedio.
+    const snap = leerCatalogo(apiKey);
+    if (snap) {
+      tab = snap.tab;
+      query = snap.query;
+      debouncedQ = snap.debouncedQ;
+      page = snap.page;
+      totalPages = snap.totalPages;
+      hasMore = snap.hasMore;
+      sortId = snap.sortId;
+      seasonId = snap.seasonId;
+      genres = snap.genres;
+      selectedGenres = new Set(snap.selectedGenres);
+      items = snap.items;
+      cardEls = new Array(snap.items.length).fill(null);
+      statusMap = new Map(snap.statusMap);
+      imdbIdMap = new Map(snap.imdbIdMap);
+      seasonsMap = new Map(snap.seasonsMap);
+      awardsMap = new Map(snap.awardsMap);
+      focusedIdx = Math.min(Math.max(snap.focusedIdx, 0), snap.items.length - 1);
+      scrollPendiente = snap.scrollTop;
+      scrollGrid = snap.scrollTop;
+      listLoading = false;
+      initialFocusPending = true;
+    } else {
+      // Arranque real de la app: los filtros salen de localStorage.
+      aplicarFiltrosGuardados(tab);
+      // Y la página 1 que quedó de la última vez se pinta YA, sin esperar a la
+      // red. La carga de verdad corre abajo en silencio y reemplaza esto
+      // cuando llega (stale-while-revalidate).
+      const p1 = apiKey ? leerPrimeraPagina(firmaLista()) : null;
+      if (p1) {
+        items = p1;
+        cardEls = new Array(p1.length).fill(null);
+        listLoading = false;
+        initialFocusPending = true;
+      }
+    }
+
     // Registrar los atajos del home en la ayuda global.
     // Esc y Backspace en browse no hacen nada (ya estás en la raíz).
     // En discover/trailer: Esc o Backspace cierran y vuelven a browse.
@@ -496,9 +670,16 @@
 
     // apiKey ya fue leída sync al principio del onMount para evitar race
     // con afterNavigate. Acá solo cargamos lo demás.
-    if (apiKey) {
+    // Con snapshot restaurado no se recarga nada: items, géneros y estados de
+    // disponibilidad ya están en memoria.
+    if (apiKey && !snap) {
       loadGenres();
-      resetAndLoad();
+      // Si ya pintamos la página 1 guardada, la recarga va silenciosa: el user
+      // está viendo cards y no tiene por qué ver un estado de carga encima.
+      const silenciosa = items.length > 0;
+      page = 1;
+      hasMore = true;
+      void loadList(false, silenciosa);
     }
 
     // QR del mando remoto: refrescar estado del servidor cada 4s.
@@ -524,6 +705,18 @@
   // de cleanup en ese caso. El listener postMessage del iframe player
   // tiene que limpiarse cuando home desmonta.
   onDestroy(() => {
+    guardarSnapshotCatalogo();
+    // Volcar ya el cache de imágenes: si el debounce estaba pendiente, los
+    // pósters bajados en esta pantalla se perderían.
+    if (imgPersistTimer) {
+      clearTimeout(imgPersistTimer);
+      imgPersistTimer = null;
+      guardarImgCache(Array.from(cachedImgs));
+    }
+    if (calentarTimer) {
+      clearTimeout(calentarTimer);
+      calentarTimer = null;
+    }
     window.removeEventListener("message", onIframeMessage);
     if (webStatusTimer !== null) {
       clearInterval(webStatusTimer);
@@ -533,6 +726,37 @@
     gridResizeObs = null;
     document.removeEventListener("focusout", scheduleFocusGuard);
   });
+
+  // Congela el catálogo antes de desmontar (navegación a otra ruta) para que
+  // al volver el user caiga donde estaba: misma página, mismo scroll, misma
+  // card, y sin re-chequear disponibilidad ni premios.
+  //
+  // No guardamos los estados en vuelo ("checking" / "loading"): sus requests
+  // mueren con la página y al restaurar quedarían clavados para siempre.
+  function guardarSnapshotCatalogo() {
+    guardarCatalogo({
+      apiKey,
+      tab,
+      query,
+      debouncedQ,
+      page,
+      totalPages,
+      hasMore,
+      sortId,
+      seasonId,
+      genres,
+      selectedGenres: Array.from(selectedGenres),
+      items,
+      focusedIdx,
+      scrollTop: gridWrapEl?.scrollTop ?? scrollGrid,
+      statusMap: Array.from(statusMap).filter(([, v]) => v !== "checking"),
+      imdbIdMap: Array.from(imdbIdMap),
+      seasonsMap: Array.from(seasonsMap),
+      awardsMap: Array.from(awardsMap).filter(
+        (e): e is [string, AwardsSummary] => e[1] !== "loading",
+      ),
+    });
+  }
 
   // Reasegura foco en la primera card del catálogo cuando se pierde.
   // setTimeout(0) para leer activeElement DESPUÉS de que el navegador haya
@@ -553,11 +777,14 @@
       // Tampoco intervenir si está en un input no marcado data-nav.
       const tag = cur?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      // Estricto: SOLO la primera card real (a la derecha de Vera). Nada de
-      // tabs/búsqueda/info como fallback — esos roles confunden al user.
-      // Si aún no hay card montada, esperar (el $effect inicial la enfoca
-      // apenas se monte).
-      const target = cardEls.find((el) => el) ?? null;
+      // Estricto: SOLO una card del catálogo. Nada de tabs/búsqueda/info
+      // como fallback — esos roles confunden al user. Si aún no hay card
+      // montada, esperar (el $effect inicial la enfoca apenas se monte).
+      //
+      // Va a la ÚLTIMA card enfocada, no a la primera: el guard salta cada vez
+      // que se cierra un overlay, y mandar el foco a la card 0 rebobinaba el
+      // grid al principio y cambiaba el panel de info.
+      const target = cardCercana(focusedIdx);
       target?.focus({ preventScroll: true });
     }, 0);
   }
@@ -978,22 +1205,23 @@
     if (tab === t) return;
     tab = t;
     selected = null;
-    selectedGenres = new Set();
-    seasonId = "";
-    // "Tendencia" solo existe en anime; al salir, volver a un orden válido.
-    if (t !== "anime" && sortId === "trending") sortId = "popular";
+    // Cada tab recuerda sus propios filtros. La validación de aplicar…() se
+    // encarga de que "Tendencia" (solo anime) no se cuele en pelis/series.
+    aplicarFiltrosGuardados(t);
     statusMap = new Map();
     loadGenres();
-    resetAndLoad();
+    resetAndLoad(false);
   }
 
   function changeSort(id: string) {
     sortId = id;
+    persistirFiltros();
     resetAndLoad();
   }
 
   function changeSeason(id: string) {
     seasonId = id;
+    persistirFiltros();
     resetAndLoad();
   }
 
@@ -1001,21 +1229,33 @@
     const s = new Set(selectedGenres);
     if (s.has(id)) s.delete(id); else s.add(id);
     selectedGenres = s;
+    persistirFiltros();
     resetAndLoad();
   }
 
   function clearGenres() {
     if (selectedGenres.size === 0) return;
     selectedGenres = new Set();
+    persistirFiltros();
     resetAndLoad();
   }
 
-  function resetAndLoad() {
+  // `conservar`: deja las cards viejas puestas (atenuadas) hasta que lleguen
+  // las nuevas. Cambiar de orden o de género ya no vacía la pantalla.
+  //
+  // Al cambiar de TAB no se conserva: son de otro media_type y el observer de
+  // las cards viejas pediría su status contra el tipo equivocado.
+  function resetAndLoad(conservar = true) {
     page = 1;
-    items = [];
     hasMore = true;
     focusedIdx = 0;
-    cardEls = [];
+    if (!conservar) {
+      items = [];
+      cardEls = [];
+    }
+    // Lista nueva: el scroll y el foco guardados ya no aplican.
+    scrollGrid = 0;
+    scrollPendiente = -1;
     loadList(false);
   }
 
@@ -1064,10 +1304,29 @@
   // mostrando resultados de "batm" o de la lista anterior.
   let loadGen = 0;
 
-  async function loadList(append: boolean) {
+  // Firma de la consulta actual. Identifica qué lista es esta para no pintar
+  // la página 1 guardada bajo otros filtros.
+  function firmaLista(): string {
+    return [tab, sortId, seasonId, Array.from(selectedGenres).sort().join(",")].join("|");
+  }
+
+  // `silencioso`: recarga sin mostrar estado de carga. Lo usa la revalidación
+  // de la página 1 guardada — el user ya está viendo cards, avisarle que
+  // estamos recargando solo le sacaría la sensación de instantáneo.
+  // Hay una carga de lista base (no-append) en vuelo. `listLoading` no alcanza:
+  // la revalidación silenciosa no lo prende, y sin este flag el sentinel podía
+  // disparar la página 2 mientras la 1 venía en camino — la respuesta de la 1
+  // llegaba después y borraba lo apilado, dejando `page` adelantado.
+  let cargaBase = false;
+
+  async function loadList(append: boolean, silencioso = false) {
     if (!apiKey && tab !== "anime") return;
     const gen = ++loadGen;
-    if (append) loadingMore = true; else listLoading = true;
+    if (append) loadingMore = true;
+    else {
+      cargaBase = true;
+      if (!silencioso) listLoading = true;
+    }
     listError = "";
     try {
       const isSearch = !!debouncedQ;
@@ -1115,6 +1374,9 @@
       } else {
         items = newItems;
         cardEls = new Array(newItems.length).fill(null);
+        // Sin búsqueda y en la página 1: esto es lo que el user verá al abrir
+        // la app la próxima vez.
+        if (!isSearch && page === 1) guardarPrimeraPagina(firmaLista(), newItems);
       }
       // hasMore mira la página CRUDA, no la filtrada: una página que quedó
       // vacía por el filtro de póster no significa fin de lista.
@@ -1136,14 +1398,62 @@
       if (gen === loadGen) {
         listLoading = false;
         loadingMore = false;
+        if (!append) cargaBase = false;
+        // Colchón: apenas termina una lista nueva, la siguiente página se pide
+        // sola. Cuando el user llega al fondo ya está puesta.
+        if (!append && hasMore) setTimeout(() => void loadMore(), 0);
+        // Y en segundo plano se resuelve el status de las cards que todavía no
+        // se ven, para que bajar no dispare una ráfaga de peticiones.
+        calentarStatus();
       }
     }
   }
 
+  // Resuelve item_status de lo que aún no se ve, despacio y después de lo
+  // visible. Con el caché en disco esto se paga una sola vez por título.
+  let calentarTimer: ReturnType<typeof setTimeout> | null = null;
+  function calentarStatus() {
+    if (calentarTimer) clearTimeout(calentarTimer);
+    calentarTimer = setTimeout(() => {
+      calentarTimer = null;
+      // Anime va por AniList: no hay item_status que calentar.
+      if (tab === "anime") return;
+      const gen = loadGen;
+      // Tope: la lista puede tener cientos y no vale la pena adelantarlos todos.
+      const pendientes = items
+        .filter((it) => !statusMap.has(it.id))
+        .slice(0, 60)
+        .map((it) => it.id);
+      if (!pendientes.length) return;
+      let i = 0;
+      const obrero = async () => {
+        while (i < pendientes.length) {
+          // La lista cambió (otro tab, otro filtro): lo que queda ya no sirve
+          // y encima se consultaría con el media_type equivocado.
+          if (gen !== loadGen) return;
+          await checkItemStatus(pendientes[i++]);
+        }
+      };
+      // Concurrencia 2: TMDb tira 429 con una grilla entera en paralelo.
+      void Promise.all([obrero(), obrero()]);
+    }, 1200);
+  }
+
   async function loadMore() {
-    if (!hasMore || loadingMore || listLoading) return;
+    if (!hasMore || loadingMore || listLoading || cargaBase) return;
     page += 1;
     await loadList(true);
+  }
+
+  // Prefetch: pedir la página siguiente al pasar el 60% del scroll, en vez de
+  // esperar al sentinel del fondo. Cuando el user llega abajo las cards ya
+  // están puestas y no ve el hueco cargando.
+  function prefetchSiCorresponde() {
+    const el = gridWrapEl;
+    if (!el || !hasMore || loadingMore || listLoading || cargaBase) return;
+    const recorrible = el.scrollHeight - el.clientHeight;
+    if (recorrible <= 0) return;
+    if (el.scrollTop / recorrible >= 0.6) void loadMore();
   }
 
   async function checkItemStatus(id: number) {
@@ -1229,7 +1539,7 @@
   async function openFilmographyItem(id: number, mediaType: string) {
     if (!apiKey) return;
     if (mediaType !== "movie" && mediaType !== "tv") return;
-    closePerson();
+    personOpen = null;
     try {
       const d = await invoke<Detail>("tmdb_detail", { mediaType, id, apiKey });
       selected = d;
@@ -1260,6 +1570,7 @@
   }
   function closeCarousel() {
     carousel = null;
+    volverAlGrid();
   }
   function carouselGo(delta: number) {
     if (!carousel) return;
@@ -1269,6 +1580,7 @@
 
   function closePerson() {
     personOpen = null;
+    volverAlGrid();
   }
 
   function autofocusFirst(node: HTMLElement) {
@@ -1732,7 +2044,10 @@
     setFs(false);
     void unregisterBackShortcuts();
     setTimeout(() => {
-      document.querySelector<HTMLElement>('[data-section="info"] [data-nav]')?.focus();
+      const info = document.querySelector<HTMLElement>('[data-section="info"] [data-nav]');
+      // Sin panel de info (o vacío) el foco caería en body y el focus-guard
+      // rebobinaría el grid: mejor volver directo a la card.
+      if (info) info.focus(); else volverAlGrid();
     }, 50);
   }
 
@@ -1767,6 +2082,7 @@
     const wasDiscover = mode === "discover";
     if (mode === "unavailable") {
       mode = "browse";
+      setTimeout(volverAlGrid, 50);
       return;
     }
     if (mode !== "discover" && mode !== "trailer") return;
@@ -1789,6 +2105,9 @@
     discoverSrc = "";
     setFs(false);
     unregisterBackShortcuts();
+    // El grid recién existe otra vez tras este cambio de modo: esperamos al
+    // render antes de devolver el foco.
+    setTimeout(volverAlGrid, 50);
   }
 
   let trailerMsg = $state("");
@@ -2018,7 +2337,7 @@
   <div class="unavail-screen">
     <div class="unavail-card">
       {#if selected.poster_path}
-        <img class="unavail-poster" src={art(selected.poster_path, "w342", 342)} alt="" />
+        <img class="unavail-poster" src={art(selected.poster_path, "w342", 342)} alt="" onerror={onImgError} />
       {/if}
       <h2>Lo sentimos muchísimo</h2>
       <p>
@@ -2033,6 +2352,7 @@
             if (selected?.imdb_id) {
               await clearUnavailable(selected.imdb_id);
               mode = "browse";
+              setTimeout(volverAlGrid, 50);
             }
           }}>
             Marcar disponible
@@ -2158,7 +2478,7 @@
           {/if}
           {#if selected.poster_path}
             <div class="poster-wrap">
-              <img class="poster" src={art(selected.poster_path, "w342", 342)} alt="" />
+              <img class="poster" src={art(selected.poster_path, "w342", 342)} alt="" onerror={onImgError} />
               {#if !selected.imdb_id}
                 <span class="poster-stamp">NO DISPONIBLE</span>
               {/if}
@@ -2251,7 +2571,7 @@
                 {#each selected.directors as p}
                   <button data-nav class="person-chip" onclick={() => openPerson(p.id)} title={p.name}>
                     {#if p.profile_path}
-                      <img src={art(p.profile_path, "w185", 185)} alt={p.name} loading="lazy" />
+                      <img src={art(p.profile_path, "w185", 185)} alt={p.name} loading="lazy" onerror={onImgError} />
                     {:else}
                       <div class="person-noimg">{p.name.charAt(0)}</div>
                     {/if}
@@ -2268,7 +2588,7 @@
                 {#each selected.cast as p}
                   <button data-nav class="person-chip" onclick={() => openPerson(p.id)} title={p.name}>
                     {#if p.profile_path}
-                      <img src={art(p.profile_path, "w185", 185)} alt={p.name} loading="lazy" />
+                      <img src={art(p.profile_path, "w185", 185)} alt={p.name} loading="lazy" onerror={onImgError} />
                     {:else}
                       <div class="person-noimg">{p.name.charAt(0)}</div>
                     {/if}
@@ -2333,7 +2653,7 @@
                   title={ep.name}
                 >
                   {#if ep.still_path}
-                    <img src={art(ep.still_path, "w300", 300)} alt={ep.name} loading="lazy" />
+                    <img src={art(ep.still_path, "w300", 300)} alt={ep.name} loading="lazy" onerror={onImgError} />
                   {:else}
                     <div class="no-poster ep-noimg">E{ep.episode_number}</div>
                   {/if}
@@ -2463,10 +2783,22 @@
 
       {#if listError}<p class="err">{listError}</p>{/if}
 
-      {#if listLoading}
+      {#if listLoading && !items.length}
         <div class="empty">Cargando…</div>
       {:else}
-        <div class="grid-wrap">
+        <!-- Con cards ya puestas no se vacía la pantalla: se atenúan hasta que
+             llega la lista nueva. El "Cargando…" queda para la primera vez,
+             cuando no hay nada que atenuar. -->
+        <div
+          class="grid-wrap"
+          class:cargando={listLoading}
+          bind:this={gridWrapEl}
+          onscroll={() => {
+            if (!gridWrapEl) return;
+            scrollGrid = gridWrapEl.scrollTop;
+            prefetchSiCorresponde();
+          }}
+        >
           <div class="grid" data-section="gallery" bind:this={gridEl}>
             <a class="card vera-card" data-nav href="/vera" title="Pregúntale a Vera">
               <div class="vera-poster">
@@ -2563,7 +2895,7 @@
                   onfocus={() => { focusedIdx = i; triggerAutoPick(i); }}
                 >
                   {#if it.poster_path}
-                    <img src={art(it.poster_path, "w342", 342)} alt={title} loading="lazy" />
+                    <img src={art(it.poster_path, "w342", 342)} alt={title} loading="lazy" onerror={onImgError} />
                   {:else}
                     <div class="no-poster">sin poster</div>
                   {/if}
@@ -2582,16 +2914,12 @@
                     {@const aw = awardsMap.get(itImdb)}
                     {#if aw && aw !== "loading" && (aw.wins > 0 || aw.nominations > 0)}
                       <div class="card-awards">
-                        {#if aw.wins > 0}
-                          <span class="award-pill win" title="{aw.wins} premios"
-                            >🏆 {aw.wins}</span
-                          >
-                        {/if}
-                        {#if aw.nominations > 0}
-                          <span class="award-pill nom" title="{aw.nominations} nominaciones"
-                            >🏅 {aw.nominations}</span
-                          >
-                        {/if}
+                        <span
+                          class="award-pill"
+                          class:win={aw.wins > 0}
+                          title={awardsTitle(aw)}
+                          aria-label={awardsTitle(aw)}>{awardsLabel(aw)}</span
+                        >
                       </div>
                     {/if}
                   {/if}
@@ -2649,7 +2977,7 @@
         {:else if personOpen}
           <div class="person-head">
             {#if personOpen.profile_path}
-              <img class="person-photo" src={img(`${IMG}/w300${personOpen.profile_path}`, 300)} alt={personOpen.name} />
+              <img class="person-photo" src={img(`${IMG}/w300${personOpen.profile_path}`, 300)} alt={personOpen.name} onerror={onImgError} />
             {:else}
               <div class="person-photo person-photo-empty">{personOpen.name.charAt(0)}</div>
             {/if}
@@ -2684,7 +3012,7 @@
                 >
                   <div class="film-poster-wrap">
                     {#if f.poster_path}
-                      <img src={img(`${IMG}/w185${f.poster_path}`, 185)} alt={f.title} loading="lazy" />
+                      <img src={img(`${IMG}/w185${f.poster_path}`, 185)} alt={f.title} loading="lazy" onerror={onImgError} />
                     {:else}
                       <div class="film-noposter">sin poster</div>
                     {/if}
@@ -2719,6 +3047,7 @@
           class="carousel-img"
           src={img(`${IMG}/original${carousel.images[carousel.idx]}`, 1280)}
           alt={`Escena ${carousel.idx + 1}`}
+          onerror={onImgError}
         />
       </div>
       <button class="carousel-arrow right" onclick={(e) => { e.stopPropagation(); carouselGo(1); }} aria-label="Siguiente">›</button>
@@ -3228,6 +3557,13 @@
     display: flex; flex-direction: column;
     position: relative;
   }
+  /* Lista vieja mientras carga la nueva: se ve que algo está pasando sin
+     perder la estructura de la pantalla. */
+  .grid-wrap.cargando .grid {
+    opacity: 0.42;
+    transition: opacity 0.18s ease;
+    pointer-events: none;
+  }
   /* Ghost cards = placeholders del slot de la próxima card mientras carga. */
   .ghost-card {
     aspect-ratio: 2 / 3;
@@ -3571,14 +3907,18 @@
     top: 8px;
     left: 8px;
     display: flex;
-    flex-direction: column;
-    gap: 4px;
     z-index: 2;
     pointer-events: none;
+    /* Deja aire a la derecha: la píldora no debe pisar el borde del póster. */
+    max-width: calc(100% - 16px);
   }
   .award-pill {
     background: rgba(0, 0, 0, 0.72);
-    color: #fff;
+    /* Gris por defecto = solo nominaciones. El dorado lo pone .win. */
+    color: #d8d8d8;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     font-size: 10px;
     font-weight: 700;
     padding: 2px 7px;
@@ -3593,9 +3933,6 @@
   .award-pill.win {
     color: #ffd76a;
     text-shadow: 0 0 6px rgba(255, 215, 0, 0.5);
-  }
-  .award-pill.nom {
-    color: #d8d8d8;
   }
   .card img, .no-poster { width: 100%; aspect-ratio: 2/3; object-fit: cover; background: #222; }
   .no-poster { display: flex; align-items: center; justify-content: center; color: #555; font-size: 13px; }
