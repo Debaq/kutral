@@ -77,5 +77,12 @@ else
   rm /tmp/uosc.zip
 fi
 
+# Cortar acá y no en la máquina del usuario. mpv.conf apaga el OSC y la osd-bar
+# nativos porque uosc los reemplaza: si uosc falta, el build sale sin controles
+# de reproductor y nadie se entera hasta que lo abre alguien más.
+for req in mpv-config/scripts/uosc mpv-config/fonts/uosc_icons.otf; do
+  [ -e "$req" ] || { echo "falta $req: el build saldría sin UI de reproductor"; exit 1; }
+done
+
 echo ">> listo"
 ls -lh retroarch mpv yt-dlp cores/*.so
