@@ -18,8 +18,15 @@ use tauri::Manager;
 // subs de OpenSubtitles deshabilitados (el flujo cae a Wyzie si hay key).
 const OS_API_KEY: &str = "Ai2jXR6L9YnTmJ4rY9NEzQcwjxGJU6rf";
 const OS_BASE: &str = "https://api.opensubtitles.com/api/v1";
-// User-Agent obligatorio y único por app, formato "Nombre vX.Y".
-const OS_UA: &str = "kutral v26.5.3";
+// User-Agent obligatorio y único por app, formato "Nombre vX.Y". Se arma desde
+// la versión del crate a propósito: escrito a mano se quedó tres releases atrás
+// (v26.5.3 cuando la app iba en la 26.5.6) porque nadie se acuerda de tocarlo.
+//
+// Cambiarlo es seguro: /subtitles ni siquiera valida UA o Api-Key, y el que sí
+// autentica, POST /download, devuelve link con el UA nuevo (probado contra la
+// API real). Lo que OpenSubtitles pide es que identifique a la app, no que
+// coincida con una cadena congelada.
+const OS_UA: &str = concat!("kutral v", env!("CARGO_PKG_VERSION"));
 
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct OsCreds {
@@ -450,4 +457,17 @@ pub async fn os_download(app: tauri::AppHandle, file_id: i64) -> Result<OsSubtit
         lang: String::new(),
         remaining: d.remaining,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn el_user_agent_sigue_la_version_del_crate() {
+        assert_eq!(OS_UA, format!("kutral v{}", env!("CARGO_PKG_VERSION")));
+        // El formato que exige OpenSubtitles es "Nombre vX.Y".
+        assert!(OS_UA.starts_with("kutral v"));
+        assert!(OS_UA.len() > "kutral v".len(), "sin versión: {OS_UA}");
+    }
 }
