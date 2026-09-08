@@ -1,24 +1,25 @@
 // Tabla canónica de intenciones del usuario.
-// Cada intent mapea a un FiltrosDiscover concreto que arma el pool.
+// Cada intent mapea a un conjunto de géneros TMDb, y de ahí salen dos cosas:
+//   - los filtros de /discover que arman el pool (filtrosParaIntent)
+//   - el tono que el usuario pidió, que el motor respeta (idsDeIntent)
 // Mantiene la UI (orden, label, icono) en un solo lugar para no duplicar.
 
 import type { Intencion } from "./tipos";
 import type { FiltrosDiscover } from "./tmdb";
 
-// B6: variedad por aleatoriedad de page + sort_by.
-// Sin cache de pool, cada llamada arma filtros nuevos. Eso garantiza
-// que entrar a Vera dos veces seguidas con el mismo intent traiga
-// pelis distintas (no repetición).
+// Variedad por aleatoriedad de page + sort_by.
+// Sin cache de pool, cada llamada arma filtros nuevos. Eso garantiza que
+// entrar a Vera dos veces seguidas con el mismo intent traiga pelis distintas.
 //
-// PAGE_MAX 5: TMDb tiene cientos de páginas pero las primeras 5 cubren
-// el grueso de pelis con vote_count_gte 100+ (no caemos en obscuridad).
+// PAGE_MAX 5: TMDb tiene cientos de páginas pero las primeras 5 cubren el
+// grueso de pelis con vote_count_gte 100+ (no caemos en obscuridad).
 const PAGE_MAX = 5;
 function pageAleatoria(): number {
   return 1 + Math.floor(Math.random() * PAGE_MAX);
 }
 
-// Sorts disponibles. Distintos sort_by traen subconjuntos distintos del
-// mismo género, lo que multiplica la variedad.
+// Sorts disponibles. Distintos sort_by traen subconjuntos distintos del mismo
+// género, lo que multiplica la variedad.
 const SORTS_GENERICOS = [
   "popularity.desc",
   "vote_average.desc",
@@ -30,6 +31,25 @@ const SORTS_DENSO = [
 ] as const;
 function sortAleatorio<T extends readonly string[]>(opciones: T): T[number] {
   return opciones[Math.floor(Math.random() * opciones.length)];
+}
+
+// Géneros TMDb (ids) por intent. UNA sola definición: de acá salen tanto el
+// `with_genres` que se le manda a TMDb como el tono que el motor respeta.
+// Antes estaban duplicados en dos archivos y se podían desincronizar.
+//
+// "liviano" está recortado a Comedia/Animación/Familia — los que son livianos
+// por sí solos. Aventura y Romance sueltos abren la puerta a lo denso.
+const GENEROS_DE_INTENT: Record<Intencion, string[]> = {
+  liviano: ["35", "16", "10751"],
+  denso: ["18", "99", "36", "9648"],
+  adrenalina: ["28", "53", "27", "878", "10752"],
+  sorpresa: [],
+};
+
+// Ids de género que representa un intent. Vacío para "sorpresa" = sin
+// restricción (ni de género ni de tono).
+export function idsDeIntent(intent: Intencion): Set<string> {
+  return new Set(GENEROS_DE_INTENT[intent]);
 }
 
 export interface OpcionIntencion {
@@ -62,47 +82,25 @@ export const INTENCIONES: OpcionIntencion[] = [
     id: "sorpresa",
     label: "Sorpresa",
     icono: "🎲",
-    desc: "Tirá lo que quieras",
+    desc: "Tira lo que quieras",
   },
 ];
 
 // Resuelve los filtros de discover para un intent dado.
-// B6: cada llamada produce filtros con page y sort_by random — sin cache,
-// cada entrada a Vera trae pool fresco. Llamar UNA sola vez al confirmar
-// el intent (no recalcular en cada render, los random cambiarían).
+// Cada llamada produce filtros con page y sort_by random — sin cache, cada
+// entrada a Vera trae pool fresco. Llamar UNA sola vez al confirmar el intent
+// (no recalcular en cada render: los random cambiarían).
 //
 // Separador de géneros: PIPE "|" = OR en TMDb.
 export function filtrosParaIntent(intent: Intencion): FiltrosDiscover {
-  switch (intent) {
-    case "liviano":
-      // Géneros recortados a Comedia/Animación/Familia (los que son
-      // livianos por sí solos, sin combinación). Aventura y Romance
-      // sueltos abren puerta a denso por accidente.
-      return {
-        with_genres: "35|16|10751",
-        sort_by: sortAleatorio(SORTS_GENERICOS),
-        vote_count_gte: 100,
-        page: pageAleatoria(),
-      };
-    case "denso":
-      return {
-        with_genres: "18|99|36|9648",
-        sort_by: sortAleatorio(SORTS_DENSO),
-        vote_count_gte: 200,
-        page: pageAleatoria(),
-      };
-    case "adrenalina":
-      return {
-        with_genres: "28|53|27|878|10752",
-        sort_by: sortAleatorio(SORTS_GENERICOS),
-        vote_count_gte: 100,
-        page: pageAleatoria(),
-      };
-    case "sorpresa":
-      return {
-        sort_by: sortAleatorio(SORTS_GENERICOS),
-        vote_count_gte: 100,
-        page: pageAleatoria(),
-      };
-  }
+  const generos = GENEROS_DE_INTENT[intent];
+  const base: FiltrosDiscover = {
+    sort_by: sortAleatorio(
+      intent === "denso" ? SORTS_DENSO : SORTS_GENERICOS,
+    ),
+    vote_count_gte: intent === "denso" ? 200 : 100,
+    page: pageAleatoria(),
+  };
+  if (generos.length > 0) base.with_genres = generos.join("|");
+  return base;
 }

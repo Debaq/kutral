@@ -1,14 +1,16 @@
 // Señales del usuario para alimentar el motor de recomendación.
-// Fusiona dos fuentes:
-//   1. localStorage `vera_reacciones_v2` (lo que Vera registra en flujo B5)
-//   2. SQLite `watch_history`           (lo que la home escribe al reproducir)
+// Fusiona tres fuentes:
+//   1. localStorage `vera_reacciones_v2` (lo que Vera registra al calificar)
+//   2. SQLite `watch_history`            (lo que la home escribe al reproducir)
+//   3. SQLite `vera_weights`             (memoria larga, ver aprendizaje.ts)
 //
 // Solo lectura. Solo media_type='movie' (las series quedan fuera de Vera).
-// Handle SQLite propio cacheado — no compartido con la home, para no acoplar.
 // Si la DB no se puede abrir (no-Tauri, permisos), degrada a solo reacciones.
 
-import Database from "@tauri-apps/plugin-sql";
+import { getDb } from "./db";
 import { getReaccionesMap, type ReaccionGuardada } from "./ratings";
+import { getPesosAprendidos, familiaDeTag, pesoDeFamilia } from "./aprendizaje";
+import { generoPorSlug } from "./generos";
 import type { PerfilHistorico } from "./tipos";
 
 // =============================================================================
@@ -26,7 +28,7 @@ import type { PerfilHistorico } from "./tipos";
 // Si juicio === 0 (vista pero "ni fu ni fa"), el peso es 0 — no aporta señal
 // pero tampoco se cae al interes previo. La decisión de marcar visto borra
 // la intuición.
-function pesoReaccionPersistida(r: ReaccionGuardada): number {
+export function pesoReaccionPersistida(r: ReaccionGuardada): number {
   if (r.juicio !== null) {
     return r.juicio; // -5..+5 directo (juicio manda)
   }
@@ -35,32 +37,14 @@ function pesoReaccionPersistida(r: ReaccionGuardada): number {
 //
 // =============================================================================
 
-// Singleton del handle de SQLite. Si el primer intento falla, no reintenta:
-// la mayoría de las fallas (no-Tauri, permisos) son permanentes en la sesión.
-let dbCache: Database | null = null;
-let dbAttempted = false;
-
-async function getDb(): Promise<Database | null> {
-  if (dbCache) return dbCache;
-  if (dbAttempted) return null;
-  dbAttempted = true;
-  try {
-    dbCache = await Database.load("sqlite:kutral.db");
-    return dbCache;
-  } catch (e) {
-    console.warn("[vera/historial] DB no disponible:", e);
-    return null;
-  }
-}
-
 interface WatchRow {
   tmdb_id: number;
 }
 
 // Todas las pelis que el usuario ya vio.
 // "Visto" =  vera_reacciones_v2[id].juicio !== null  OR  watch_history.completed = 1
-// En B5 NO se usa para excluir del pool — las vistas aparecen con badge.
-// Se mantiene por si futuros consumidores quieren la lista.
+// NO se usa para excluir del pool — las vistas aparecen con badge y penalizadas
+// en el score (ver motor.ts). Sí se usa para ese cálculo y para las semillas.
 export async function getVistas(): Promise<string[]> {
   const vistas = new Set<string>();
 
@@ -180,19 +164,11 @@ function leerGenerosCache(): Record<string, string[]> {
 // =============================================================================
 //
 // Perfil histórico del usuario para el motor.
-// Fuentes:
-//   1. vera_reacciones_v2 (reacciones explícitas de Vera).
-//   2. watch_history (visto en la home sin reacción en Vera).
-// Cruza con vera_generos_cache para obtener géneros sin pegarle a TMDb.
-//
-// Pelis no cacheadas (vistas solo en la home, nunca por Vera) se saltean.
-// Entran al perfil naturalmente cuando aparezcan en un pool y pasen por
-// mapear(). NO llamamos tmdb_detail explícito acá.
-//
-// Pesos por fuente:
-//   reacciones con juicio → pesoReaccionPersistida(r) = juicio   ∈ [-5..+5]
-//   reacciones solo interes → pesoReaccionPersistida(r) = interes*0.6 ∈ [-3..+3]
-//   watch_history completed=1 SIN reacción → +0.5  (proxy MUY débil)
+// Fuentes y pesos:
+//   reacciones con juicio     → pesoReaccionPersistida(r) = juicio     ∈ [-5..+5]
+//   reacciones solo interes   → pesoReaccionPersistida(r) = interes*0.6 ∈ [-3..+3]
+//   watch_history completed=1 sin reacción → +0.5  (proxy MUY débil)
+//   vera_weights              → memoria larga, ya acumulada (aprendizaje.ts)
 //
 // Por qué +0.5 (y no +1): "terminó la peli" no es lo mismo que "le gustó".
 // Una peli se termina por inercia, costumbre, o simple curiosidad. Equiparar
@@ -202,24 +178,34 @@ function leerGenerosCache(): Record<string, string[]> {
 // IMPORTANTE: la decisión de "juicio manda sobre interes" vive en
 // pesoReaccionPersistida() arriba. Una peli con juicio=-4 e interes=+3
 // suma -4, NO -4+1.8. Si intuiste mal y la viste, gana la realidad.
+//
+// Los géneros salen de dos lados y NO se duplican: vera_generos_cache cubre
+// lo que Vera mostró alguna vez, vera_weights cubre todo lo demás (y sobrevive
+// a un borrado de localStorage). Se suman porque miden lo mismo en escalas
+// compatibles: ambas son acumulados de pesoReaccionPersistida.
 export async function getPerfilHistorico(): Promise<PerfilHistorico> {
   const generosPesos = new Map<string, number>();
+  const decadasPesos = new Map<string, number>();
+  const directoresPesos = new Map<string, number>();
+  const actoresPesos = new Map<string, number>();
   const cacheGen = leerGenerosCache();
+  let muestras = 0;
 
-  function sumar(generos: string[], peso: number): void {
-    for (const g of generos) {
-      generosPesos.set(g, (generosPesos.get(g) ?? 0) + peso);
-    }
+  function sumar(m: Map<string, number>, clave: string, peso: number): void {
+    m.set(clave, (m.get(clave) ?? 0) + peso);
   }
 
-  // 1) Reacciones persistidas.
+  // 1) Reacciones persistidas (géneros vía cache local).
   const reacciones = getReaccionesMap();
   for (const [id, r] of Object.entries(reacciones)) {
+    const peso = pesoReaccionPersistida(r);
+    // Una reacción cuenta como muestra aunque su peso sea 0: el usuario opinó,
+    // y eso es lo que mide `muestras` (cuánto te conozco, no cuánto te gusta).
+    muestras++;
+    if (peso === 0) continue;
     const generos = cacheGen[id];
     if (!generos) continue; // sin géneros cacheados, no atribuible.
-    const peso = pesoReaccionPersistida(r);
-    if (peso === 0) continue; // optimización: no sumar ceros.
-    sumar(generos, peso);
+    for (const g of generos) sumar(generosPesos, g, peso);
   }
 
   // 2) watch_history sin reacción local (peso fijo bajo).
@@ -235,12 +221,43 @@ export async function getPerfilHistorico(): Promise<PerfilHistorico> {
       for (const r of rows) {
         const id = String(r.tmdb_id);
         if (reacciones[id]) continue; // ya entró por reacciones, no duplicar.
+        muestras++;
         const generos = cacheGen[id];
         if (!generos) continue;
-        sumar(generos, 0.5); // proxy MUY débil — comportamiento inferido
+        for (const g of generos) sumar(generosPesos, g, 0.5);
       }
     } catch (e) {
       console.warn("[vera/historial] error perfil watch_history:", e);
+    }
+  }
+
+  // 3) Memoria larga: vera_weights. Las etiquetas vienen con prefijo de
+  // familia y cada familia va a su propio mapa, ya escalada por su confianza
+  // (un director acierta más que un actor de reparto; ver PESO_FAMILIA).
+  for (const [tag, peso] of await getPesosAprendidos()) {
+    const escala = pesoDeFamilia(tag);
+    if (escala === 0) continue;
+    const valor = peso * escala;
+    const nombre = tag.slice(tag.indexOf(":") + 1);
+    switch (familiaDeTag(tag)) {
+      case "g": {
+        // vera_weights guarda slugs v3; el resto del perfil habla en nombres
+        // es-ES de TMDb. Sin esta traducción los dos mapas no se cruzarían.
+        const g = generoPorSlug(nombre);
+        if (g) sumar(generosPesos, g.nombre, valor);
+        break;
+      }
+      case "dir":
+        sumar(directoresPesos, nombre, valor);
+        break;
+      case "act":
+        sumar(actoresPesos, nombre, valor);
+        break;
+      case "dec":
+        sumar(decadasPesos, nombre, valor);
+        break;
+      // "tono" se ignora acá: el motor ya lo calcula por sesión y sumarlo
+      // otra vez desde la memoria larga lo contaría doble.
     }
   }
 
@@ -253,7 +270,14 @@ export async function getPerfilHistorico(): Promise<PerfilHistorico> {
     .slice(0, 3)
     .map(([g]) => g);
 
-  return { generosPesos, top3 };
+  return {
+    generosPesos,
+    decadasPesos,
+    directoresPesos,
+    actoresPesos,
+    top3,
+    muestras,
+  };
 }
 //
 // =============================================================================
