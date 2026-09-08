@@ -2844,7 +2844,7 @@ dependencies = [
 
 [[package]]
 name = "kutral"
-version = "26.5.6"
+version = "26.5.7"
 dependencies = [
  "enigo",
  "gdk",
