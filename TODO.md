@@ -38,3 +38,38 @@ Definir primero **qué tiene que hacer** el control nuevo antes de codear. Candi
 El gamepad se conserva pero como modo aparte, activo solo cuando hay un juego corriendo.
 
 ---
+
+## 3. Mando del emulador: lo que hay no alcanza — *medio*
+
+Lo implementado solo asigna botones de un **mando físico USB** leyendo
+/dev/input (`src-tauri/src/padmap.rs`, sección "Mando para juegos" en
+Configuración). Falta lo que la gente realmente usa para jugar:
+
+- **Teclado**: no se puede remapear nada. RetroArch usa sus teclas por defecto
+  (flechas + Z/X/A/S) y Kütral no escribe ninguna línea `input_player1_<accion>`
+  (sin sufijo `_btn`, que es la forma teclado). Sin mando enchufado, la pantalla
+  de configuración no sirve para nada: ni siquiera aparece.
+- **Control remoto web (celular)**: sus botones están fijos en
+  `key_to_retropad` (`src-tauri/src/emu.rs:789-799`) y no pasan por el mapa.
+  Jugar desde el celu con la distribución que uno quiera no se puede. Ojo: ese
+  camino va por el Network Gamepad (UDP), no por la config de RetroArch, así
+  que necesita su propio mapeo (retropad → tecla del control web) y probable
+  reordenar los botones de `remote.html`.
+- **No hay forma de probar** el mapeo sin abrir un juego: la pantalla no muestra
+  qué se está pulsando en vivo (el mapeo de la interfaz sí lo hace, con
+  `Gamepad.svelte` iluminando el botón).
+- **La UI es una lista de 14 filas** con "Asignar" una por una. Debería ser un
+  asistente que recorra los botones solo, sobre el dibujo del mando que ya
+  existe (`src/lib/Gamepad.svelte`).
+- **Sin probar con hardware**: no había ningún mando conectado al escribirlo.
+  Hay que verificar que los índices que calcula `padmap.rs` son los mismos que
+  usa RetroArch, con un pad real.
+- **Solo Linux** y necesita que el usuario esté en el grupo `input`. En la ISO
+  se puede dar por hecho; en un escritorio cualquiera, no.
+- `input_autodetect_enable = "false"` deja fuera todo lo no asignado: si alguien
+  asigna un botón y se olvida del resto, el mando queda medio muerto. Sería
+  mejor escribir el mapa completo partiendo del autoconfig, o no apagar la
+  autodetección y remapear al nivel del retropad (archivos `.rmp`).
+
+Antes de seguir metiendo mano, decidir el alcance: **teclado y control web son
+más importantes que el mando USB** para cómo se usa Kütral hoy.
