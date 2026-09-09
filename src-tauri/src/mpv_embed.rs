@@ -54,6 +54,15 @@ static LIVE: AtomicBool = AtomicBool::new(false);
 /// Lo que está en pantalla es un trailer: no es una sesión "de verdad", así que
 /// Esc la cierra en vez de dejarla esperando en la pill.
 static TRAILER: AtomicBool = AtomicBool::new(false);
+/// Se está abriendo un archivo nuevo y todavía no llegó su primer frame. Sin
+/// esto la GLArea sigue mostrando el ÚLTIMO FRAME congelado de lo anterior
+/// mientras el stream abre y llena el búfer (varios segundos en torrent/debrid),
+/// que es justo lo que se veía feo al cambiar de película.
+static LOADING: AtomicBool = AtomicBool::new(false);
+/// Qué se está abriendo (para escribirlo en la portada de carga). No se lee de
+/// `media-title` porque durante la carga eso todavía puede ser lo anterior.
+static LOADING_TITLE: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
 /// Reproducción que el trailer dejó en pausa para restaurarla después.
 static PENDING: std::sync::Mutex<Option<Pending>> = std::sync::Mutex::new(None);
 
@@ -297,6 +306,8 @@ thread_local! {
     static MENU: RefCell<Option<Menu>> = const { RefCell::new(None) };
     /// Ya hay un tick de la barra de progreso corriendo (evita apilar timers).
     static SEEK_TICK: Cell<bool> = const { Cell::new(false) };
+    /// Ya hay un tick de la portada de carga corriendo (evita apilar timers).
+    static LOAD_TICK: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Cuenta pistas de un tipo ("video"/"audio"/"sub").
@@ -355,10 +366,13 @@ fn mpv_cmd2(name: &str, args: &[&str]) {
     }
 }
 
-// osd-overlay ids: 46 = fondo (pill), 47 = textos, 48 = barra de progreso.
+// osd-overlay ids: 46 = fondo (pill), 47 = textos, 48 = barra de progreso,
+// 49 = portada de carga.
 const BAR_BG_ID: &str = "46";
 const BAR_FG_ID: &str = "47";
 const BAR_SEEK_ID: &str = "48";
+/// Portada de carga: tapa el frame anterior hasta que el nuevo esté en pantalla.
+const LOAD_ID: &str = "49";
 
 // ─────────────────────── geometría real del OSD ───────────────────────────
 //
@@ -776,6 +790,102 @@ fn clear_bar() {
     for id in [BAR_BG_ID, BAR_FG_ID, BAR_SEEK_ID] {
         hide_overlay(id);
     }
+}
+
+// ─────────────────────────── portada de carga ──────────────────────────────
+
+/// Pantalla negra con "Cargando…" y el título de lo que se está abriendo.
+/// Es un overlay ASS opaco a pantalla completa: tapa el frame congelado de lo
+/// anterior sin tocar el video, así no hace falta parar mpv ni recrear nada.
+fn build_loading_ass(dots: usize) -> String {
+    let o = osd();
+    let (w, h) = (o.w as i32, o.h as i32);
+    let (cx, cy) = ((o.w / 2.0) as i32, (o.h / 2.0) as i32);
+    let big = fs(o.k, 30.0);
+    let small = fs(o.k, 20.0);
+    let puntos = ".".repeat(dots + 1);
+    let mut out = format!(
+        "{{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H000000&\\1a&H00&\\p1}}\
+         m 0 0 l {w} 0 l {w} {h} l 0 {h}{{\\p0}}\n\
+         {{\\an5\\pos({cx},{cy})\\bord0\\shad0\\fs{big}\\1c&HFFFFFF&}}Cargando{puntos}"
+    );
+    let title = LOADING_TITLE.lock().map(|t| t.clone()).unwrap_or_default();
+    let title = ellipsize(title.trim(), o.w * 0.7, small);
+    if !title.is_empty() {
+        let ty = cy + (44.0 * o.k) as i32;
+        out.push_str(&format!(
+            "\n{{\\an5\\pos({cx},{ty})\\bord0\\shad0\\fs{small}\\1c&HB0B0B0&}}{title}"
+        ));
+    }
+    out
+}
+
+/// ¿Lo nuevo ya está en pantalla? `core-idle` es falso solo cuando mpv está
+/// sacando frames de verdad (sirve igual para video que para audio), y
+/// `paused-for-cache`/`seeking` cubren el rato en que ya hay imagen pero
+/// todavía se llena el búfer o se salta al minuto de "seguir viendo". Si el
+/// usuario pausó a mano durante la carga, el frame ya es del archivo nuevo:
+/// tapar más sería esconderle su propia pausa.
+fn loading_ready() -> bool {
+    if get_bool("idle-active") {
+        return false;
+    }
+    if get_bool("pause") && get_f64("dwidth") > 0.0 {
+        return true;
+    }
+    !get_bool("core-idle") && !get_bool("paused-for-cache") && !get_bool("seeking")
+}
+
+/// Levanta la portada. Va ANTES del `loadfile`, para tapar también el momento
+/// en que mpv suelta el archivo viejo. `reset_player_ui()` (que corre al
+/// mostrar la superficie) solo borra los overlays del bar, no éste.
+fn begin_loading(title: Option<&str>) {
+    if let Ok(mut t) = LOADING_TITLE.lock() {
+        *t = title.unwrap_or("").to_string();
+    }
+    LOADING.store(true, Ordering::SeqCst);
+    if let Some(app) = APP.get() {
+        let _ = app.run_on_main_thread(|| {
+            put_overlay(LOAD_ID, &build_loading_ass(0));
+            start_loading_tick();
+        });
+    }
+}
+
+/// Baja la portada (primer frame listo, o se salió del video antes).
+fn end_loading() {
+    if !LOADING.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    if let Some(app) = APP.get() {
+        let _ = app.run_on_main_thread(|| hide_overlay(LOAD_ID));
+    }
+}
+
+/// Anima los puntos y vigila el primer frame. Sin bucle de eventos de libmpv
+/// acá, se sondea desde el hilo GTK (mismo patrón que el trailer).
+///
+/// Los primeros tics no miran el estado: justo después del `loadfile` mpv
+/// todavía puede estar reproduciendo el archivo viejo (lo procesa en su propio
+/// bucle), y creerle ahí bajaría la portada sobre el frame anterior.
+fn start_loading_tick() {
+    if LOAD_TICK.with(|c| c.get()) {
+        return;
+    }
+    LOAD_TICK.with(|c| c.set(true));
+    let mut n: usize = 0;
+    glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
+        n += 1;
+        let listo = n > 3 && loading_ready();
+        if !LOADING.load(Ordering::SeqCst) || listo {
+            LOAD_TICK.with(|c| c.set(false));
+            LOADING.store(false, Ordering::SeqCst);
+            hide_overlay(LOAD_ID);
+            return glib::ControlFlow::Break;
+        }
+        put_overlay(LOAD_ID, &build_loading_ass((n / 2) % 3));
+        glib::ControlFlow::Continue
+    });
 }
 
 /// Pausa y muestra el bar (foco en Reanudar). Reconstruye las acciones según
@@ -1853,6 +1963,9 @@ pub fn play(url: &str, title: Option<&str>, start_secs: Option<u64>) -> Result<(
         "network-timeout",
         if local { "0" } else { por_defecto.as_str() },
     );
+    // Portada encima antes de soltar el archivo viejo: si no, se ve congelado
+    // el último frame de la película anterior mientras el nuevo abre.
+    begin_loading(title);
     eprintln!("[mpv-embed] play loadfile…");
     mpv.command("loadfile", &[url, "replace"])
         .map_err(|e| format!("loadfile: {e}"))?;
@@ -1872,6 +1985,7 @@ pub fn play_iptv(playlist_path: &str, start: usize) -> Result<(), String> {
     TRAILER.store(false, Ordering::SeqCst);
     clear_pending();
     let _ = mpv.set_property("playlist-start", start as i64);
+    begin_loading(None);
     mpv.command("loadlist", &[playlist_path, "replace"])
         .map_err(|e| format!("loadlist: {e}"))?;
     LIVE.store(true, Ordering::SeqCst);
@@ -1910,6 +2024,7 @@ pub fn play_trailer(url: &str, title: Option<&str>) -> Result<(), String> {
     }
     let _ = mpv.set_property("start", "none");
     let _ = mpv.set_property("pause", false);
+    begin_loading(title);
     mpv.command("loadfile", &[url, "replace"])
         .map_err(|e| format!("loadfile trailer: {e}"))?;
     LIVE.store(false, Ordering::SeqCst);
@@ -1945,6 +2060,7 @@ fn watch_trailer_end() {
 fn end_trailer() -> Result<(), String> {
     let mpv = MPV.get().ok_or("mpv no inicializado")?;
     TRAILER.store(false, Ordering::SeqCst);
+    end_loading();
     // Overlays del bar/menú fuera antes de ocultar (viven en el hilo GTK).
     if let Some(app) = APP.get() {
         let _ = app.run_on_main_thread(reset_player_ui);
@@ -1997,6 +2113,7 @@ pub fn stop() -> Result<(), String> {
 
 fn stop_inner() -> Result<(), String> {
     let mpv = MPV.get().ok_or("mpv no inicializado")?;
+    end_loading();
     let _ = mpv.command("stop", &[]);
     TRAILER.store(false, Ordering::SeqCst);
     clear_pending();
@@ -2024,6 +2141,7 @@ pub fn suspend() -> Result<(), String> {
     if !LIVE.load(Ordering::SeqCst) {
         let _ = mpv.set_property("pause", true);
     }
+    end_loading();
     // Overlays del bar/menú fuera antes de ocultar (viven en el hilo GTK).
     if let Some(app) = APP.get() {
         let _ = app.run_on_main_thread(reset_player_ui);
