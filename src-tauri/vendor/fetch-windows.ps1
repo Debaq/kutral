@@ -77,7 +77,7 @@ if (-not (Test-Path "mpv-config/scripts/uosc")) {
 # Cortar acá y no en la máquina del usuario. Que uosc faltara en silencio es
 # exactamente lo que dejó a Windows sin controles de reproductor.
 foreach ($req in @("mpv-config/scripts/uosc", "mpv-config/fonts/uosc_icons.otf")) {
-  if (-not (Test-Path $req)) { throw "falta $req: el build saldría sin UI de reproductor" }
+  if (-not (Test-Path $req)) { throw "falta ${req}: el build saldría sin UI de reproductor" }
 }
 
 Write-Host ">> listo"
