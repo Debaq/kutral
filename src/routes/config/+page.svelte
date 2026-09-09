@@ -107,6 +107,137 @@
     padRaf = requestAnimationFrame(padLoop);
   }
 
+  // --- Mando para juegos: binds del retropad de RetroArch -----------------
+  // Distinto del mapeo de arriba: ese es para la interfaz (Gamepad API del
+  // webview). RetroArch es otro proceso y numera los botones a su manera, así
+  // que la captura la hace el backend leyendo /dev/input (ver padmap.rs).
+  type PadBind =
+    | { kind: "btn"; n: number }
+    | { kind: "axis"; n: number; dir: number }
+    | { kind: "hat"; n: number; dir: string };
+  type PadMapJuegos = {
+    device: string;
+    name: string;
+    pad_index: number;
+    binds: Record<string, PadBind>;
+  };
+  type PadDevice = { path: string; name: string; index: number };
+
+  // Botones del retropad, con el nombre que usa RetroArch como id.
+  const RETRO_BOTONES: { id: string; label: string }[] = [
+    { id: "up", label: "Arriba ↑" },
+    { id: "down", label: "Abajo ↓" },
+    { id: "left", label: "Izquierda ←" },
+    { id: "right", label: "Derecha →" },
+    { id: "a", label: "A" },
+    { id: "b", label: "B" },
+    { id: "x", label: "X" },
+    { id: "y", label: "Y" },
+    { id: "l", label: "L (hombro izq.)" },
+    { id: "r", label: "R (hombro der.)" },
+    { id: "l2", label: "L2 (gatillo izq.)" },
+    { id: "r2", label: "R2 (gatillo der.)" },
+    { id: "select", label: "Select" },
+    { id: "start", label: "Start" },
+  ];
+
+  let pads = $state<PadDevice[]>([]);
+  let padSel = $state<string>(""); // ruta del /dev/input/eventN elegido
+  let padMapJuegos = $state<PadMapJuegos>({ device: "", name: "", pad_index: 0, binds: {} });
+  let capturando = $state<string | null>(null); // id del botón que espera pulsación
+  let padErr = $state<string | null>(null);
+
+  function bindLabel(b: PadBind | undefined): string {
+    if (!b) return "—";
+    if (b.kind === "btn") return `Botón ${b.n}`;
+    if (b.kind === "axis") return `Eje ${b.n}${b.dir < 0 ? "−" : "+"}`;
+    const flechas: Record<string, string> = { up: "↑", down: "↓", left: "←", right: "→" };
+    return `Cruceta ${flechas[b.dir] ?? b.dir}`;
+  }
+
+  async function buscarMandos() {
+    padErr = null;
+    try {
+      pads = await invoke<PadDevice[]>("pad_devices");
+      if (!pads.some((p) => p.path === padSel)) padSel = pads[0]?.path ?? "";
+    } catch (e) {
+      padErr = String(e);
+      pads = [];
+    }
+  }
+
+  async function cargarMapaJuegos() {
+    try {
+      padMapJuegos = await invoke<PadMapJuegos>("pad_map_get");
+      if (padMapJuegos.device) padSel = padMapJuegos.device;
+    } catch (e) {
+      console.warn("[pad_map_get]", e);
+    }
+  }
+
+  async function guardarMapaJuegos() {
+    const pad = pads.find((p) => p.path === padSel);
+    padMapJuegos = {
+      ...padMapJuegos,
+      device: padSel,
+      name: pad?.name ?? padMapJuegos.name,
+      pad_index: pad?.index ?? padMapJuegos.pad_index,
+    };
+    try {
+      await invoke("pad_map_set", { map: padMapJuegos });
+    } catch (e) {
+      padErr = String(e);
+    }
+  }
+
+  /** Espera a que el usuario apriete algo y lo ata a `id`. */
+  async function capturarBoton(id: string) {
+    if (capturando || !padSel) return;
+    capturando = id;
+    padErr = null;
+    try {
+      const b = await invoke<PadBind | null>("pad_capture", { device: padSel, timeoutMs: 5000 });
+      if (b) {
+        // Un mismo botón físico no puede quedar en dos acciones: la vieja se
+        // libera, si no el emulador recibe dos pulsaciones a la vez.
+        const binds: Record<string, PadBind> = {};
+        for (const [k, v] of Object.entries(padMapJuegos.binds)) {
+          if (JSON.stringify(v) !== JSON.stringify(b)) binds[k] = v;
+        }
+        binds[id] = b;
+        padMapJuegos = { ...padMapJuegos, binds };
+        await guardarMapaJuegos();
+      } else {
+        padErr = "No se detectó ninguna pulsación.";
+      }
+    } catch (e) {
+      padErr = String(e);
+    } finally {
+      capturando = null;
+    }
+  }
+
+  async function borrarBoton(id: string) {
+    const binds = { ...padMapJuegos.binds };
+    delete binds[id];
+    padMapJuegos = { ...padMapJuegos, binds };
+    await guardarMapaJuegos();
+  }
+
+  async function restaurarMandoJuegos() {
+    try {
+      await invoke("pad_map_clear");
+      padMapJuegos = { device: "", name: "", pad_index: 0, binds: {} };
+    } catch (e) {
+      padErr = String(e);
+    }
+  }
+
+  const juegosBindsCount = $derived(Object.keys(padMapJuegos.binds).length);
+  const salidaLista = $derived(
+    padMapJuegos.binds.select?.kind === "btn" && padMapJuegos.binds.start?.kind === "btn",
+  );
+
   type RdDeviceStart = {
     device_code: string;
     user_code: string;
@@ -264,6 +395,8 @@
     gameRegions = [...config.gameRegions];
     iptvLists = config.iptvLists.map((l) => ({ ...l }));
     try { currentVer = await getVersion(); } catch {}
+    await cargarMapaJuegos();
+    await buscarMandos();
     // Probar el mando aquí sin que navegue la app.
     setGamepadCapture(true);
     padRaf = requestAnimationFrame(padLoop);
@@ -1427,6 +1560,91 @@
       <button data-nav class="ctrl-reset" onclick={restaurarControles}>Restaurar por defecto</button>
     </section>
 
+    <!-- Mando dentro del emulador: otro mapeo, otro proceso. -->
+    <section class="block ancho">
+      <h2>Mando para juegos (emulador)</h2>
+      <p class="hint">
+        Estos botones son los del <strong>emulador</strong>, no los de la
+        interfaz. RetroArch lee el mando por su cuenta, así que la asignación se
+        captura acá abajo. Si no tocas nada, se usa la detección automática de
+        RetroArch.
+      </p>
+
+      {#if padErr}
+        <p class="pad-err">{padErr}</p>
+      {/if}
+
+      {#if !pads.length}
+        <p class="pad-vacio">
+          No se detectó ningún mando conectado.
+          {#if !padErr}
+            Enchúfalo y vuelve a buscar (si sigue sin aparecer, tu usuario tiene
+            que estar en el grupo <code>input</code>).
+          {/if}
+        </p>
+        <button data-nav class="btn-ghost" onclick={buscarMandos}>Buscar mandos</button>
+      {:else}
+        <div class="pad-fila-top">
+          <label class="pad-dev">
+            Mando:
+            <select data-nav bind:value={padSel} onchange={guardarMapaJuegos}>
+              {#each pads as p (p.path)}
+                <option value={p.path}>{p.name}</option>
+              {/each}
+            </select>
+          </label>
+          <button data-nav class="btn-ghost" onclick={buscarMandos}>Buscar de nuevo</button>
+        </div>
+
+        <div class="pad-grid">
+          {#each RETRO_BOTONES as b (b.id)}
+            <div class="pad-row" class:capturando={capturando === b.id}>
+              <span class="pad-acc">{b.label}</span>
+              <span class="pad-bind">
+                {capturando === b.id ? "Presiona un botón…" : bindLabel(padMapJuegos.binds[b.id])}
+              </span>
+              <button
+                data-nav
+                class="pad-btn"
+                disabled={!!capturando}
+                onclick={() => capturarBoton(b.id)}
+              >
+                {padMapJuegos.binds[b.id] ? "Cambiar" : "Asignar"}
+              </button>
+              <button
+                data-nav
+                class="pad-btn borrar"
+                disabled={!!capturando || !padMapJuegos.binds[b.id]}
+                onclick={() => borrarBoton(b.id)}
+              >
+                Quitar
+              </button>
+            </div>
+          {/each}
+        </div>
+
+        <p class="hint">
+          {#if juegosBindsCount === 0}
+            Sin asignaciones: manda la detección automática de RetroArch.
+          {:else}
+            En cuanto asignas un botón, RetroArch deja de usar su detección
+            automática: asigna todos los que vayas a usar. Los cambios entran al
+            abrir el próximo juego.
+            {#if salidaLista}
+              Dentro del juego, <strong>Select + Start</strong> cierran el emulador.
+            {:else}
+              Asigna <strong>Select</strong> y <strong>Start</strong> para poder
+              salir del juego con el mando.
+            {/if}
+          {/if}
+        </p>
+
+        <button data-nav class="ctrl-reset" onclick={restaurarMandoJuegos}>
+          Restaurar por defecto (borrar asignaciones)
+        </button>
+      {/if}
+    </section>
+
     <div class="actions">
       <button data-nav class="btn-save" onclick={applyAndSave} disabled={!dirty}>
         {saved ? "Guardado ✓" : "Guardar cambios"}
@@ -1439,6 +1657,64 @@
 </div>
 
 <style>
+  /* Mando del emulador */
+  .pad-fila-top {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .pad-dev {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #b9b9c6;
+    font-size: 13px;
+  }
+  .pad-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 8px;
+  }
+  .pad-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto auto;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: #15151c;
+    border: 1px solid #2a2a35;
+    border-radius: 8px;
+  }
+  .pad-row.capturando {
+    border-color: #f5c518;
+    box-shadow: 0 0 0 2px rgba(245, 197, 24, 0.22);
+  }
+  .pad-acc { font-size: 13px; font-weight: 600; }
+  .pad-bind {
+    min-width: 96px;
+    text-align: right;
+    color: #f5c518;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .pad-btn {
+    background: #22222c;
+    color: #e6e6ec;
+    border: 1px solid #33333f;
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .pad-btn:hover:not(:disabled) { background: #f5c518; color: #0d0d12; border-color: #f5c518; }
+  .pad-btn:disabled { opacity: 0.45; cursor: default; }
+  .pad-btn.borrar { color: #d98a8a; }
+  .pad-err { color: #ff8a8a; font-size: 13px; }
+  .pad-vacio { color: #b9b9c6; font-size: 13px; }
+
   .cfg-root {
     height: 100%;
     overflow: auto;

@@ -662,16 +662,18 @@ fn validate_rom(path: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Escribe un config temporal que habilita el network command interface.
-fn write_netcmd_config() -> Result<PathBuf, String> {
+/// Escribe un config temporal que habilita el network command interface y,
+/// si el usuario configuró el mando en Kütral, sus binds (ver padmap.rs).
+fn write_netcmd_config(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let path = std::env::temp_dir().join("kutral-retroarch.cfg");
-    let body = format!(
+    let mut body = format!(
         "network_cmd_enable = \"true\"\n\
          network_cmd_port = \"{NET_CMD_PORT}\"\n\
          network_remote_enable = \"true\"\n\
          network_remote_base_port = \"{NET_REMOTE_PORT}\"\n\
          network_remote_enable_user_p1 = \"true\"\n"
     );
+    body.push_str(&crate::padmap::cfg_lines(app));
     std::fs::write(&path, body).map_err(|e| format!("write cfg: {e}"))?;
     Ok(path)
 }
@@ -695,7 +697,7 @@ pub fn emu_play(
     let core = core_path(&app, &system)?;
     let rom_path = resolve_rom(&app, &system, &rom)?;
     validate_rom(&rom_path)?;
-    let cfg = write_netcmd_config()?;
+    let cfg = write_netcmd_config(&app)?;
 
     // Cerrar emulador anterior si quedó vivo.
     kill_existing(&state);

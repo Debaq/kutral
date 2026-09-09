@@ -10,6 +10,7 @@ mod kitsu;
 mod kodios;
 mod net;
 mod opensubtitles;
+mod padmap;
 mod probe;
 mod rd;
 mod player;
@@ -3123,6 +3124,11 @@ pub fn run() {
             emu::emu_synopsis,
             emu::emu_owned,
             emu::emu_download,
+            padmap::pad_devices,
+            padmap::pad_capture,
+            padmap::pad_map_get,
+            padmap::pad_map_set,
+            padmap::pad_map_clear,
             wyzie_search
         ])
         .run(tauri::generate_context!())
