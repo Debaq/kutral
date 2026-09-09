@@ -73,3 +73,124 @@ Configuración). Falta lo que la gente realmente usa para jugar:
 
 Antes de seguir metiendo mano, decidir el alcance: **teclado y control web son
 más importantes que el mando USB** para cómo se usa Kütral hoy.
+
+---
+
+# Onboarding y API keys
+
+Bloque aparte del de arriba: sale de la planificación sobre qué puede hacer un
+usuario sin ninguna key, y cómo pedírselas. Ordenado igual, de más simple a más
+complejo. **Nada de esto está implementado — es planificación.**
+
+## Qué exige key hoy
+
+| Función | Key | Sin ella |
+|---|---|---|
+| Catálogo Pelis/Series, detalle, búsqueda, personas | **TMDb** (`tmdb_key`, localStorage) | La pantalla `key-box` bloquea todo (`+page.svelte:2671`) |
+| `imdb_id` → scrapers | **TMDb** (vía `item_status`) | Sin imdb no hay fuentes que buscar |
+| Resolver magnet → URL reproducible | **RealDebrid** (device flow) | `SourcePicker.svelte:486,508` descarta todo magnet |
+| Ratings y sinopsis extra | OMDb (opcional) | Se omite |
+| Subtítulos Wyzie | opcional | Cae a OpenSubtitles |
+| Subtítulos OpenSubtitles | **key de app ya embebida** (`opensubtitles.rs:19`) | Funciona sin nada |
+| Anime (AniList + ani.zip + kitsu) | ninguna | Funciona |
+| Scrapers (torrentio, mediafusion, yts, eztv, nyaa, animetosho) | ninguna | Funcionan |
+| Premios (Wikidata), screening, IPTV, Juegos | ninguna | Funcionan |
+
+El dato que ordena todo: `+page.svelte:1409` hace
+`if (!apiKey && tab !== "anime") return;`. **El tab Anime ya es un modo sin-key
+completo y funcional.** El patrón se sostiene; falta extenderlo.
+
+`opensubtitles.rs:19` es el precedente de embeber una key de app en el binario.
+
+## 4. RD por API key, además del device flow — *chico*
+
+Hoy RealDebrid se vincula solo por device flow (`lib.rs:2253` `rd_device_start`,
+`RD_CLIENT_ID` público en `lib.rs:2227`). Falta aceptar el token de API que
+RealDebrid da en `real-debrid.com/apitoken`.
+
+Casi está: `rd_creds_save` (`creds.rs:65`) ya recibe un `access_token` suelto.
+
+Trabajo:
+- Campo `kind: "oauth" | "apikey"` en `RdCreds` (`creds.rs:11`), default `oauth`
+  para no romper lo ya guardado.
+- `rd_refresh` (`rd.rs:411`) no debe intentar renovar ni borrar credenciales si
+  `kind == "apikey"`: ese token no expira ni tiene refresh.
+- `rd_creds_status` devuelve el `kind` para que la UI diga "vinculado por token"
+  en vez de "por cuenta".
+- Campo en Configuración y en el paso 4 del asistente, con el QR de teclado.
+
+Sirve para la ISO y para kioscos sin navegador cómodo, y permite provisionar
+por script.
+
+## 5. Modo sin cuenta: catálogo sin key de TMDb — *medio*
+
+Sin TMDb el único agujero real es el **catálogo de pelis y series**: scrapers,
+subtítulos, premios y disponibilidad ya viven sin key.
+
+Opciones evaluadas:
+- **Cinemeta** (`v3-cinemeta.strem.io`) — la recomendada. Sin key, sin registro,
+  IDs IMDb nativos, lo que además elimina el paso `item_status` → `imdb_id`.
+  Se pierde: discover fino (`sort_by`, `vote_count`, keywords), personas,
+  géneros de TMDb, trailers de TMDb, títulos en es-CL.
+- **Key de app embebida en el binario**, como OpenSubtitles. Un click menos,
+  pero cuota compartida entre todos los usuarios y zona gris con los ToS de
+  TMDb. Solo como fallback silencioso, no como default.
+- **Proxy propio** — cuesta infraestructura. Descartada.
+
+Propuesta: **modo "Sin cuenta" = Cinemeta + AniList + IPTV + Juegos**, y TMDb
+pasa de requisito a mejora ("catálogo completo, filtros, actores, español de
+Chile"). Vera (`src/lib/vera/tmdb.ts`) queda atada a TMDb: su motor pide
+discover fino y Cinemeta no lo sustituye.
+
+Para reproducir sin debrid ya existe `torrentLocal` (opt-in, expone la IP en el
+swarm). El asistente tiene que decirlo en una frase clara, no esconderlo.
+
+## 6. Asistente inicial — *medio*
+
+Ruta `/bienvenida` u overlay en `+layout.svelte`, con flag `onboarding_done` en
+localStorage. Cada paso salteable y reversible, navegable con mando (`nav.ts` ya
+lo da), y reusando `RemoteQr` como teclado por celular — ya funciona así en la
+`key-box` actual.
+
+0. **Idioma y modo de interfaz** — `initDetection()` ya sabe si es Kütral OS.
+1. **Qué es y qué necesita** — tabla corta: qué funciona sin nada, qué pide cuenta.
+2. **Red** — solo si falta; `WifiManager.svelte` ya existe.
+3. **Catálogo** → `[Empezar sin cuenta]` (Cinemeta) · `[Tengo key de TMDb]` (QR).
+4. **Reproducción** → `[Vincular debrid]` (QR del device flow) · `[Pegar token]`
+   (punto 4 de arriba) · `[Sin debrid]`, que explica el torrent local y el
+   riesgo de IP.
+5. **Opcionales**, colapsado: OMDb, Wyzie, cuenta de OpenSubtitles, doblado vs
+   subtitulado, calidad.
+6. **Listo** — checklist verde/gris y "todo esto se cambia en Configuración".
+
+Reentrada: botón "Repetir asistente" en Configuración. Se abre solo si falta lo
+mínimo (ni catálogo ni forma de reproducir).
+
+## 7. Más proveedores de debrid — *alto*
+
+Hoy está todo cableado a RealDebrid: `rd.rs` (440 líneas), `creds.rs`
+(`rd_creds.json`), y `SourcePicker.svelte` llamando `rd_resolve`,
+`rd_instant_available`, `rd_account` y `rd_cleanup_torrents`.
+
+Trabajo:
+- Trait `Debrid` con `instant_available(hashes)`, `resolve(magnet)`,
+  `unrestrict(link)`, `account()`, `cleanup(hours)`. `rd.rs` pasa a ser una
+  implementación más.
+- Store `debrid_creds.json` (0600, mismo patrón que hoy):
+  `{ active: "realdebrid", providers: { realdebrid: {...}, alldebrid: {...} } }`.
+- Comandos `debrid_*(magnet, provider?)`; los `rd_*` quedan de alias una versión.
+- `config.rdLinked` → `config.debridLinked: string[]`.
+- **Cadena de fallback**: si el proveedor activo devuelve `BLOQUEADO_DMCA`
+  (el 451 de `rd.rs:68`), probar el siguiente vinculado antes de caer al torrent
+  local. Hoy ese 451 salta directo al plan B.
+
+Proveedores y su forma de autenticar:
+- **RealDebrid**: device flow (hoy) o token de API (punto 4).
+- **AllDebrid**: apikey en query (`?agent=kutral&apikey=`), más un flujo de PIN.
+- **TorBox**: apikey por bearer.
+- **Premiumize**: apikey u OAuth.
+- **Debrid-Link**: OAuth device.
+
+Ojo: cada uno consulta lo cacheado a su manera, y hay que **verificar si el
+`instantAvailability` de RealDebrid sigue vivo** — `rd.rs:198` lo usa y RD lo
+marcó para deprecar. Si ya cayó, el "instantáneo" de hoy puede estar mintiendo.
