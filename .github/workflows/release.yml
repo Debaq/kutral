@@ -45,6 +45,18 @@ jobs:
             p7zip-full \
             unzip
 
+      - name: Cache vendor (retroarch 190 MB + cores + mpv + yt-dlp)
+        uses: actions/cache@v4
+        with:
+          path: |
+            src-tauri/vendor/retroarch
+            src-tauri/vendor/cores
+            src-tauri/vendor/mpv
+            src-tauri/vendor/yt-dlp
+            src-tauri/vendor/mpv-config/scripts
+            src-tauri/vendor/mpv-config/fonts
+          key: vendor-${{ hashFiles('src-tauri/vendor/fetch.sh') }}
+
       - name: Fetch vendored binaries (retroarch + cores + mpv)
         run: bash src-tauri/vendor/fetch.sh
 
@@ -161,6 +173,18 @@ jobs:
             org.gnome.Sdk//49 \
             org.freedesktop.Sdk.Extension.rust-stable//25.08 \
             org.freedesktop.Sdk.Extension.node22//25.08
+
+      - name: Cache vendor (retroarch 190 MB + cores + mpv + yt-dlp)
+        uses: actions/cache@v4
+        with:
+          path: |
+            src-tauri/vendor/retroarch
+            src-tauri/vendor/cores
+            src-tauri/vendor/mpv
+            src-tauri/vendor/yt-dlp
+            src-tauri/vendor/mpv-config/scripts
+            src-tauri/vendor/mpv-config/fonts
+          key: vendor-${{ hashFiles('src-tauri/vendor/fetch.sh') }}
 
       - name: Fetch vendored binaries (retroarch + cores + yt-dlp)
         run: bash src-tauri/vendor/fetch.sh

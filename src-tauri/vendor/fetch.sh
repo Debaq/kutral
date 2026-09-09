@@ -26,13 +26,20 @@ if [ -f retroarch ]; then
 else
   command -v 7z >/dev/null || { echo "falta 7z (p7zip)"; exit 1; }
   tmp=$(mktemp -d)
-  curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o "$tmp/RetroArch.7z" "$RA"
-  # El buildbot devuelve ~190 MB. Si llega mucho menos es una página de error
-  # del CDN, no el archivo: cortar acá y no en el 7z, que dice "Headers Error"
-  # y no explica nada.
-  sz=$(stat -c%s "$tmp/RetroArch.7z")
-  if [ "$sz" -lt 50000000 ]; then
-    echo "  RetroArch.7z vino cortado ($sz bytes), no es el archivo"; exit 1
+  # El buildbot manda ~190 MB por Cloudflare y a veces corta la transferencia
+  # sin que curl lo note (respuesta sin content-length). El archivo llega con
+  # tamaño creíble pero sin el header, que en un 7z va al FINAL: recién lo
+  # descubre el 7z, con un "Headers Error" que no dice nada. Por eso se valida
+  # con `7z l` -- barato, solo lee el header -- y se reintenta la bajada entera.
+  ok=0
+  for intento in 1 2 3; do
+    curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o "$tmp/RetroArch.7z" "$RA"
+    echo "  intento $intento: $(stat -c%s "$tmp/RetroArch.7z") bytes"
+    if 7z l "$tmp/RetroArch.7z" >/dev/null 2>&1; then ok=1; break; fi
+    echo "  el archivo llegó incompleto, reintentando"
+  done
+  if [ "$ok" != 1 ]; then
+    echo "  no pude bajar RetroArch.7z entero después de 3 intentos"; exit 1
   fi
   7z e -y "$tmp/RetroArch.7z" \
     "RetroArch-Linux-x86_64/RetroArch-Linux-x86_64.AppImage" -o"$tmp" >/dev/null
