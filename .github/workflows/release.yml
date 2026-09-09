@@ -182,7 +182,11 @@ jobs:
       - name: Build flatpak
         working-directory: flatpak
         run: |
-          flatpak-builder --repo=repo --force-clean \
+          # --disable-rofiles-fuse: el contenedor no tiene /etc/machine-id ni bus
+          # de sesión, y rofiles-fuse muere ahí ("Failure spawning rofiles-fuse").
+          # Solo sirve para detectar que un módulo pise archivos de otro previo;
+          # la cadena acá es lineal (libass -> libplacebo -> mpv -> kutral).
+          flatpak-builder --disable-rofiles-fuse --repo=repo --force-clean \
             --state-dir .flatpak-builder \
             .build app.kutral.Kutral.yml
 
