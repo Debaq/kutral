@@ -678,14 +678,12 @@
   /** ¿El foco está en una carátula/lomo del grid? Ahí manda fRow/fCol. */
   function enGrid(): boolean {
     const el = document.activeElement as HTMLElement | null;
-    return !!el?.matches?.(".spine, .card:not(.nav-card)");
+    return !!el?.matches?.(".spine, .card");
   }
 
-  /** Sale del grid hacia arriba: primero "Otras secciones", si no, la cabecera. */
+  /** Sale del grid hacia arriba: a la cabecera. */
   function salirArriba() {
-    const el =
-      document.querySelector<HTMLElement>('[data-section="secciones"] [data-nav]') ??
-      document.querySelector<HTMLElement>('[data-section="top"] [data-nav]');
+    const el = document.querySelector<HTMLElement>('[data-section="top"] [data-nav]');
     el?.focus();
     el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
@@ -949,27 +947,6 @@
         : "Catálogo vacío."}
     </div>
   {:else}
-    <section class="pasillo" data-section="secciones">
-      <h2 class="pasillo-titulo">Otras secciones</h2>
-      <div class="fila">
-        <a class="card nav-card nav-movie" data-nav href="/?tab=movie" title="Películas">
-          <div class="nav-face"><span class="nav-marca">Pelis</span><em>cine</em></div>
-          <div class="card-meta"><span class="card-title">🎬 Películas</span></div>
-        </a>
-        <a class="card nav-card nav-tv" data-nav href="/?tab=tv" title="Series">
-          <div class="nav-face"><span class="nav-marca">Series</span><em>tv</em></div>
-          <div class="card-meta"><span class="card-title">📺 Series</span></div>
-        </a>
-        <a class="card nav-card nav-anime" data-nav href="/?tab=anime" title="Anime">
-          <div class="nav-face"><span class="nav-marca">Anime</span><em>日本</em></div>
-          <div class="card-meta"><span class="card-title">🌸 Anime</span></div>
-        </a>
-        <a class="card nav-card nav-iptv" data-nav href="/iptv" title="TV en vivo">
-          <div class="nav-face"><span class="nav-marca">IPTV</span><em>en vivo</em></div>
-          <div class="card-meta"><span class="card-title">📡 En vivo</span></div>
-        </a>
-      </div>
-    </section>
     {#each pasillos as p, r (r)}
       <section class="pasillo" class:pasillo-top={p.kind === "top"}>
         {#if p.label}
@@ -1251,68 +1228,6 @@
   .jugado-seg button.active {
     background: #2b6cff;
     color: #fff;
-  }
-
-  /* --- Cards de otras secciones (tamaño carátula de juego) --- */
-  .nav-card {
-    text-decoration: none;
-    display: block;
-  }
-  .nav-face {
-    width: 150px;
-    height: 225px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    text-align: center;
-  }
-  .nav-marca {
-    font-size: 30px;
-    font-weight: 800;
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-    color: transparent;
-  }
-  .nav-face em {
-    font-style: italic;
-    font-weight: 300;
-    font-size: 15px;
-  }
-  .nav-movie .nav-face {
-    background: radial-gradient(ellipse at 50% 35%, #2a2008 0%, #14100a 65%, #070503 100%);
-  }
-  .nav-movie .nav-marca {
-    background-image: linear-gradient(90deg, #f5c518, #ffd76a, #fff0b3, #ffd76a, #f5c518);
-  }
-  .nav-movie .nav-face em { color: #ffd76a; }
-  .nav-tv .nav-face {
-    background: radial-gradient(ellipse at 50% 35%, #07261c 0%, #051613 65%, #03090a 100%);
-  }
-  .nav-tv .nav-marca {
-    background-image: linear-gradient(90deg, #10b981, #34d399, #a7f3d0, #34d399, #10b981);
-  }
-  .nav-tv .nav-face em { color: #6ee7b7; }
-  .nav-anime .nav-face {
-    background: radial-gradient(ellipse at 50% 35%, #2e0f24 0%, #1a0814 65%, #0d0309 100%);
-  }
-  .nav-anime .nav-marca {
-    background-image: linear-gradient(90deg, #f472b6, #ff9ad4, #ffd1ec, #ff9ad4, #f472b6);
-  }
-  .nav-anime .nav-face em { color: #ff9ad4; }
-  .nav-iptv .nav-face {
-    background: radial-gradient(ellipse at 50% 35%, #2a0d08 0%, #160806 65%, #0a0303 100%);
-  }
-  .nav-iptv .nav-marca {
-    background-image: linear-gradient(90deg, #ef4444, #f97316, #fbbf24, #f97316, #ef4444);
-  }
-  .nav-iptv .nav-face em { color: #fca56b; }
-  .nav-card:focus,
-  .nav-card:focus-visible {
-    outline: 3px solid #f5c518;
-    outline-offset: 2px;
   }
 
   /* --- Switch de vista --- */

@@ -254,13 +254,6 @@
 
 <svelte:window onkeydown={onKey} />
 
-<!-- Hint global abajo derecha — oculto en reproducción para no molestar. -->
-{#if !player.playing}
-  <div class="hint-global" aria-hidden="true">
-    <kbd>I</kbd><kbd>I</kbd> ayuda
-  </div>
-{/if}
-
 {#if ayuda.visible && !player.playing}
   <div class="overlay" transition:fade={{ duration: 180 }}>
     <div class="caja">
@@ -289,21 +282,6 @@
 {/if}
 
 <style>
-  .hint-global {
-    position: fixed;
-    bottom: 14px;
-    right: 18px;
-    z-index: 90;
-    color: #998878;
-    font-size: 12px;
-    opacity: 0.7;
-    letter-spacing: 0.4px;
-    pointer-events: none;
-  }
-  .hint-global :global(kbd) {
-    margin-right: 4px;
-  }
-
   .overlay {
     position: fixed;
     inset: 0;
