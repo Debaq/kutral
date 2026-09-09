@@ -3,6 +3,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
   import Database from "@tauri-apps/plugin-sql";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import { onDestroy, onMount } from "svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { afterNavigate, goto } from "$app/navigation";
@@ -1228,7 +1229,39 @@
     mode = "trailer";
     setFs(true);
     registerBackShortcuts(true);
-    setTimeout(() => document.querySelector<HTMLElement>(".trailer-bar .bar-btn")?.focus(), 50);
+    setTimeout(
+      () =>
+        document
+          .querySelector<HTMLElement>(".trailer-open, .trailer-bar .bar-btn")
+          ?.focus(),
+      50,
+    );
+  }
+
+  // Abre el trailer en el navegador del sistema. Kütral corre fullscreen: al
+  // volver, el webview puede quedar sin foco y el mando dejaría de responder,
+  // así que lo reponemos sobre el botón.
+  async function abrirTrailerWeb() {
+    if (!trailerQrUrl) return;
+    try {
+      await openUrl(trailerQrUrl);
+    } catch (e) {
+      console.warn("[openUrl trailer]", e);
+      trailerMsg = "No se pudo abrir el navegador.";
+      setTimeout(() => (trailerMsg = ""), 4000);
+      return;
+    }
+    setTimeout(() => document.querySelector<HTMLElement>(".trailer-open")?.focus(), 400);
+  }
+
+  /** Flechas en la pantalla del trailer: cicla entre sus botones. */
+  function moverFocoTrailer(delta: number) {
+    const btns = Array.from(
+      document.querySelectorAll<HTMLElement>(".trailer-qr-mode [data-nav]"),
+    );
+    if (!btns.length) return;
+    const i = btns.indexOf(document.activeElement as HTMLElement);
+    btns[(i + delta + btns.length) % btns.length].focus();
   }
 
   function saveKey() {
@@ -2493,6 +2526,16 @@
         stopDiscover();
         return;
       }
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        moverFocoTrailer(1);
+        return;
+      }
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        moverFocoTrailer(-1);
+        return;
+      }
       return;
     }
     if (mode === "playmenu" || mode === "episodes" || mode === "sources") {
@@ -2614,9 +2657,12 @@
     </div>
     <div class="trailer-qr">
       <h2>Trailer disponible en YouTube</h2>
-      <p>Escanea el código con el celular para verlo ahí.</p>
+      <p>Escanea el código con el celular, o ábrelo acá en el navegador.</p>
       <img src={trailerQr} alt="Código QR del trailer en YouTube" />
       <code>{trailerQrUrl}</code>
+      <button data-nav class="trailer-open" onclick={abrirTrailerWeb}>
+        🌐  Abrir en el navegador
+      </button>
     </div>
   </div>
 {:else}
@@ -3174,6 +3220,13 @@
                       >{nseasons} {nseasons === 1 ? "temporada" : "temporadas"}</span
                     >
                   {/if}
+                  {#if it.vote_average > 0}
+                    <span
+                      class="card-rating"
+                      title="Valoración {tab === 'anime' ? 'AniList' : 'TMDb'}: {it.vote_average.toFixed(1)} / 10"
+                      >★ {it.vote_average.toFixed(1)}</span
+                    >
+                  {/if}
                   {#if unavail}
                     <span class="card-stamp">NO DISPONIBLE</span>
                   {/if}
@@ -3196,7 +3249,7 @@
                   {#if itImdb}
                     {@const aw = awardsMap.get(itImdb)}
                     {#if aw && aw !== "loading" && (aw.wins > 0 || aw.nominations > 0)}
-                      <div class="card-awards">
+                      <div class="card-awards" class:stacked={it.vote_average > 0}>
                         <span
                           class="award-pill"
                           class:win={aw.wins > 0}
@@ -4314,6 +4367,24 @@
     pointer-events: none;
     text-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
   }
+  /* Nota (TMDb / AniList, ambas /10) arriba a la izquierda del póster. La
+     esquina la comparte con los premios, que bajan con .stacked. */
+  .card-rating {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: rgba(13, 13, 18, 0.85);
+    color: #f5c518;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.3px;
+    z-index: 3;
+    pointer-events: none;
+    backdrop-filter: blur(2px);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+  }
   .card-awards {
     position: absolute;
     top: 8px;
@@ -4324,6 +4395,8 @@
     /* Deja aire a la derecha: la píldora no debe pisar el borde del póster. */
     max-width: calc(100% - 16px);
   }
+  /* Cuando la card también muestra la nota (top-left), bajamos. */
+  .card-awards.stacked { top: 34px; }
   .award-pill {
     background: rgba(0, 0, 0, 0.72);
     /* Gris por defecto = solo nominaciones. El dorado lo pone .win. */
@@ -4520,6 +4593,23 @@
     background: #fff; padding: 12px; border-radius: 12px;
   }
   .trailer-qr code { color: #f5c518; font-size: 14px; letter-spacing: 0.5px; }
+  .trailer-open {
+    background: #f5c518;
+    color: #0d0d12;
+    border: 2px solid transparent;
+    padding: 12px 26px;
+    border-radius: 999px;
+    font-size: 15px;
+    font-weight: 800;
+    cursor: pointer;
+  }
+  .trailer-open:hover,
+  .trailer-open:focus,
+  .trailer-open:focus-visible {
+    outline: none;
+    border-color: #fff;
+    box-shadow: 0 0 0 4px rgba(245, 197, 24, 0.28);
+  }
 
   .trailer-badge-inline {
     padding: 5px 12px;
