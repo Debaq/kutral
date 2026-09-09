@@ -8,9 +8,11 @@
   import Updater from "$lib/Updater.svelte";
   import ResumePill from "$lib/ResumePill.svelte";
   import SubsService from "$lib/SubsService.svelte";
+  import HistorialTracker from "$lib/HistorialTracker.svelte";
   import { config, loadConfig, initDetection, initRd } from "$lib/config.svelte";
   import { initTorrentSession, startQueuePoll, stopQueuePoll } from "$lib/torrents.svelte";
   import { setConcurrenciaScreening } from "$lib/screening.svelte";
+  import { cargarHistorial } from "$lib/historial.svelte";
   import { ACCIONES, loadGamepadMap, gamepadCaptured, type GamepadMap } from "$lib/controls";
   let { children } = $props();
 
@@ -141,6 +143,8 @@
   onMount(() => {
     loadConfig();
     initDetection();
+    // Historial + favoritos a memoria: el grid pinta ticks sin query por card.
+    void cargarHistorial();
     // Migra/lee credenciales RD del store seguro del backend.
     void initRd();
     // Propagar concurrencia configurada al worker Rust.
@@ -231,6 +235,8 @@
 <ResumePill />
 <!-- Subtítulos del reproductor: vive acá para sobrevivir al Esc y al IPTV. -->
 <SubsService />
+<!-- Escribe el progreso de mpv en watch_history mientras reproduce. -->
+<HistorialTracker />
 
 <style>
   :global(html, body) {

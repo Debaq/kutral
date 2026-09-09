@@ -4,7 +4,7 @@
   import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
   import Database from "@tauri-apps/plugin-sql";
   import { onDestroy, onMount } from "svelte";
-  import { afterNavigate } from "$app/navigation";
+  import { afterNavigate, goto } from "$app/navigation";
   import { ayuda } from "$lib/atajos/store.svelte";
   import { setPlaying } from "$lib/playerState.svelte";
   import { config } from "$lib/config.svelte";
@@ -28,24 +28,28 @@
     pausarScreening,
     suscribirScreening,
   } from "$lib/screening.svelte";
+  import {
+    historial,
+    claveMedio,
+    estadoDe,
+    estadoEpisodio,
+    filaPelicula,
+    filaEnCurso,
+    segundosParaRetomar,
+    guardarProgreso,
+    borrarProgreso,
+    marcarVisto,
+    esFavorito,
+    alternarFavorito,
+    setContexto,
+    limpiarContexto,
+    type FilaHistorial,
+    type MediaMeta,
+  } from "$lib/historial.svelte";
 
   type WyzieSubtitle = { url: string; label: string; lang: string };
 
-  type Progress = {
-    imdb_id: string;
-    tmdb_id: number;
-    media_type: string;
-    title: string;
-    poster_path: string | null;
-    watched_seconds: number;
-    runtime_seconds: number | null;
-    progress_real: number | null;
-    completed: number;
-    last_watched: number;
-  };
-
   let db: Awaited<ReturnType<typeof Database.load>> | null = null;
-  let progressForSelected = $state<Progress | null>(null);
   let discoverStartTs = 0;
   let unavailableSet = $state<Set<string>>(new Set());
   let personOpen = $state<PersonInfo | null>(null);
@@ -181,6 +185,11 @@
     known_for_department?: string;
     filmography: PersonFilm[];
   };
+
+  // Sepá (trivia) todavía no existe: su tarjeta ocupaba un lugar en la fila de
+  // accesos y no lleva a ninguna parte. Escondida hasta que haya algo detrás —
+  // el markup y los estilos quedan, poner en true la devuelve.
+  const SEPA_VISIBLE = false;
 
   const IMG = "https://image.tmdb.org/t/p";
 
@@ -414,9 +423,33 @@
     el.focus({ preventScroll: true });
     // preventScroll + scrollTop guardado: la vista queda idéntica a como se
     // dejó. Si no hay scroll guardado, basta con asegurar que la card se vea.
-    if (gridWrapEl && scrollGrid > 0) gridWrapEl.scrollTop = scrollGrid;
+    if (gridWrapEl && scrollGrid > 0) aplicarScrollGrid(gridWrapEl, scrollGrid);
     else el.scrollIntoView({ block: "nearest", behavior: "auto" });
   }
+
+  // Devuelve el scroll al contenedor, con un reintento en el próximo frame:
+  // si el grid todavía no tenía toda su altura, el navegador recorta el valor
+  // al máximo scrolleable de ese instante y quedaríamos a medio camino.
+  function aplicarScrollGrid(el: HTMLDivElement, top: number) {
+    if (top <= 0) return;
+    el.scrollTop = top;
+    requestAnimationFrame(() => {
+      if (gridWrapEl === el && el.scrollTop < top) el.scrollTop = top;
+    });
+  }
+
+  // El contenedor del grid renace con scrollTop 0 cada vez que <main> deja
+  // paso al player, al menú de fuentes o al listado de capítulos. Restaurarlo
+  // acá — cuando el elemento aparece — cubre TODOS los caminos de vuelta de
+  // una vez. Hacerlo en cada cierre se olvidaba de la mitad: closeSources y
+  // closeSeasonView mandan el foco al panel de info, nunca llaman a
+  // volverAlGrid, y el catálogo aparecía rebobinado al principio.
+  $effect(() => {
+    const el = gridWrapEl;
+    if (!el) return;
+    // scrollGrid es plano a propósito: acá solo se lee al montar el elemento.
+    aplicarScrollGrid(el, scrollGrid);
+  });
 
   $effect(() => {
     if (!initialFocusPending) return;
@@ -434,10 +467,12 @@
       el.focus({ preventScroll: true });
       const top = scrollPendiente;
       scrollPendiente = -1;
-      if (gridWrapEl) gridWrapEl.scrollTop = top;
+      if (gridWrapEl) aplicarScrollGrid(gridWrapEl, top);
     } else {
-      el.focus({ preventScroll: false });
+      // Con scroll guardado, enfocar sin preventScroll rebobina lo restaurado.
+      el.focus({ preventScroll: scrollGrid > 0 });
       focusedIdx = idx;
+      if (gridWrapEl && scrollGrid > 0) aplicarScrollGrid(gridWrapEl, scrollGrid);
     }
   });
 
@@ -557,6 +592,42 @@
 
   let selected = $state<Detail | null>(null);
   let detailLoading = $state(false);
+
+  // --- Historial del título abierto -----------------------------------------
+  // El anime de AniList puede no tener imdb y aun así reproducirse (kitsu):
+  // claveMedio() le da una clave sintética para que igual quede registrado.
+  const claveSel = $derived(
+    selected ? (selected.is_anime ? claveMedio(null, selected.id) : claveMedio(selected.imdb_id)) : "",
+  );
+  // Derivado del store: cualquier escritura del tracker se refleja sola, sin
+  // recargar la fila a mano después de cada guardado.
+  const progressForSelected = $derived<FilaHistorial | null>(
+    claveSel ? filaPelicula(claveSel) : null,
+  );
+  const estadoSel = $derived(claveSel ? estadoDe(claveSel) : null);
+  // Lo que pone al título en "seguir viendo": la película a medias, o el
+  // capítulo a medias si es una serie.
+  const enCursoSel = $derived(claveSel ? filaEnCurso(claveSel) : null);
+  const favSel = $derived(claveSel ? esFavorito(claveSel) : false);
+
+  // Metadatos que el historial necesita para escribir una fila. `season`/
+  // `episode` en -1 = película (o el título entero, cuando el marcado es del
+  // título y no de un capítulo).
+  function metaDe(season = -1, episode = -1, ep?: EpisodeMini | null): MediaMeta | null {
+    if (!selected || !claveSel) return null;
+    return {
+      clave: claveSel,
+      tmdbId: selected.id,
+      mediaType: selected.is_anime ? "anime" : selected.media_type,
+      title: selected.title,
+      posterPath: selected.poster_path ?? null,
+      season,
+      episode,
+      stillPath: ep?.still_path ?? null,
+      episodeTitle: ep?.name ?? null,
+      runtimeSeconds: season >= 0 ? null : selected.runtime ? selected.runtime * 60 : null,
+    };
+  }
 
   let mode = $state<"browse" | "discover" | "trailer" | "unavailable" | "sources" | "playmenu" | "episodes">("browse");
   let checkingDiscover = $state(false);
@@ -823,13 +894,16 @@
     }
     const playId = url.searchParams.get("play");
     const playType = url.searchParams.get("type");
+    const playSeason = url.searchParams.get("season");
+    const playEpisode = url.searchParams.get("episode");
+    const desde = url.searchParams.get("from");
     if (playId && playType) {
       // CRÍTICO: limpiar ?play= ANTES de invocar tmdb_detail. Sin esto,
       // un refresh durante o tras el handoff re-dispara el play solo.
       // replaceState NO triggea afterNavigate (no es una nav real), así
       // que no entramos en loop.
       history.replaceState({}, "", "/");
-      void handoffPlay(playId, playType);
+      void handoffPlay(playId, playType, playSeason, playEpisode, desde);
     }
   });
 
@@ -839,12 +913,21 @@
   // startDiscover). Si cualquier paso falla, el user queda en browse
   // SIN peli seleccionada — nunca con un selected viejo simulando ser la
   // peli pedida.
-  async function handoffPlay(idStr: string, typeStr: string) {
+  async function handoffPlay(
+    idStr: string,
+    typeStr: string,
+    seasonStr: string | null = null,
+    episodeStr: string | null = null,
+    desde: string | null = null,
+  ) {
+    // La vuelta se arma recién cuando hay algo que cerrar (ver más abajo): un
+    // handoff que falla deja al user en la home, y ahí un Esc no debe saltar a
+    // una ruta que nadie pidió.
+    volverDesde = "";
     // Limpiar de entrada: si algo de abajo falla, no queremos mostrar
     // la peli que estaba seleccionada antes (de un click previo) como si
     // fuera la del handoff.
     selected = null;
-    progressForSelected = null;
     mode = "browse";
 
     if (!apiKey) {
@@ -856,24 +939,38 @@
       console.warn("[handoff] id inválido:", idStr);
       return;
     }
-    if (typeStr !== "movie" && typeStr !== "tv") {
+    if (typeStr !== "movie" && typeStr !== "tv" && typeStr !== "anime") {
       console.warn("[handoff] type inválido:", typeStr);
       return;
     }
+    // El anime vive en otro catálogo (AniList) y currentKind() lo deduce del
+    // tab: sin cambiarlo, el scraper buscaría la serie como si fuera TMDb.
+    if (typeStr === "anime") switchTab("anime");
     try {
-      const d = await invoke<Detail>("tmdb_detail", {
-        mediaType: typeStr,
-        id,
-        apiKey,
-      });
+      const d =
+        typeStr === "anime"
+          ? await invoke<Detail>("anilist_detail", { id, apiKey })
+          : await invoke<Detail>("tmdb_detail", { mediaType: typeStr, id, apiKey });
       selected = d;
-      await loadProgressForSelected();
+      // Con capítulo en la URL (viene del historial) se salta el selector de
+      // temporada y el menú apunta directo a ese episodio.
+      const se = seasonStr != null ? parseInt(seasonStr, 10) : NaN;
+      const ep = episodeStr != null ? parseInt(episodeStr, 10) : NaN;
+      if (Number.isFinite(se) && Number.isFinite(ep) && se >= 0) {
+        sourcesSeason = se;
+        sourcesEpisode = ep;
+        setContexto(metaDe(se, ep));
+      } else {
+        sourcesSeason = null;
+        sourcesEpisode = null;
+      }
+      if (desde === "historial") volverDesde = "/historial";
       goDescubrir();
     } catch (e) {
       console.warn("[handoff] falló:", e);
       selected = null;
-      progressForSelected = null;
       mode = "browse";
+      volverDesde = "";
     }
   }
 
@@ -948,71 +1045,24 @@
     });
   }
 
-  async function getProgress(imdb_id: string): Promise<Progress | null> {
-    if (!db) return null;
-    try {
-      const rows = await db.select<Progress[]>(
-        "SELECT * FROM watch_history WHERE imdb_id = $1",
-        [imdb_id]
-      );
-      return rows[0] || null;
-    } catch (e) {
-      console.warn("[db] get error", e);
-      return null;
-    }
-  }
-
+  // El player web (iframe) reporta {t,d}: se guarda por el mismo camino que
+  // mpv, contra el store del historial. Ver features.ts — hoy está apagado.
   async function saveProgress(partial: {
     watched_seconds: number;
     runtime_seconds?: number | null;
     progress_real?: number | null;
   }) {
-    if (!db || !selected || !selected.imdb_id) return;
-    const runtime_s = partial.runtime_seconds ?? (selected.runtime ? selected.runtime * 60 : null);
-    const real = partial.progress_real ?? null;
-    const completed = real != null && real >= 0.9
-      ? 1
-      : (runtime_s && partial.watched_seconds >= runtime_s * 0.9 ? 1 : 0);
-    try {
-      await db.execute(
-        `INSERT INTO watch_history
-          (imdb_id, tmdb_id, media_type, title, poster_path,
-           watched_seconds, runtime_seconds, progress_real, completed, last_watched)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-         ON CONFLICT(imdb_id) DO UPDATE SET
-           watched_seconds = excluded.watched_seconds,
-           runtime_seconds = COALESCE(excluded.runtime_seconds, watch_history.runtime_seconds),
-           progress_real   = COALESCE(excluded.progress_real,   watch_history.progress_real),
-           completed       = excluded.completed,
-           last_watched    = excluded.last_watched`,
-        [
-          selected.imdb_id,
-          selected.id,
-          selected.media_type,
-          selected.title,
-          selected.poster_path ?? null,
-          partial.watched_seconds,
-          runtime_s,
-          real,
-          completed,
-          Date.now(),
-        ]
-      );
-      progressForSelected = await getProgress(selected.imdb_id);
-      console.log("[db] guardado", selected.imdb_id, "watched=", partial.watched_seconds, "→", progressForSelected);
-    } catch (e) {
-      console.error("[db] save error", e);
-    }
+    const meta = metaDe();
+    if (!meta) return;
+    await guardarProgreso(meta, {
+      watched: partial.watched_seconds,
+      runtime: partial.runtime_seconds ?? null,
+      real: partial.progress_real ?? null,
+    });
   }
 
-  async function clearProgressFor(imdb_id: string) {
-    if (!db) return;
-    try {
-      await db.execute("DELETE FROM watch_history WHERE imdb_id = $1", [imdb_id]);
-      if (selected?.imdb_id === imdb_id) progressForSelected = null;
-    } catch (e) {
-      console.warn("[db] delete error", e);
-    }
+  async function clearProgressFor(clave: string) {
+    await borrarProgreso(clave, -1, -1);
   }
 
   async function loadUnavailableSet() {
@@ -1061,15 +1111,6 @@
     } catch (e) {
       console.warn("[db] clearUnavailable error", e);
     }
-  }
-
-  async function loadProgressForSelected() {
-    if (!selected?.imdb_id) {
-      progressForSelected = null;
-      return;
-    }
-    progressForSelected = await getProgress(selected.imdb_id);
-    console.log("[db] load para", selected.imdb_id, "→", progressForSelected);
   }
 
   // Resultado de la búsqueda de trailer.
@@ -1155,6 +1196,9 @@
 
   // Reproduce el trailer en mpv. Devuelve false si mpv no lo aceptó.
   async function playTrailerInMpv(url: string, title: string): Promise<boolean> {
+    // Un trailer no es "haber visto la película": sin limpiar el contexto, dos
+    // minutos de avance marcarían el título como empezado.
+    limpiarContexto();
     try {
       // mpv_play_trailer, no mpv_play: un trailer no reemplaza la película que
       // estuviera esperando ni se queda él mismo en la pill al salir.
@@ -1253,9 +1297,12 @@
       items = [];
       cardEls = [];
     }
-    // Lista nueva: el scroll y el foco guardados ya no aplican.
+    // Lista nueva: el scroll y el foco guardados ya no aplican. El contenedor
+    // no se desmonta cuando se conservan las cards viejas, así que hay que
+    // subirlo a mano o el user queda mirando el medio de la lista anterior.
     scrollGrid = 0;
     scrollPendiente = -1;
+    if (gridWrapEl) gridWrapEl.scrollTop = 0;
     loadList(false);
   }
 
@@ -1543,7 +1590,6 @@
     try {
       const d = await invoke<Detail>("tmdb_detail", { mediaType, id, apiKey });
       selected = d;
-      await loadProgressForSelected();
     } catch (e) {
       console.warn("[tmdb_detail filmography] error", e);
     }
@@ -1657,7 +1703,6 @@
         seriesEpisodes = [];
         sourcesSeason = null;
         sourcesEpisode = null;
-        loadProgressForSelected();
         return d;
       } catch (e) {
         listError = String(e);
@@ -1816,6 +1861,19 @@
   // Temporada/episodio elegidos (series/anime). null en películas.
   let sourcesSeason = $state<number | null>(null);
   let sourcesEpisode = $state<number | null>(null);
+  // Ruta desde la que llegó el handoff (?from=). Cerrar el menú vuelve ahí en
+  // vez de dejar al user tirado en la home: si entró desde Vistos, salir tiene
+  // que devolverlo a Vistos. Se consume una sola vez.
+  let volverDesde = $state("");
+
+  // "Empezar de nuevo": ignora el punto guardado en el próximo lanzamiento.
+  // Se apaga solo al abrir el menú de nuevo (ver openDebrid).
+  let empezarDeCero = $state(false);
+  const reanudarDesde = $derived(
+    empezarDeCero || !claveSel
+      ? 0
+      : segundosParaRetomar(claveSel, sourcesSeason ?? -1, sourcesEpisode ?? -1),
+  );
 
   // --- Navegación in-place de series: temporada elegida en el panel derecho →
   // el grid de carátulas muestra los capítulos de esa temporada. ---
@@ -1888,6 +1946,7 @@
     if (seriesSeason == null) return;
     sourcesSeason = seriesSeason;
     sourcesEpisode = ep.episode_number;
+    setContexto(metaDe(seriesSeason, ep.episode_number, ep));
     goDescubrir();
   }
 
@@ -1900,7 +1959,7 @@
   // Etiqueta de progreso para el menú ("45%" / "12m 3s" / null si no hay).
   function progressLabelFor(): string | null {
     const p = progressForSelected;
-    if (!p || p.watched_seconds <= 5) return null;
+    if (!p || p.completed === 1 || p.watched_seconds <= 5) return null;
     if (p.runtime_seconds && p.runtime_seconds > 0) {
       return Math.round((p.watched_seconds / p.runtime_seconds) * 100) + "%";
     }
@@ -2011,14 +2070,26 @@
 
   // --- Acciones del menú ---
   function menuContinue() { void startDiscover(); }      // web con resume
-  function menuRestart() { void restartDiscover(); }     // web desde 0
+  // "Empezar de nuevo". Con debrid no se borra el historial: solo se lanza
+  // desde 0. Borrarlo perdería el dato de que ya la habías visto a medias.
+  function menuRestart() {
+    if (config.rdLinked) {
+      openDebrid(true, true);
+      return;
+    }
+    void restartDiscover();
+  }
   // Abre la ruta debrid. Películas → lista directa. Series/anime → elegir
   // temporada/episodio primero.
-  function openDebrid(autoplay: boolean) {
+  function openDebrid(autoplay: boolean, desdeCero = false) {
     sourcesAutoplay = autoplay;
+    empezarDeCero = desdeCero;
     if (selected?.media_type === "movie") {
       sourcesSeason = null;
       sourcesEpisode = null;
+      // El tracker escribe contra este contexto: sin él mpv reproduce pero
+      // nada queda registrado (ver HistorialTracker.svelte).
+      setContexto(metaDe());
       mode = "sources";
     } else if (sourcesSeason != null && sourcesEpisode != null) {
       // Capítulo ya elegido inline → directo a fuentes, sin EpisodePicker.
@@ -2031,9 +2102,16 @@
   function menuResearch() { openDebrid(false); }   // elegir
 
   // Episodio elegido en EpisodePicker → a la lista de fuentes.
-  function onPickEpisode(season: number, episode: number) {
+  function onPickEpisode(
+    season: number,
+    episode: number,
+    ep?: { name: string; still_path: string | null },
+  ) {
     sourcesSeason = season;
     sourcesEpisode = episode;
+    setContexto(
+      metaDe(season, episode, ep ? ({ ...ep, episode_number: episode } as EpisodeMini) : null),
+    );
     mode = "sources";
   }
   function menuWeb() { void startDiscover(true); }       // iframe playimdb
@@ -2043,6 +2121,12 @@
     mode = "browse";
     setFs(false);
     void unregisterBackShortcuts();
+    if (volverDesde) {
+      const destino = volverDesde;
+      volverDesde = "";
+      void goto(destino);
+      return;
+    }
     setTimeout(() => {
       const info = document.querySelector<HTMLElement>('[data-section="info"] [data-nav]');
       // Sin panel de info (o vacío) el foco caería en body y el focus-guard
@@ -2069,9 +2153,9 @@
   async function restartDiscover() {
     // "Desde el inicio": resetea progreso wall-clock y abre. El iframe arranca
     // sin resumeAt → player comienza en 0.
-    if (!selected?.imdb_id) return;
+    if (!claveSel) return;
     try {
-      await clearProgressFor(selected.imdb_id);
+      await clearProgressFor(claveSel);
     } catch (e) {
       console.warn("[clearProgressFor]", e);
     }
@@ -2386,6 +2470,7 @@
     seasons={selected.seasons ?? []}
     apiKey={apiKey}
     animeId={selected.is_anime ? selected.id : null}
+    clave={claveSel}
     onPick={onPickEpisode}
     onWeb={menuWeb}
     onClose={closeSources}
@@ -2402,6 +2487,7 @@
     kitsuId={selected.kitsu_id ?? null}
     rdLinked={config.rdLinked}
     autoplay={sourcesAutoplay}
+    retomarSegundos={reanudarDesde}
     onClose={closeSources}
     onWeb={menuWeb}
   />
@@ -2491,6 +2577,43 @@
             {#each selected.genres as g}<span class="genre">{g}</span>{/each}
           </div>
           <p class="overview">{selected.overview || "(sin sinopsis)"}</p>
+          {#if claveSel}
+            <div class="hist-row">
+              <button
+                data-nav
+                class="hist-btn"
+                class:on={favSel}
+                onclick={() => void alternarFavorito(metaDe()!)}
+              >
+                {favSel ? "★ Quitar de favoritos" : "☆ Agregar a favoritos"}
+              </button>
+              {#if enCursoSel}
+                {@const ec = enCursoSel}
+                <button
+                  data-nav
+                  class="hist-btn"
+                  onclick={() => void borrarProgreso(ec.imdb_id, ec.season, ec.episode)}
+                  title="Borra el minuto guardado y lo saca de la lista"
+                >
+                  ✕ Quitar de seguir viendo{ec.season >= 0 ? ` (T${ec.season} E${ec.episode})` : ""}
+                </button>
+              {/if}
+              {#if selected.media_type === "movie"}
+                {@const yaVista = progressForSelected?.completed === 1}
+                <button
+                  data-nav
+                  class="hist-btn"
+                  class:on={yaVista}
+                  onclick={() => void marcarVisto(metaDe()!, !yaVista)}
+                  title={yaVista ? "Desmarcar" : "Marcar como vista sin reproducirla"}
+                >
+                  {yaVista ? "✓ Vista" : "✓ Marcar vista"}
+                </button>
+              {:else if estadoSel?.vistos}
+                <span class="hist-info">{estadoSel.vistos} {estadoSel.vistos === 1 ? "capítulo visto" : "capítulos vistos"}</span>
+              {/if}
+            </div>
+          {/if}
           {#if selected.imdb_id && !unavailableSet.has(selected.imdb_id)}
             {#if selected.media_type === "tv"}
               <!-- Series: la reproducción es por capítulo (lista de Temporadas
@@ -2646,9 +2769,17 @@
           <div class="grid-wrap">
             <div class="grid" data-section="gallery">
               {#each seriesEpisodes as ep (ep.episode_number)}
+                {@const fila = seriesSeason != null ? estadoEpisodio(claveSel, seriesSeason, ep.episode_number) : null}
+                {@const epPct = fila
+                  ? Math.round(
+                      (fila.progress_real ??
+                        (fila.runtime_seconds ? fila.watched_seconds / fila.runtime_seconds : 0)) * 100,
+                    )
+                  : 0}
                 <button
                   data-nav
                   class="card ep-card"
+                  class:ep-visto={fila?.completed === 1}
                   onclick={() => chooseEpisode(ep)}
                   title={ep.name}
                 >
@@ -2656,6 +2787,11 @@
                     <img src={art(ep.still_path, "w300", 300)} alt={ep.name} loading="lazy" onerror={onImgError} />
                   {:else}
                     <div class="no-poster ep-noimg">E{ep.episode_number}</div>
+                  {/if}
+                  {#if fila?.completed === 1}
+                    <span class="card-tick" title="Ya lo viste">✓</span>
+                  {:else if fila && epPct > 0}
+                    <span class="card-barra"><span class="card-barra-fill" style:width="{Math.max(3, epPct)}%"></span></span>
                   {/if}
                 </button>
               {/each}
@@ -2800,78 +2936,95 @@
           }}
         >
           <div class="grid" data-section="gallery" bind:this={gridEl}>
-            <a class="card vera-card" data-nav href="/vera" title="Pregúntale a Vera">
-              <div class="vera-poster">
-                <div class="vera-title-poster">
-                  <span class="vera-marca">Vera</span>
-                  <em>and Chill</em>
+            <!-- Accesos de la casa. Van en una fila propia que ocupa el ancho
+                 completo del grid y se reparte a partes iguales: con el grid
+                 normal, sumar una tarjeta empujaba la última a la fila de
+                 abajo. Acá se comprimen, nunca envuelven. -->
+            <div class="accesos">
+              <a class="card vera-card" data-nav href="/vera" title="Pregúntale a Vera">
+                <div class="vera-poster">
+                  <div class="vera-title-poster">
+                    <span class="vera-marca">Vera</span>
+                    <em>and Chill</em>
+                  </div>
                 </div>
-              </div>
-            </a>
+              </a>
 
-            <div
-              class="card sepa-card"
-              role="presentation"
-              aria-label="Sepá — próximamente"
-              title="Sepá — próximamente"
-            >
-              <span class="card-badge badge-coming">Próximamente</span>
-              <div class="sepa-poster">
-                <div class="vera-title-poster">
-                  <span class="sepa-marca">Sepá</span>
-                  <em class="sepa-em">trivia</em>
+              <a class="card lista-card" data-nav href="/historial" title="Lo que viste y tus favoritos">
+                <div class="lista-poster">
+                  <div class="vera-title-poster">
+                    <span class="lista-marca">Vistos</span>
+                    <em class="lista-em">y favoritos</em>
+                  </div>
                 </div>
-              </div>
+              </a>
+
+              {#if SEPA_VISIBLE}
+                <div
+                  class="card sepa-card"
+                  role="presentation"
+                  aria-label="Sepá — próximamente"
+                  title="Sepá — próximamente"
+                >
+                  <span class="card-badge badge-coming">Próximamente</span>
+                  <div class="sepa-poster">
+                    <div class="vera-title-poster">
+                      <span class="sepa-marca">Sepá</span>
+                      <em class="sepa-em">trivia</em>
+                    </div>
+                  </div>
+                </div>
+              {/if}
+
+              <a class="card juegos-card" data-nav href="/juegos" title="Jugar">
+                <div class="juegos-poster">
+                  <div class="vera-title-poster">
+                    <span class="juegos-marca">Juegos</span>
+                    <em>retro</em>
+                  </div>
+                </div>
+              </a>
+
+              <a class="card iptv-card" data-nav href="/iptv" title="TV en vivo">
+                <div class="iptv-poster">
+                  <div class="vera-title-poster">
+                    <span class="iptv-marca">IPTV</span>
+                    <em>en vivo</em>
+                  </div>
+                </div>
+              </a>
+
+              {#if tab !== "movie"}
+                <button class="card cat-card cat-movie" data-nav onclick={() => switchTab("movie")} title="Películas">
+                  <div class="cat-poster">
+                    <div class="vera-title-poster">
+                      <span class="cat-marca">Pelis</span>
+                      <em>cine</em>
+                    </div>
+                  </div>
+                </button>
+              {/if}
+              {#if tab !== "tv"}
+                <button class="card cat-card cat-tv" data-nav onclick={() => switchTab("tv")} title="Series">
+                  <div class="cat-poster">
+                    <div class="vera-title-poster">
+                      <span class="cat-marca">Series</span>
+                      <em>tv</em>
+                    </div>
+                  </div>
+                </button>
+              {/if}
+              {#if tab !== "anime"}
+                <button class="card cat-card cat-anime" data-nav onclick={() => switchTab("anime")} title="Anime">
+                  <div class="cat-poster">
+                    <div class="vera-title-poster">
+                      <span class="cat-marca">Anime</span>
+                      <em>日本</em>
+                    </div>
+                  </div>
+                </button>
+              {/if}
             </div>
-
-            <a class="card juegos-card" data-nav href="/juegos" title="Jugar">
-              <div class="juegos-poster">
-                <div class="vera-title-poster">
-                  <span class="juegos-marca">Juegos</span>
-                  <em>retro</em>
-                </div>
-              </div>
-            </a>
-
-            <a class="card iptv-card" data-nav href="/iptv" title="TV en vivo">
-              <div class="iptv-poster">
-                <div class="vera-title-poster">
-                  <span class="iptv-marca">IPTV</span>
-                  <em>en vivo</em>
-                </div>
-              </div>
-            </a>
-
-            {#if tab !== "movie"}
-              <button class="card cat-card cat-movie" data-nav onclick={() => switchTab("movie")} title="Películas">
-                <div class="cat-poster">
-                  <div class="vera-title-poster">
-                    <span class="cat-marca">Pelis</span>
-                    <em>cine</em>
-                  </div>
-                </div>
-              </button>
-            {/if}
-            {#if tab !== "tv"}
-              <button class="card cat-card cat-tv" data-nav onclick={() => switchTab("tv")} title="Series">
-                <div class="cat-poster">
-                  <div class="vera-title-poster">
-                    <span class="cat-marca">Series</span>
-                    <em>tv</em>
-                  </div>
-                </div>
-              </button>
-            {/if}
-            {#if tab !== "anime"}
-              <button class="card cat-card cat-anime" data-nav onclick={() => switchTab("anime")} title="Anime">
-                <div class="cat-poster">
-                  <div class="vera-title-poster">
-                    <span class="cat-marca">Anime</span>
-                    <em>日本</em>
-                  </div>
-                </div>
-              </button>
-            {/if}
 
             {#each items as it, i (it.id)}
               {@const title = it.title || it.name || ""}
@@ -2881,6 +3034,8 @@
               {@const itImdb = imdbIdMap.get(it.id)}
               {@const unavail = itImdb ? unavailableSet.has(itImdb) : false}
               {@const nseasons = seasonsMap.get(it.id)}
+              {@const clv = tab === "anime" ? claveMedio(null, it.id) : claveMedio(itImdb)}
+              {@const vis = clv ? estadoDe(clv) : null}
               {#if st !== "none"}
                 <button
                   data-nav
@@ -2909,6 +3064,22 @@
                   {/if}
                   {#if unavail}
                     <span class="card-stamp">NO DISPONIBLE</span>
+                  {/if}
+                  {#if esFavorito(clv)}
+                    <span class="card-fav" title="En favoritos">★</span>
+                  {/if}
+                  {#if vis?.visto}
+                    <span class="card-tick" title={vis.ultimoEp ? `Al día · ${vis.vistos} capítulos vistos` : "Ya la viste"}>✓</span>
+                  {:else if vis?.parcial}
+                    <span
+                      class="card-medias"
+                      title={vis.ultimoEp
+                        ? `A medias · T${vis.ultimoEp.season} E${vis.ultimoEp.episode}`
+                        : `A medias · ${vis.pct}%`}
+                    >
+                      {vis.ultimoEp ? `T${vis.ultimoEp.season} E${vis.ultimoEp.episode}` : `${vis.pct}%`}
+                    </span>
+                    <span class="card-barra"><span class="card-barra-fill" style:width="{Math.max(3, vis.pct)}%"></span></span>
                   {/if}
                   {#if itImdb}
                     {@const aw = awardsMap.get(itImdb)}
@@ -3622,6 +3793,33 @@
   .card:hover { transform: translateY(-3px); box-shadow: 0 12px 28px rgba(0,0,0,0.6); }
   .card.selected { box-shadow: 0 0 0 2px #f5c518; }
 
+  /* Fila de accesos: una sola línea, siempre. Ocupa todas las columnas del
+     grid y reparte el ancho en partes iguales, así sumar o sacar una tarjeta
+     encoge las demás en vez de mandar la última a la fila de abajo. */
+  .accesos {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 20px;
+    align-items: start;
+  }
+  .accesos > .card {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  /* Con 7 accesos en una pantalla angosta el texto es lo primero que revienta:
+     escala con el ancho de la tarjeta y nunca corta en dos líneas. */
+  .accesos .vera-title-poster {
+    max-width: 100%;
+  }
+  .accesos .vera-title-poster span,
+  .accesos .vera-title-poster em {
+    font-size: clamp(11px, 1.5vw, 24px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+  }
+
   .vera-card { text-decoration: none; }
   .vera-poster {
     aspect-ratio: 2 / 1;
@@ -3676,10 +3874,35 @@
     text-shadow: 0 0 14px rgba(255, 140, 60, 0.45);
     margin-top: 4px;
   }
-  .vera-icon-title {
-    color: #ffae5c;
-    text-shadow: 0 0 10px rgba(255, 140, 60, 0.5);
-    font-size: 18px;
+
+  /* Vistos: entra al historial. Va pegada a Vera porque las dos hablan del
+     gusto de la casa — una lo predice, la otra lo recuerda. */
+  .lista-card { text-decoration: none; }
+  .lista-poster {
+    aspect-ratio: 2 / 1;
+    background: radial-gradient(ellipse at 50% 35%, #06251a 0%, #04140f 65%, #020807 100%);
+    position: relative; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .lista-poster::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background:
+      radial-gradient(circle at 30% 20%, rgba(47, 158, 68, 0.18), transparent 55%),
+      radial-gradient(circle at 70% 80%, rgba(126, 224, 148, 0.12), transparent 55%);
+  }
+  .lista-marca {
+    font-size: clamp(16px, 2.2vw, 24px);
+    font-weight: 800;
+    background-image: linear-gradient(90deg, #2f9e44, #7ee094, #d6ffe0, #7ee094, #2f9e44);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+  }
+  .lista-em {
+    color: #7ee094 !important;
+    -webkit-text-fill-color: #7ee094 !important;
+    text-shadow: 0 0 14px rgba(47, 158, 68, 0.45) !important;
   }
 
   /* Sepá: misma fila que Vera, esquina derecha. Placeholder "Próximamente". */
@@ -3715,11 +3938,6 @@
     -webkit-text-fill-color: #9cc8ff !important;
     text-shadow: 0 0 14px rgba(110, 193, 255, 0.45) !important;
   }
-  .sepa-icon-title {
-    color: #6ec1ff;
-    text-shadow: 0 0 10px rgba(110, 193, 255, 0.5);
-    font-size: 18px;
-  }
   .juegos-card {
     text-decoration: none;
   }
@@ -3746,11 +3964,6 @@
     -webkit-text-fill-color: transparent;
     color: transparent;
   }
-  .juegos-icon-title {
-    color: #9c7bff;
-    text-shadow: 0 0 10px rgba(125, 79, 255, 0.5);
-    font-size: 18px;
-  }
 
   /* IPTV — rojo/naranjo señal en vivo. */
   .iptv-card { text-decoration: none; }
@@ -3776,11 +3989,6 @@
     color: transparent;
   }
   .iptv-card em { color: #fca56b !important; text-shadow: 0 0 14px rgba(249, 115, 22, 0.45); }
-  .iptv-icon-title {
-    color: #f97316;
-    text-shadow: 0 0 10px rgba(249, 115, 22, 0.5);
-    font-size: 18px;
-  }
 
   /* Cards de categoría (Películas / Series / Anime) — reemplazan los tabs. */
   .cat-card {
@@ -3809,8 +4017,6 @@
     -webkit-text-fill-color: transparent;
     color: transparent;
   }
-  .cat-icon-title { font-size: 18px; }
-
   /* Películas — dorado/ámbar */
   .cat-movie .cat-poster {
     background: radial-gradient(ellipse at 50% 35%, #2a2008 0%, #14100a 65%, #070503 100%);
@@ -3824,7 +4030,6 @@
     background-image: linear-gradient(90deg, #f5c518, #ffd76a, #fff0b3, #ffd76a, #f5c518);
   }
   .cat-movie em { color: #ffd76a !important; text-shadow: 0 0 14px rgba(245, 197, 24, 0.45); }
-  .cat-movie .cat-icon-title { color: #f5c518; text-shadow: 0 0 10px rgba(245, 197, 24, 0.5); }
 
   /* Series — verde/teal */
   .cat-tv .cat-poster {
@@ -3839,7 +4044,6 @@
     background-image: linear-gradient(90deg, #10b981, #34d399, #a7f3d0, #34d399, #10b981);
   }
   .cat-tv em { color: #6ee7b7 !important; text-shadow: 0 0 14px rgba(52, 211, 153, 0.45); }
-  .cat-tv .cat-icon-title { color: #34d399; text-shadow: 0 0 10px rgba(52, 211, 153, 0.5); }
 
   /* Anime — rosa sakura */
   .cat-anime .cat-poster {
@@ -3854,7 +4058,6 @@
     background-image: linear-gradient(90deg, #f472b6, #ff9ad4, #ffd1ec, #ff9ad4, #f472b6);
   }
   .cat-anime em { color: #ff9ad4 !important; text-shadow: 0 0 14px rgba(244, 114, 182, 0.45); }
-  .cat-anime .cat-icon-title { color: #f472b6; text-shadow: 0 0 10px rgba(244, 114, 182, 0.5); }
   .badge-coming {
     background: #4a8ed8;
     color: #04101e;
@@ -3901,6 +4104,103 @@
     pointer-events: none;
     z-index: 3;
     white-space: nowrap;
+  }
+  /* Fila de acciones de historial del panel de info. */
+  .hist-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin: 10px 0 4px;
+  }
+  .hist-btn {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    color: #d8d8e0;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .hist-btn:hover,
+  .hist-btn:focus-visible {
+    border-color: #f3a951;
+    color: #fff;
+    outline: none;
+  }
+  .hist-btn.on {
+    background: rgba(47, 158, 68, 0.18);
+    border-color: #2f9e44;
+    color: #7ee094;
+  }
+  .hist-info {
+    font-size: 12px;
+    color: #9a9aa4;
+  }
+  .ep-card.ep-visto img {
+    opacity: 0.45;
+  }
+  /* --- Marcas de historial en la tarjeta -------------------------------
+     Tick verde = terminado. Píldora + barra naranja = a medias. La estrella
+     de favorito va abajo a la izquierda porque arriba viven los premios. */
+  .card-tick {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    width: 26px;
+    height: 26px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: #2f9e44;
+    color: #fff;
+    font-size: 15px;
+    font-weight: 900;
+    z-index: 3;
+    pointer-events: none;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.65);
+  }
+  .card-medias {
+    position: absolute;
+    right: 8px;
+    bottom: 12px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: rgba(13, 13, 18, 0.85);
+    color: #f3a951;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.4px;
+    z-index: 3;
+    pointer-events: none;
+    backdrop-filter: blur(2px);
+  }
+  .card-barra {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 5px;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 3;
+    pointer-events: none;
+  }
+  .card-barra-fill {
+    display: block;
+    height: 100%;
+    background: #f3a951;
+  }
+  .card-fav {
+    position: absolute;
+    left: 8px;
+    bottom: 8px;
+    color: #f5c518;
+    font-size: 17px;
+    line-height: 1;
+    z-index: 3;
+    pointer-events: none;
+    text-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
   }
   .card-awards {
     position: absolute;

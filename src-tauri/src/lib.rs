@@ -2918,6 +2918,71 @@ pub fn run() {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 7,
+            description: "historial_por_episodio_y_favoritos",
+            // watch_history nació con PK = imdb_id: una serie entera compartía
+            // una fila y cada capítulo pisaba al anterior. Ahora la PK es
+            // (imdb_id, season, episode) con -1/-1 para películas, que es el
+            // valor con el que migran las filas viejas.
+            //
+            // SQLite no sabe cambiar una PK con ALTER: hay que reconstruir la
+            // tabla y copiar. La copia preserva TODO el historial previo.
+            //
+            // `imdb_id` también acepta claves sintéticas `anilist:<id>` para el
+            // anime que no tiene imdb (ver historial.svelte.ts). Por eso sigue
+            // siendo TEXT y no se valida el formato tt*.
+            //
+            // still_path / episode_title: sin ellos la lista por fecha no
+            // podría dibujar un capítulo (el poster de la serie no dice cuál
+            // viste).
+            sql: "
+                CREATE TABLE watch_history_nuevo (
+                    imdb_id TEXT NOT NULL,
+                    season INTEGER NOT NULL DEFAULT -1,
+                    episode INTEGER NOT NULL DEFAULT -1,
+                    tmdb_id INTEGER NOT NULL,
+                    media_type TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    poster_path TEXT,
+                    still_path TEXT,
+                    episode_title TEXT,
+                    watched_seconds INTEGER NOT NULL DEFAULT 0,
+                    runtime_seconds INTEGER,
+                    progress_real REAL,
+                    completed INTEGER NOT NULL DEFAULT 0,
+                    last_watched INTEGER NOT NULL,
+                    PRIMARY KEY (imdb_id, season, episode)
+                );
+
+                INSERT INTO watch_history_nuevo
+                    (imdb_id, season, episode, tmdb_id, media_type, title,
+                     poster_path, watched_seconds, runtime_seconds,
+                     progress_real, completed, last_watched)
+                SELECT imdb_id, -1, -1, tmdb_id, media_type, title,
+                       poster_path, watched_seconds, runtime_seconds,
+                       progress_real, completed, last_watched
+                  FROM watch_history;
+
+                DROP TABLE watch_history;
+                ALTER TABLE watch_history_nuevo RENAME TO watch_history;
+
+                CREATE INDEX IF NOT EXISTS idx_wh_last ON watch_history(last_watched);
+                CREATE INDEX IF NOT EXISTS idx_wh_imdb ON watch_history(imdb_id);
+
+                CREATE TABLE IF NOT EXISTS favorites (
+                    imdb_id TEXT PRIMARY KEY,
+                    tmdb_id INTEGER NOT NULL,
+                    media_type TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    poster_path TEXT,
+                    added_at INTEGER NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_fav_added ON favorites(added_at);
+            ",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

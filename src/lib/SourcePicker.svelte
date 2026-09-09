@@ -63,6 +63,7 @@
     kitsuId = null,
     rdLinked,
     autoplay = false,
+    retomarSegundos = 0,
     onClose,
     onWeb,
   }: {
@@ -80,6 +81,8 @@
     kitsuId?: number | null;
     rdLinked: boolean;
     autoplay?: boolean;
+    /** Segundo desde el que arranca mpv (historial). 0 = desde el principio. */
+    retomarSegundos?: number;
     onClose: () => void;
     onWeb: () => void;
   } = $props();
@@ -440,7 +443,11 @@
     resolvingMsg = "Abriendo reproductor…";
     // Contexto para el buscador de subtítulos global (SubsService).
     setNowPlaying(imdbId, title);
-    await invoke("mpv_play", { url, title });
+    // Retomar donde quedó. 5 s de colchón: caer justo en el corte desorienta,
+    // un poco de contexto previo hace que se retome la escena, no el frame.
+    const desde = retomarSegundos > 5 ? Math.floor(retomarSegundos) - 5 : 0;
+    if (desde > 0) dbg(`retomando en ${desde}s`);
+    await invoke("mpv_play", { url, title, startSecs: desde > 0 ? desde : null });
     resolving = false;
     playing = true;
     playingTitle = s.title;

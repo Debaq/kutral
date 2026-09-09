@@ -3,6 +3,7 @@
   import { goto } from "$app/navigation";
   import { invoke } from "@tauri-apps/api/core";
   import { setNowPlaying } from "$lib/playerState.svelte";
+  import { limpiarContexto } from "$lib/historial.svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { getVersion } from "@tauri-apps/api/app";
   import { check, type Update } from "@tauri-apps/plugin-updater";
@@ -596,6 +597,8 @@
     if (!testUrl) { log("primero resuelve una URL (Probar)"); return; }
     try {
       setNowPlaying("", "Prueba Kütral");
+      // Prueba técnica: no debe contarse como "visto" de nada del catálogo.
+      limpiarContexto();
       await invoke("mpv_play", { url: testUrl, title: "Prueba Kütral" });
       log("▶ mpv lanzado");
     } catch (e) {

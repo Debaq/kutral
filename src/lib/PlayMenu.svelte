@@ -144,7 +144,14 @@
       // igual mostramos "Ver con debrid": SourcePicker responde con "Vincula tu
       // debrid en Configuración para reproducir", que es accionable. Un menú
       // vacío no le dice nada al user.
-      a.push({ id: "rd", label: "⚡  Ver con debrid", primary: true });
+      a.push({
+        id: "rd",
+        label: progressLabel ? `⚡  Continuar (${progressLabel})` : "⚡  Ver con debrid",
+        primary: true,
+      });
+      // El historial guarda el minuto: si hay algo empezado, hace falta la
+      // salida para verlo desde el principio otra vez.
+      if (progressLabel) a.push({ id: "restart", label: "↻  Empezar de nuevo" });
       a.push({ id: "research", label: "🔄  Rebuscar fuentes" });
       a.push(...web);
     } else {

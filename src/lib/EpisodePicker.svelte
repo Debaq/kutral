@@ -6,6 +6,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
   import { WEB_PLAYER_ENABLED } from "$lib/features";
+  import { estadoEpisodio } from "$lib/historial.svelte";
 
   type Season = {
     season_number: number;
@@ -31,6 +32,7 @@
     seasons,
     apiKey,
     animeId = null,
+    clave = "",
     onPick,
     onWeb,
     onClose,
@@ -44,7 +46,9 @@
     // ID AniList: si viene, los episodios salen de ani.zip (no TMDb) y
     // still_path llega como URL completa.
     animeId?: number | null;
-    onPick: (season: number, episode: number) => void;
+    /** Clave del historial (imdb_id o `anilist:<id>`). Vacía = sin marcas. */
+    clave?: string;
+    onPick: (season: number, episode: number, ep?: { name: string; still_path: string | null }) => void;
     onWeb: () => void;
     onClose: () => void;
   } = $props();
@@ -112,7 +116,23 @@
   function chooseEpisode() {
     const s = seasons[seasonIdx];
     const e = episodes[epIdx];
-    if (s && e) onPick(s.season_number, e.episode_number);
+    if (s && e) onPick(s.season_number, e.episode_number, { name: e.name, still_path: e.still_path });
+  }
+
+  // Marca de visto del capítulo: ✓ si terminó, % si quedó a medias.
+  function marca(epNum: number): { visto: boolean; pct: number } | null {
+    const s = seasons[seasonIdx];
+    if (!clave || !s) return null;
+    const fila = estadoEpisodio(clave, s.season_number, epNum);
+    if (!fila) return null;
+    if (fila.completed === 1) return { visto: true, pct: 100 };
+    const real =
+      fila.progress_real ??
+      (fila.runtime_seconds && fila.runtime_seconds > 0
+        ? fila.watched_seconds / fila.runtime_seconds
+        : 0);
+    const pct = Math.max(0, Math.min(100, Math.round(real * 100)));
+    return pct > 0 ? { visto: false, pct } : null;
   }
 
   function scrollFocused() {
@@ -206,18 +226,27 @@
           <p class="ep-error">{epError}</p>
         {:else}
           {#each episodes as ep, i (ep.episode_number)}
+            {@const m = marca(ep.episode_number)}
             <button
               class="ep-item"
               class:focused={pane === "episodes" && epIdx === i}
               class:ep-focused={pane === "episodes" && epIdx === i}
+              class:ep-visto={m?.visto}
               onclick={() => { epIdx = i; chooseEpisode(); }}
               onmouseenter={() => (epIdx = i)}
             >
-              {#if ep.still_path}
-                <img class="ep-still" src={ep.still_path.startsWith("http") ? ep.still_path : `${stillBase}${ep.still_path}`} alt="" loading="lazy" />
-              {:else}
-                <div class="ep-still ep-still-empty">{ep.episode_number}</div>
-              {/if}
+              <div class="ep-still-wrap">
+                {#if ep.still_path}
+                  <img class="ep-still" src={ep.still_path.startsWith("http") ? ep.still_path : `${stillBase}${ep.still_path}`} alt="" loading="lazy" />
+                {:else}
+                  <div class="ep-still ep-still-empty">{ep.episode_number}</div>
+                {/if}
+                {#if m?.visto}
+                  <span class="ep-tick" title="Ya lo viste">✓</span>
+                {:else if m}
+                  <span class="ep-barra"><span class="ep-barra-fill" style:width="{m.pct}%"></span></span>
+                {/if}
+              </div>
               <div class="ep-text">
                 <span class="ep-num">E{ep.episode_number} · {ep.name}</span>
                 {#if ep.overview}<span class="ep-ov">{ep.overview}</span>{/if}
@@ -349,6 +378,46 @@
   .ep-item.focused {
     border-color: #f3a951;
     background: rgba(243, 169, 81, 0.14);
+  }
+  .ep-still-wrap {
+    position: relative;
+    flex: none;
+    width: 112px;
+    height: 63px;
+  }
+  /* Ya visto: la miniatura se apaga para que el ojo salte a lo pendiente. */
+  .ep-item.ep-visto .ep-still {
+    opacity: 0.45;
+  }
+  .ep-tick {
+    position: absolute;
+    right: 4px;
+    bottom: 4px;
+    width: 20px;
+    height: 20px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: #2f9e44;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+  }
+  .ep-barra {
+    position: absolute;
+    left: 4px;
+    right: 4px;
+    bottom: 4px;
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.25);
+    overflow: hidden;
+  }
+  .ep-barra-fill {
+    display: block;
+    height: 100%;
+    background: #f3a951;
   }
   .ep-still {
     flex: none;
