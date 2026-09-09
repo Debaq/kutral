@@ -4,6 +4,7 @@
   import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
   import Database from "@tauri-apps/plugin-sql";
   import { onDestroy, onMount } from "svelte";
+  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { afterNavigate, goto } from "$app/navigation";
   import { ayuda } from "$lib/atajos/store.svelte";
   import { setPlaying } from "$lib/playerState.svelte";
@@ -2100,6 +2101,21 @@
   }
   function menuRealDebrid() { openDebrid(true); }  // auto mejor
   function menuResearch() { openDebrid(false); }   // elegir
+
+  // "Cambiar fuente" desde el bar del reproductor. Con la lista montada la
+  // maneja el propio SourcePicker (vuelve a ella marcando la ya probada); acá
+  // solo se cubre el caso de haber llegado al video por otro camino (la pill
+  // de "seguir viendo", por ejemplo), donde hay que abrir la lista de cero.
+  $effect(() => {
+    let un: UnlistenFn | undefined;
+    void listen("player:cambiar-fuente", () => {
+      if (mode === "sources" || !selected) return;
+      openDebrid(false);
+    }).then((u) => (un = u));
+    return () => {
+      if (un) un();
+    };
+  });
 
   // Episodio elegido en EpisodePicker → a la lista de fuentes.
   function onPickEpisode(

@@ -100,6 +100,10 @@
   let resolvingMsg = $state("");
   let playing = $state(false);
   let playingTitle = $state("");
+  // El botón "Cambiar fuente" del reproductor cierra mpv igual que salir, pero
+  // no significa lo mismo: hay que quedarse en la lista para elegir otra, no
+  // devolver al catálogo. El backend avisa antes de cerrar (ver mpv_embed.rs).
+  let cambiandoFuente = false;
   let mpvPoll: ReturnType<typeof setInterval> | null = null;
 
   // Plan B: descarga local del torrent cuando el debrid lo bloquea (451/DMCA).
@@ -114,6 +118,10 @@
   // y en el centro de notificaciones: el usuario tiene que saber que ahí está
   // bajando (y compartiendo) el archivo él mismo.
   let desdeTorrent = $state(false);
+  // Fuentes que ya se vieron y se descartaron desde el reproductor (por título:
+  // es lo que identifica al release en la lista). Se marcan como "ya probada".
+  // (array y no Set: $state no rastrea mutaciones de Set sin svelte/reactivity)
+  let descartadas = $state<string[]>([]);
   let torrentCancel = false;
   const SLOW_AFTER_MS = 45_000;
 
@@ -702,7 +710,7 @@
         const alive = await invoke<boolean>("mpv_running");
         if (!alive) {
           stopMpvPoll();
-          onClose();
+          if (!cambiandoFuente) onClose();
         }
       } catch {
         /* sigue intentando */
@@ -833,6 +841,11 @@
     void listen<boolean>("mpv:state", (e) => {
       if (e.payload === false) {
         stopMpvPoll();
+        if (cambiandoFuente) {
+          cambiandoFuente = false;
+          volverALista();
+          return;
+        }
         onClose();
       }
     }).then((u) => (un = u));
@@ -840,6 +853,32 @@
       if (un) un();
     };
   });
+
+  // "Cambiar fuente" desde el reproductor: vuelve a la lista con la fuente que
+  // estaba sonando marcada, para no volver a elegir la misma sin querer.
+  $effect(() => {
+    let un: UnlistenFn | undefined;
+    void listen("player:cambiar-fuente", () => {
+      cambiandoFuente = true;
+      stopMpvPoll();
+      volverALista();
+    }).then((u) => (un = u));
+    return () => {
+      if (un) un();
+    };
+  });
+
+  function volverALista() {
+    if (playing && playingTitle && !descartadas.includes(playingTitle)) {
+      descartadas = [...descartadas, playingTitle];
+    }
+    playing = false;
+    playingTitle = "";
+    desdeTorrent = false;
+    resolving = false;
+    resolvingMsg = "";
+    setTimeout(() => scrollFocused(), 50);
+  }
 
   function move(d: number) {
     if (!total) return;
@@ -1022,6 +1061,7 @@
             data-nav
             class="sp-row"
             class:focused={focusIdx === i}
+            class:probada={descartadas.includes(s.title)}
             onclick={() => { focusIdx = i; void playFrom(i); }}
             onmouseenter={() => (focusIdx = i)}
           >
@@ -1029,6 +1069,7 @@
             <div class="sp-mid">
               <span class="sp-title">{s.title}</span>
               <div class="sp-chips">
+                {#if descartadas.includes(s.title)}<span class="sp-probada">↩ Ya probada</span>{/if}
                 {#if prefScore(s)}<span class="sp-pref">★ Preferida</span>{/if}
                 {#if s.rd_cached}<span class="sp-cached">⚡ Instantáneo</span>{/if}
                 {#if s.hardsub}<span class="sp-hardsub">{HARDSUB_LABEL[s.hardsub] || "🔗 Enlace directo"}</span>{/if}
@@ -1203,6 +1244,23 @@
     border-color: #f3a951;
     background: rgba(243, 169, 81, 0.16);
     transform: translateX(4px);
+  }
+  /* Fuente que ya se vio y se cambió desde el reproductor: se atenúa para no
+     volver a caer en la misma, pero sigue elegible. */
+  .sp-row.probada {
+    opacity: 0.55;
+  }
+  .sp-row.probada.focused {
+    opacity: 1;
+  }
+  .sp-probada {
+    font-size: 10.5px;
+    font-weight: 700;
+    color: #e0c08a;
+    background: #33291c;
+    border: 1px solid #6b5227;
+    padding: 2px 7px;
+    border-radius: 5px;
   }
   .sp-q {
     flex: none;

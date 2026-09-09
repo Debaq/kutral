@@ -213,6 +213,7 @@ enum BarAction {
     Subs,
     Audio,
     Video,
+    Sources,
     Exit,
 }
 
@@ -225,6 +226,7 @@ impl BarAction {
             BarAction::Subs => "Subtítulos",
             BarAction::Audio => "Audio",
             BarAction::Video => "Video",
+            BarAction::Sources => "Cambiar fuente",
             BarAction::Exit => "Salir",
         }
     }
@@ -276,6 +278,14 @@ impl BarAction {
             BarAction::Video => vec![
                 vec![(-44.0, -10.0), (44.0, -10.0), (44.0, 32.0), (-44.0, 32.0)],
                 vec![(-44.0, -32.0), (40.0, -32.0), (44.0, -14.0), (-40.0, -14.0)],
+            ],
+            // ⇄ — dos flechas opuestas (mango + punta, sin solaparse entre sí):
+            // "esta fuente no me sirve, dame otra".
+            BarAction::Sources => vec![
+                vec![(-40.0, -25.0), (8.0, -25.0), (8.0, -13.0), (-40.0, -13.0)],
+                vec![(8.0, -37.0), (42.0, -19.0), (8.0, -1.0)],
+                vec![(-8.0, 13.0), (40.0, 13.0), (40.0, 25.0), (-8.0, 25.0)],
+                vec![(-8.0, 1.0), (-42.0, 19.0), (-8.0, 37.0)],
             ],
             // ✕ — dos barras cruzadas a 45°, como rectángulos girados.
             BarAction::Exit => vec![
@@ -330,6 +340,11 @@ fn build_bar_actions() -> Vec<BarAction> {
     ];
     if count_tracks("video") >= 2 {
         v.push(BarAction::Video);
+    }
+    // Cambiar de fuente solo tiene sentido en una película/capítulo: un canal
+    // IPTV o un trailer no salieron de una lista de fuentes.
+    if !LIVE.load(Ordering::SeqCst) && !TRAILER.load(Ordering::SeqCst) {
+        v.push(BarAction::Sources);
     }
     v.push(BarAction::Exit);
     v
@@ -1017,6 +1032,16 @@ fn activate_focus() {
         }
         Some(BarAction::Subs) => open_sub_menu(),
         Some(BarAction::Audio) => open_audio_menu(),
+        // La lista de fuentes vive en el webview: se avisa ANTES de cerrar para
+        // que el front sepa que esto no es un "salir" normal (que lo devolvería
+        // al catálogo) sino un "volver a elegir fuente".
+        Some(BarAction::Sources) => {
+            if let Some(app) = APP.get() {
+                use tauri::Emitter;
+                let _ = app.emit("player:cambiar-fuente", ());
+            }
+            let _ = stop();
+        }
         Some(BarAction::Video) => open_video_menu(),
         Some(BarAction::Exit) => {
             let _ = stop();
