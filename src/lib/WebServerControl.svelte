@@ -175,7 +175,6 @@
   }
   .dot.on { background: #6cd37a; box-shadow: 0 0 6px #6cd37a; }
   .title { font-size: 13px; font-weight: 600; flex: 1; }
-  .state { font-size: 11px; color: #a0a0aa; }
 
   .url-row {
     display: flex; align-items: center; gap: 6px;
@@ -193,7 +192,6 @@
     border-radius: 4px;
   }
   .copy:hover { background: #1c1c26; color: #fff; }
-  .hint { margin: 6px 0 10px; font-size: 11px; color: #6e6e78; }
 
   .port-row {
     display: flex; align-items: center; gap: 8px;

@@ -460,22 +460,6 @@
   .ic-btn.active { color: #6cd37a; }
   .web-host { display: flex; align-items: center; gap: 4px; }
   .web-btn { position: relative; }
-  .web-url-pill {
-    background: #102018;
-    border: 1px solid #2a4a36;
-    color: #6cd37a;
-    font-family: ui-monospace, monospace;
-    font-size: 11px;
-    padding: 3px 8px;
-    border-radius: 999px;
-    cursor: pointer;
-    line-height: 1.2;
-    max-width: 180px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .web-url-pill:hover { background: #14281d; border-color: #3a6a4a; color: #8fe09c; }
   .web-dot {
     position: absolute;
     top: 4px; right: 4px;
