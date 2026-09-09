@@ -64,6 +64,11 @@ modules:
       - /lib/*.la
       - /lib/pkgconfig
     config-opts:
+      # libdir explícito: el flatpak-builder de Ubuntu (1.4.2) no lo fija y en
+      # x86_64 se instala en /app/lib64, que no está ni en PKG_CONFIG_PATH ni
+      # en el ld path del runtime. org.flatpak.Builder sí lo fija, así que el
+      # build local pasaba y el de CI no.
+      - --libdir=/app/lib
       - --disable-static
     sources:
       - type: archive
@@ -72,6 +77,10 @@ modules:
 
   - name: libplacebo
     buildsystem: meson
+    config-opts:
+      # Ver la nota de libass: sin esto meson instala en /app/lib64 y mpv no
+      # encuentra libplacebo.pc -> "Dependency libplacebo not found".
+      - --libdir=lib
     cleanup:
       - /include
       - /lib/pkgconfig
@@ -88,6 +97,7 @@ modules:
       - /lib/pkgconfig
       - /share/man
     config-opts:
+      - --libdir=lib
       # cplayer=false: no queremos el binario mpv, solo la .so que linkea
       # el crate libmpv2. lua/javascript fuera: mpv_embed.rs pone
       # load-scripts=no en Linux (uosc es solo del camino no-Linux).
