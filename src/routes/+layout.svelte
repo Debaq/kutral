@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
+  import { goto } from "$app/navigation";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { invoke } from "@tauri-apps/api/core";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -14,6 +15,7 @@
   import { setConcurrenciaScreening } from "$lib/screening.svelte";
   import { cargarHistorial } from "$lib/historial.svelte";
   import { ACCIONES, loadGamepadMap, gamepadCaptured, type GamepadMap } from "$lib/controls";
+  import { ayuda } from "$lib/atajos/store.svelte";
   let { children } = $props();
 
   // --- Mando físico global: dispatcha las mismas teclas que el web/teclado ---
@@ -140,6 +142,22 @@
     }
   }
 
+  // Botón Menú del mando (Start → "m"). Antes se dispatchaba y no lo escuchaba
+  // nadie: es la única vía de teclado/mando para llegar a Configuración, porque
+  // la única otra puerta es el engranaje de la barra.
+  function onMenuKey(e: KeyboardEvent) {
+    if (e.key !== "m" && e.key !== "M") return;
+    if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = e.target as HTMLElement | null;
+    const tag = t?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || (t?.isContentEditable ?? false)) return;
+    if (ayuda.visible) return;
+    const ruta = window.location.pathname;
+    if (ruta.startsWith("/config")) return;
+    e.preventDefault();
+    void goto("/config");
+  }
+
   onMount(() => {
     loadConfig();
     initDetection();
@@ -174,6 +192,10 @@
       injectRemoteText(e.payload);
     }).then((un) => { unlistenRemoteText = un; });
     window.addEventListener("focusin", trackFocus);
+    // El listener del menú va acá (y no en <svelte:window>) para quedar
+    // REGISTRADO ÚLTIMO: así ve el defaultPrevented de la ruta y no pisa la
+    // "m" de mute del reproductor IPTV ni la del panel de volumen.
+    window.addEventListener("keydown", onMenuKey);
     // Mando físico global + recarga de mapeo al cambiarlo en /config.
     window.addEventListener("gamepad-map-changed", onGamepadMapChanged);
     padRaf = requestAnimationFrame(gamepadBridge);
@@ -205,6 +227,7 @@
     unlistenRemoteText = null;
     cancelAnimationFrame(padRaf);
     window.removeEventListener("focusin", trackFocus);
+    window.removeEventListener("keydown", onMenuKey);
     window.removeEventListener("gamepad-map-changed", onGamepadMapChanged);
     stopQueuePoll();
   });

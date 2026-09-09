@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { goto } from "$app/navigation";
+  import { navegar, enfocarPrimero } from "$lib/nav";
   import {
     importCatalog,
     catalogCount,
@@ -38,12 +40,38 @@
     }
   }
 
+  // Sin esto la pantalla era una trampa: no tenía navegación por flechas ni
+  // salida por teclado, así que con mando no se podía ni recorrerla ni volver.
+  function onKey(e: KeyboardEvent) {
+    const tgt = e.target as HTMLElement | null;
+    const enTexto =
+      tgt?.tagName === "INPUT" || tgt?.tagName === "TEXTAREA" || tgt?.tagName === "SELECT";
+    if (e.key === "Escape" || (e.key === "Backspace" && !enTexto)) {
+      e.preventDefault();
+      goto("/vera");
+      return;
+    }
+    if ((tgt as HTMLInputElement | null)?.type === "range") return;
+    // En un <select> las flechas eligen opción; en un número, suben y bajan.
+    if (tgt?.tagName === "SELECT" || (tgt as HTMLInputElement | null)?.type === "number") {
+      if (e.key === "ArrowUp" || e.key === "ArrowDown") return;
+    }
+    switch (e.key) {
+      case "ArrowUp": e.preventDefault(); navegar("up"); break;
+      case "ArrowDown": e.preventDefault(); navegar("down"); break;
+      case "ArrowLeft": e.preventDefault(); navegar("left"); break;
+      case "ArrowRight": e.preventDefault(); navegar("right"); break;
+    }
+  }
+
   onMount(async () => {
     ayuda.set("importador TMDb", [
-      { tecla: "Tab", desc: "Cambiar de campo" },
-      { tecla: "Enter", desc: "Activar botón con foco" },
+      { tecla: "← → ↑ ↓", desc: "Moverse entre campos" },
+      { tecla: "Enter", desc: "Activar campo con foco" },
+      { tecla: "Esc · Backspace", desc: "Volver a Vera" },
       { tecla: "I", desc: "Ayuda" },
     ]);
+    setTimeout(() => enfocarPrimero(document.querySelector(".page") ?? document), 40);
     apiKey = localStorage.getItem("tmdb_key") || "";
     region = localStorage.getItem("vera_watch_region") || "CL";
     await refresh();
@@ -99,11 +127,13 @@
   });
 </script>
 
+<svelte:window onkeydown={onKey} />
+
 <svelte:head><title>Catálogo Vera — Kütral</title></svelte:head>
 
 <div class="page">
   <header>
-    <a class="back" href="/vera">← Volver a Vera</a>
+    <a data-nav class="back" href="/vera">← Volver a Vera</a>
     <h1>Catálogo</h1>
     <p class="tagline">Importar títulos desde TMDb a la base local.</p>
   </header>
@@ -120,21 +150,21 @@
       <p class="warn">Sin API key. Configurala en la home antes de importar.</p>
     {/if}
     <div class="form">
-      <label><input type="checkbox" bind:checked={movie} disabled={running} /> Películas</label>
-      <label><input type="checkbox" bind:checked={tv} disabled={running} /> Series</label>
+      <label><input data-nav type="checkbox" bind:checked={movie} disabled={running} /> Películas</label>
+      <label><input data-nav type="checkbox" bind:checked={tv} disabled={running} /> Series</label>
       <label>
         Páginas (20 títulos c/u):
-        <input type="number" min="1" max="50" bind:value={pages} disabled={running} />
+        <input data-nav type="number" min="1" max="50" bind:value={pages} disabled={running} />
       </label>
       <label>
         Región (plataformas):
-        <select bind:value={region} disabled={running}>
+        <select data-nav bind:value={region} disabled={running}>
           {#each REGIONS as r}
             <option value={r.id}>{r.label}</option>
           {/each}
         </select>
       </label>
-      <button class="primary" onclick={run} disabled={running || !apiKey}>
+      <button data-nav class="primary" onclick={run} disabled={running || !apiKey}>
         {running ? "Importando…" : "Importar"}
       </button>
     </div>

@@ -42,7 +42,7 @@
     try { await invoke("brightness_set", { percent: br.percent }); } catch {}
   }
   function onKey(e: KeyboardEvent) {
-    if (e.key === "Escape") { e.preventDefault(); open = false; }
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); open = false; }
   }
 </script>
 
@@ -59,6 +59,7 @@
       <span class="ico">{br.percent < 33 ? "🌒" : br.percent < 66 ? "🌓" : "🌕"}</span>
       <input
         bind:this={slider}
+        data-nav
         type="range"
         min="5"
         max="100"

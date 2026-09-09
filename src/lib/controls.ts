@@ -29,9 +29,9 @@ export const ACCIONES: Accion[] = [
   { id: "back", label: "Volver", key: "Backspace", web: true, defBtn: 1, hint: "Cierra / atrás" },
   { id: "play", label: "Reproducir / Pausa", key: " ", web: true, defBtn: 2 },
   { id: "help", label: "Ayuda", key: "i", web: true, defBtn: 8, hint: "Muestra atajos" },
-  { id: "menu", label: "Menú", key: "m", web: true, defBtn: 9 },
-  { id: "prev", label: "Anterior (sistema/tab)", key: "[", web: false, defBtn: 4, hint: "LB" },
-  { id: "next", label: "Siguiente (sistema/tab)", key: "]", web: false, defBtn: 5, hint: "RB" },
+  { id: "menu", label: "Menú", key: "m", web: true, defBtn: 9, hint: "Abre Configuración" },
+  { id: "prev", label: "Anterior (sistema/tab/temporada)", key: "[", web: false, defBtn: 4, hint: "LB" },
+  { id: "next", label: "Siguiente (sistema/tab/temporada)", key: "]", web: false, defBtn: 5, hint: "RB" },
 ];
 
 export type GamepadMap = Record<string, number>; // accionId → índice de botón

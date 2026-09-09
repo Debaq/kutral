@@ -159,7 +159,12 @@
       else if (dir === "down") { valid = dy > 6; primary = dy; secondary = Math.abs(dx); }
       else { valid = dy < -6; primary = -dy; secondary = Math.abs(dx); }
       if (!valid) continue;
-      const dist = primary + secondary * 1.4;
+      // Al frente pesa; lo lejano y alineado, no (ver nav.ts).
+      const alFrente =
+        dir === "left" || dir === "right"
+          ? er.bottom > r.top + 6 && er.top < r.bottom - 6
+          : er.right > r.left + 6 && er.left < r.right - 6;
+      const dist = primary + secondary * (alFrente ? 0.2 : 2.5);
       if (dist < bestDist) { bestDist = dist; best = el; }
     }
     return best;
@@ -327,6 +332,8 @@
 
     // En el buscador: dejar escribir; ↑/↓ saltan fuera; Escape lo desenfoca.
     if (tgt?.tagName === "INPUT") {
+      // Sliders de la barra (brillo, volumen): las flechas son del control.
+      if ((tgt as HTMLInputElement).type === "range") return;
       if (k === "Escape") (tgt as HTMLInputElement).blur();
       else if (k === "ArrowUp") { e.preventDefault(); spatialNav("up"); }
       else if (k === "ArrowDown") { e.preventDefault(); spatialNav("down"); }

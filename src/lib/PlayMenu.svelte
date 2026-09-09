@@ -164,9 +164,14 @@
     return a;
   });
 
+  // -1 = la tarjeta grande del trailer (vive en la columna de info, no en el
+  // panel de acciones). Sin ella en el anillo el botón más visible de la
+  // pantalla era inalcanzable con teclado o mando: ↑↓ solo recorrían .pm-btn
+  // y ←→ hacen scroll, así que no había forma de llegar.
   let focusIdx = $state(0);
   let panelRef: HTMLElement | null = $state(null);
   let scrollRef: HTMLDivElement | null = $state(null);
+  let trailerCardRef: HTMLButtonElement | null = $state(null);
 
   // Mantener índice válido si la lista de acciones cambia.
   $effect(() => {
@@ -181,13 +186,25 @@
     }, 50);
   });
 
+  /** Botones del anillo, en orden visual: tarjeta de trailer y luego acciones. */
+  function anillo(): HTMLElement[] {
+    const btns = panelRef
+      ? Array.from(panelRef.querySelectorAll<HTMLButtonElement>(".pm-btn"))
+      : [];
+    return trailerCardRef ? [trailerCardRef, ...btns] : btns;
+  }
+
   function move(d: number) {
-    let i = focusIdx + d;
-    if (i < 0) i = actions.length - 1;
-    if (i > actions.length - 1) i = 0;
-    focusIdx = i;
-    const btns = panelRef?.querySelectorAll<HTMLButtonElement>(".pm-btn");
-    btns?.[focusIdx]?.focus();
+    const ring = anillo();
+    if (!ring.length) return;
+    const hero = trailerCardRef ? 1 : 0;
+    let i = (focusIdx < 0 ? 0 : focusIdx + hero) + d;
+    if (i < 0) i = ring.length - 1;
+    if (i > ring.length - 1) i = 0;
+    focusIdx = hero && i === 0 ? -1 : i - hero;
+    const el = ring[i];
+    el?.focus();
+    el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
 
   function scrollInfo(dy: number) {
@@ -340,8 +357,11 @@
 
       {#if hasTrailer}
         <button
+          bind:this={trailerCardRef}
           class="pm-trailer-card"
+          class:focused={focusIdx === -1}
           onclick={onTrailer}
+          onfocus={() => (focusIdx = -1)}
           title="Ver trailer (pantalla completa)"
           style:background-image={backdropUrl ? `url(${backdropUrl})` : undefined}
         >
@@ -464,7 +484,7 @@
 
     <aside class="pm-panel" bind:this={panelRef}>
       <p class="pm-sub">¿Cómo quieres verla?</p>
-      <p class="pm-keyhint">↑↓ opciones · ←→ scroll info · Esc cerrar</p>
+      <p class="pm-keyhint">↑↓ opciones y trailer · ←→ scroll info · Esc cerrar</p>
       <div class="pm-list">
         {#each actions as a, i (a.id)}
           <button
@@ -638,7 +658,7 @@
       0 0 24px rgba(245, 197, 24, 0.18);
     transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
   }
-  .pm-trailer-card:hover, .pm-trailer-card:focus-visible {
+  .pm-trailer-card:hover, .pm-trailer-card:focus-visible, .pm-trailer-card.focused {
     transform: translateY(-2px);
     border-color: #f5c518;
     box-shadow:

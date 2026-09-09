@@ -160,6 +160,7 @@
   class="titlebar"
   class:hidden
   role="banner"
+  data-section="header"
   data-tauri-drag-region
 >
   <div class="brand" data-tauri-drag-region>
@@ -176,6 +177,7 @@
   <div class="status" data-tauri-drag-region>
     {#if kiosk}
       <button
+        data-nav
         class="net-btn"
         onclick={openWifi}
         title={wifi.connected_ssid ?? (wifi.online ? "Red" : "Sin conexión")}
@@ -195,6 +197,7 @@
 
     <div class="pop-host web-host">
       <button
+        data-nav
         class="ic-btn web-btn"
         class:active={webRunning}
         onclick={() => only("web")}
@@ -210,7 +213,7 @@
     <span class="sep" aria-hidden="true"></span>
 
     <div class="pop-host">
-      <button class="ic-btn" onclick={() => only("br")} title="Brillo" aria-label="Brillo">
+      <button data-nav class="ic-btn" onclick={() => only("br")} title="Brillo" aria-label="Brillo">
         🔆
       </button>
       <BrightnessControl bind:open={brOpen} />
@@ -219,7 +222,7 @@
     <span class="sep" aria-hidden="true"></span>
 
     <div class="pop-host">
-      <button class="ic-btn" onclick={() => only("vol")} title="Volumen" aria-label="Volumen">
+      <button data-nav class="ic-btn" onclick={() => only("vol")} title="Volumen" aria-label="Volumen">
         🔊
       </button>
       <VolumeControl bind:open={volOpen} />
@@ -230,6 +233,7 @@
     {#if torHay}
       <div class="pop-host">
         <button
+          data-nav
           class="ic-btn nt-btn"
           onclick={() => only("tor")}
           title="Descargas"
@@ -245,7 +249,7 @@
     {/if}
 
     <div class="pop-host">
-      <button class="ic-btn nt-btn" onclick={() => only("notif")} title="Notificaciones" aria-label="Notificaciones">
+      <button data-nav class="ic-btn nt-btn" onclick={() => only("notif")} title="Notificaciones" aria-label="Notificaciones">
         🔔
         {#if unread > 0}<span class="nt-badge">{unread > 9 ? "9+" : unread}</span>{/if}
       </button>
@@ -255,6 +259,7 @@
     <span class="sep" aria-hidden="true"></span>
 
     <button
+      data-nav
       class="ic-btn"
       onclick={toggleFullscreen}
       title={fullscreen ? "Salir de pantalla completa" : "Pantalla completa"}
@@ -266,6 +271,7 @@
     <span class="sep" aria-hidden="true"></span>
 
     <button
+      data-nav
       class="cfg-btn"
       onclick={goConfig}
       title={inConfig ? "Volver" : "Configuración"}
@@ -277,17 +283,17 @@
 
   <div class="controls">
     {#if kiosk}
-      <button class="btn-exit" onclick={openExit} title="Salir">
+      <button data-nav class="btn-exit" onclick={openExit} title="Salir">
         <span class="exit-label">Salir</span>
         <span aria-hidden="true">⏻</span>
       </button>
     {:else}
-      <button class="ctrl" onclick={minimize} title="Minimizar" aria-label="Minimizar">
+      <button data-nav class="ctrl" onclick={minimize} title="Minimizar" aria-label="Minimizar">
         <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
           <rect x="0" y="4.5" width="10" height="1" />
         </svg>
       </button>
-      <button class="ctrl" onclick={toggleMax} title={maximized ? "Restaurar" : "Maximizar"} aria-label="Maximizar">
+      <button data-nav class="ctrl" onclick={toggleMax} title={maximized ? "Restaurar" : "Maximizar"} aria-label="Maximizar">
         {#if maximized}
           <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
             <rect x="0" y="2" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1" />
@@ -299,7 +305,7 @@
           </svg>
         {/if}
       </button>
-      <button class="ctrl ctrl-close" onclick={close} title="Cerrar" aria-label="Cerrar">
+      <button data-nav class="ctrl ctrl-close" onclick={close} title="Cerrar" aria-label="Cerrar">
         <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
           <path d="M0,0 L10,10 M10,0 L0,10" stroke="currentColor" stroke-width="1.2" />
         </svg>
@@ -313,6 +319,7 @@
 {#if exitOpen}
   <div
     class="exit-backdrop"
+    data-section="exit"
     role="dialog"
     aria-modal="true"
     aria-label="Confirmar salida"
@@ -323,8 +330,9 @@
       <h2>¿Salir de Kütral?</h2>
       <p>Vas a cerrar la sesión.</p>
       <div class="exit-actions">
-        <button class="btn-cancel" onclick={cancelExit}>Cancelar</button>
+        <button data-nav class="btn-cancel" onclick={cancelExit}>Cancelar</button>
         <button
+          data-nav
           class="btn-confirm"
           bind:this={exitConfirmBtn}
           onclick={close}

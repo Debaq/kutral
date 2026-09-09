@@ -725,6 +725,7 @@
       { tecla: "← → ↑ ↓", desc: "Navegar entre cards" },
       { tecla: "Enter · Espacio", desc: "Abrir / descubrir" },
       { tecla: "I", desc: "Saltar a panel info / volver a cards" },
+      { tecla: "[ ] · RePág AvPág", desc: "Cambiar pestaña · temporada (en capítulos)" },
       { tecla: "Home · End", desc: "Primera / última card" },
       { tecla: "Esc · Backspace", desc: "Cerrar player (en discover)" },
       { tecla: "I-I", desc: "Ayuda" },
@@ -1928,6 +1929,33 @@
     }
   }
 
+  // Cambia de temporada sin salir del listado de capítulos (LB/RB del mando,
+  // [ ] o RePág/AvPág en teclado). Con el grid abierto la lista de temporadas
+  // queda al fondo del panel de info, casi siempre fuera de pantalla, así que
+  // este atajo es la vía corta.
+  function cambiarTemporada(d: number) {
+    const ss = selected?.seasons;
+    if (!ss || ss.length < 2 || seriesSeason == null) return;
+    const i = ss.findIndex((x) => x.season_number === seriesSeason);
+    if (i < 0) return;
+    const prox = ss[(i + d + ss.length) % ss.length];
+    void openSeason(prox.season_number);
+    // El foco vive en el grid: dejarlo en el primer capítulo de la temporada nueva.
+    setTimeout(() => {
+      document
+        .querySelector<HTMLElement>('[data-section="gallery"] [data-nav]:not([disabled])')
+        ?.focus();
+    }, 60);
+  }
+
+  // Sin capítulos abiertos, LB/RB rotan la pestaña del catálogo. Antes no hacían
+  // nada en la home, aunque el mando los manda igual que en /juegos e /historial.
+  function ciclarTab(d: number) {
+    const orden: Tab[] = ["movie", "tv", "anime"];
+    const i = orden.indexOf(tab);
+    switchTab(orden[(i + d + orden.length) % orden.length]);
+  }
+
   // Vuelve del listado de capítulos al catálogo normal.
   function closeSeasonView() {
     seriesSeason = null;
@@ -2269,7 +2297,16 @@
       else if (dir === "down")  { valid = dy > 6; primary = dy; secondary = Math.abs(dx); }
       else                       { valid = dy < -6; primary = -dy; secondary = Math.abs(dx); }
       if (!valid) continue;
-      const dist = primary + secondary * 1.4;
+      // ¿El candidato se cruza con el actual en el eje perpendicular? O sea,
+      // ¿está literalmente al frente? Con un castigo lateral fijo (era x1.4)
+      // un elemento MUY lejano pero centrado le ganaba a uno pegado y corrido:
+      // en una serie, bajar desde Trailer se saltaba las temporadas (anchas,
+      // centro lejos del botón) y aterrizaba en el director, 200px más abajo.
+      const alFrente =
+        dir === "left" || dir === "right"
+          ? er.bottom > r.top + 6 && er.top < r.bottom - 6
+          : er.right > r.left + 6 && er.left < r.right - 6;
+      const dist = primary + secondary * (alFrente ? 0.2 : 2.5);
       if (dist < bestDist) { bestDist = dist; best = el; }
     }
     return best;
@@ -2290,6 +2327,20 @@
     if (curSection) {
       const sameSec = all.filter((el) => getSection(el) === curSection);
       best = findBest(cur, sameSec, dir);
+    }
+    // Borde izquierdo del grid de capítulos: salir vuelve SIEMPRE a la
+    // temporada abierta, no a lo que quede más cerca (que era el botón de
+    // Trailer, lo único que hay arriba del listado en una serie). Va después
+    // del pass 1 para no romper el ← que recorre los capítulos.
+    if (!best && seriesSeason != null && curSection === "gallery" && dir === "left") {
+      const activa =
+        document.querySelector<HTMLElement>('[data-section="info"] .season-item.active') ??
+        document.querySelector<HTMLElement>('[data-section="info"] .season-item');
+      if (activa) {
+        activa.focus();
+        activa.scrollIntoView({ block: "center", behavior: "smooth" });
+        return;
+      }
     }
     // Pass 2: cross-section solo si la sección lo permite en esa dirección
     if (!best) {
@@ -2351,6 +2402,10 @@
     }
 
     if (inInput) {
+      // Sliders (brillo, volumen de la barra): las cuatro flechas son del
+      // control, no de la navegación. Robárselas dejaba el popover abierto y
+      // sin forma de moverlo.
+      if ((t as HTMLInputElement | null)?.type === "range") return;
       // Permitir edición; ↑↓ saltan fuera del input
       if (e.key === "ArrowUp")   { e.preventDefault(); spatialNav("up"); }
       if (e.key === "ArrowDown") { e.preventDefault(); spatialNav("down"); }
@@ -2390,6 +2445,16 @@
       }
       case "Backspace":
         if (sortOpen) { e.preventDefault(); sortOpen = false; }
+        break;
+      case "[":
+      case "PageUp":
+        e.preventDefault();
+        if (seriesSeason != null) cambiarTemporada(-1); else ciclarTab(-1);
+        break;
+      case "]":
+      case "PageDown":
+        e.preventDefault();
+        if (seriesSeason != null) cambiarTemporada(1); else ciclarTab(1);
         break;
     }
   }

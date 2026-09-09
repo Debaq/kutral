@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { navegar } from "$lib/nav";
 
   type Network = {
     ssid: string;
@@ -80,10 +81,22 @@
   }
 
   function onKey(e: KeyboardEvent) {
+    const tgt = e.target as HTMLElement | null;
     if (e.key === "Escape") {
       e.preventDefault();
+      e.stopPropagation();
       if (selected) { selected = null; password = ""; }
       else close();
+      return;
+    }
+    // Navegación espacial dentro del panel: el foco no se escapa a la barra
+    // ni a la ruta de atrás mientras el gestor está abierto.
+    if (e.key.startsWith("Arrow")) {
+      if (tgt?.tagName === "INPUT" && (e.key === "ArrowLeft" || e.key === "ArrowRight")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const dir = e.key.slice(5).toLowerCase() as "up" | "down" | "left" | "right";
+      navegar(dir, document.querySelector(".wifi-backdrop") ?? document);
     }
   }
 
@@ -98,6 +111,7 @@
 {#if open}
   <div
     class="wifi-backdrop"
+    data-section="wifi"
     role="dialog"
     aria-modal="true"
     aria-label="Gestión de WiFi"
@@ -107,7 +121,7 @@
     <div class="wifi-card">
       <header class="wifi-head">
         <h2>Conectarse a WiFi</h2>
-        <button class="wifi-close" onclick={close} aria-label="Cerrar">✕</button>
+        <button data-nav class="wifi-close" onclick={close} aria-label="Cerrar">✕</button>
       </header>
 
       {#if selected && selected.secured}
@@ -116,6 +130,7 @@
           <label>
             <span>Contraseña</span>
             <input
+              data-nav
               bind:this={pwdInput}
               bind:value={password}
               type="password"
@@ -125,10 +140,11 @@
             />
           </label>
           <div class="wifi-actions">
-            <button onclick={() => { selected = null; password = ""; }} class="btn-sec">
+            <button data-nav onclick={() => { selected = null; password = ""; }} class="btn-sec">
               Atrás
             </button>
             <button
+            data-nav
               onclick={doConnect}
               disabled={!password || connecting}
               class="btn-pri"
@@ -139,7 +155,7 @@
         </div>
       {:else}
         <div class="wifi-toolbar">
-          <button class="btn-sec" onclick={scan} disabled={scanning} bind:this={firstBtn}>
+          <button data-nav class="btn-sec" onclick={scan} disabled={scanning} bind:this={firstBtn}>
             {scanning ? "Buscando…" : "Refrescar"}
           </button>
         </div>
@@ -151,7 +167,7 @@
           {/if}
           {#each nets as n (n.ssid)}
             <li>
-              <button class="net-row" onclick={() => pickNet(n)} disabled={connecting}>
+              <button data-nav class="net-row" onclick={() => pickNet(n)} disabled={connecting}>
                 <span class="net-ssid">
                   {n.ssid}
                   {#if n.in_use}<em class="tag-current">conectada</em>{/if}

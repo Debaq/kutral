@@ -96,7 +96,7 @@
   }
 
   function onKey(e: KeyboardEvent) {
-    if (e.key === "Escape") { e.preventDefault(); open = false; }
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); open = false; }
   }
 </script>
 
@@ -117,13 +117,13 @@
       {#if st.url}
         <div class="url-row">
           <code class="url">{st.url}</code>
-          <button class="copy" onclick={copy} title="Copiar">
+          <button data-nav class="copy" onclick={copy} title="Copiar">
             {copied ? "✓" : "⧉"}
           </button>
         </div>
       {/if}
       <div class="actions">
-        <button class="btn-stop" onclick={stop} disabled={busy}>Detener</button>
+        <button data-nav class="btn-stop" onclick={stop} disabled={busy}>Detener</button>
       </div>
     {:else}
       <div class="head">
@@ -134,6 +134,7 @@
         <label for="ws-port">Puerto</label>
         <input
           id="ws-port"
+          data-nav
           type="number"
           min="1024"
           max="65535"
@@ -141,7 +142,7 @@
         />
       </div>
       <div class="actions">
-        <button class="btn-start" onclick={start} disabled={busy}>Iniciar</button>
+        <button data-nav class="btn-start" onclick={start} disabled={busy}>Iniciar</button>
       </div>
     {/if}
 

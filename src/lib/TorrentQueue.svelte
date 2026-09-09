@@ -47,6 +47,7 @@
   function onKey(e: KeyboardEvent) {
     if (e.key === "Escape") {
       e.preventDefault();
+      e.stopPropagation();
       open = false;
     }
   }
@@ -121,17 +122,17 @@
             </div>
             <div class="tq-acts">
               {#if !t.finished && t.state !== "error"}
-                <button class="tq-act" onclick={() => togglePause(t)}>
+                <button data-nav class="tq-act" onclick={() => togglePause(t)}>
                   {t.paused ? "▶ Reanudar" : "⏸ Pausar"}
                 </button>
               {/if}
               {#if confirmId === t.id}
-                <button class="tq-act danger" onclick={() => quitar(t)}>
+                <button data-nav class="tq-act danger" onclick={() => quitar(t)}>
                   {t.finished ? "Quitar de la lista" : "Sí, borrar"}
                 </button>
-                <button class="tq-act" onclick={() => (confirmId = null)}>Cancelar</button>
+                <button data-nav class="tq-act" onclick={() => (confirmId = null)}>Cancelar</button>
               {:else}
-                <button class="tq-act" onclick={() => (confirmId = t.id)}>
+                <button data-nav class="tq-act" onclick={() => (confirmId = t.id)}>
                   {t.finished ? "Quitar" : "Cancelar"}
                 </button>
               {/if}

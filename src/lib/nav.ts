@@ -60,7 +60,14 @@ function mejor(actual: HTMLElement, candidatos: HTMLElement[], dir: Dir): HTMLEl
       lateral = Math.abs(dx);
     }
     if (!sirve) continue;
-    const dist = principal + lateral * 1.4;
+    // ¿Está al frente? Si los rectángulos se cruzan en el eje perpendicular, el
+    // desvío casi no cuenta; si no, castiga fuerte. Con un factor fijo, un
+    // elemento lejano pero bien centrado le ganaba a uno pegado y corrido.
+    const alFrente =
+      dir === "left" || dir === "right"
+        ? er.bottom > r.top + 6 && er.top < r.bottom - 6
+        : er.right > r.left + 6 && er.left < r.right - 6;
+    const dist = principal + lateral * (alFrente ? 0.2 : 2.5);
     if (dist < mejorDist) {
       mejorDist = dist;
       elegido = el;

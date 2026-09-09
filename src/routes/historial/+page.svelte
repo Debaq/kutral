@@ -180,6 +180,12 @@
   }
 
   function onKey(e: KeyboardEvent) {
+    const tgt = e.target as HTMLElement | null;
+    // Inputs (sliders de la barra superior, sobre todo): las flechas son suyas.
+    if (tgt?.tagName === "INPUT" || tgt?.tagName === "TEXTAREA") {
+      if (e.key === "Escape") (tgt as HTMLInputElement).blur();
+      return;
+    }
     if (confirmar) {
       if (e.key === "Escape" || e.key === "Backspace") {
         e.preventDefault();

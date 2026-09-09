@@ -9,6 +9,7 @@
   // conocidos (franquicia) van de frente; el resto, de lomo (spine).
 
   import { onMount, onDestroy, tick, untrack } from "svelte";
+  import { navegar } from "$lib/nav";
   import { goto } from "$app/navigation";
   import { invoke, convertFileSrc } from "@tauri-apps/api/core";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -674,6 +675,28 @@
     void focar();
   }
 
+  /** ¿El foco está en una carátula/lomo del grid? Ahí manda fRow/fCol. */
+  function enGrid(): boolean {
+    const el = document.activeElement as HTMLElement | null;
+    return !!el?.matches?.(".spine, .card:not(.nav-card)");
+  }
+
+  /** Sale del grid hacia arriba: primero "Otras secciones", si no, la cabecera. */
+  function salirArriba() {
+    const el =
+      document.querySelector<HTMLElement>('[data-section="secciones"] [data-nav]') ??
+      document.querySelector<HTMLElement>('[data-section="top"] [data-nav]');
+    el?.focus();
+    el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+
+  /** Entra al grid desde arriba, en la última carátula que estuvo enfocada. */
+  function entrarAlGrid() {
+    if (!pasillos.length) return false;
+    void focar();
+    return true;
+  }
+
   const ORDEN: System[] = SISTEMAS.map((s) => s.key);
   function ciclarSistema(dir: number) {
     const i = ORDEN.indexOf(filtro);
@@ -686,7 +709,11 @@
     // En el buscador: dejar escribir; Escape lo cierra/desenfoca.
     const tgt = e.target as HTMLElement | null;
     if (tgt?.tagName === "INPUT") {
+      // Sliders de la barra superior: las flechas son del control.
+      if ((tgt as HTMLInputElement).type === "range") return;
       if (k === "Escape") (tgt as HTMLInputElement).blur();
+      else if (k === "ArrowUp") { e.preventDefault(); navegar("up"); }
+      else if (k === "ArrowDown") { e.preventDefault(); if (!navegar("down")) entrarAlGrid(); }
       return;
     }
 
@@ -705,11 +732,17 @@
       return;
     }
 
-    // Vista Colección: solo salir (no hay grid que navegar).
+    // Vista Colección: navegación espacial sobre cabecera + tarjetas de sistema.
     if (vista === "coleccion") {
       if (k === "Escape" || k === "Backspace") {
         e.preventDefault();
         vista = "biblioteca";
+      } else if (k.startsWith("Arrow")) {
+        e.preventDefault();
+        navegar(k.slice(5).toLowerCase() as "up" | "down" | "left" | "right");
+      } else if (k === "Enter") {
+        const el = document.activeElement as HTMLElement | null;
+        if (el?.matches?.("[data-nav]")) { e.preventDefault(); el.click(); }
       }
       return;
     }
@@ -719,20 +752,32 @@
       goto("/");
     } else if (k === "ArrowRight") {
       e.preventDefault();
-      moverH(1);
+      if (enGrid()) moverH(1); else navegar("right");
     } else if (k === "ArrowLeft") {
       e.preventDefault();
-      moverH(-1);
+      if (enGrid()) moverH(-1); else navegar("left");
     } else if (k === "ArrowDown") {
       e.preventDefault();
-      moverV(1);
+      // Fuera del grid bajamos por geometría; cuando ya no queda nada marcado
+      // abajo, el siguiente escalón es el grid (que no lleva [data-nav]).
+      if (enGrid()) moverV(1);
+      else if (!navegar("down")) entrarAlGrid();
     } else if (k === "ArrowUp") {
       e.preventDefault();
-      moverV(-1);
+      // Desde la primera fila del grid se sale a la cabecera; antes el foco
+      // quedaba encerrado ahí abajo y filtros, buscador y pestañas eran
+      // inalcanzables sin mouse.
+      if (enGrid()) { if (fRow === 0) salirArriba(); else moverV(-1); }
+      else navegar("up");
     } else if (k === "Enter") {
       e.preventDefault();
-      const g = juegoFocado();
-      if (g) abrirJuego(g);
+      if (enGrid()) {
+        const g = juegoFocado();
+        if (g) abrirJuego(g);
+      } else {
+        const el = document.activeElement as HTMLElement | null;
+        if (el?.matches?.("[data-nav]")) el.click();
+      }
     } else if (k === "[" || k === "PageUp") {
       e.preventDefault();
       ciclarSistema(-1);
@@ -796,13 +841,13 @@
 <svelte:window onkeydown={onKey} />
 
 <div class="juegos">
-  <header class="top">
+  <header class="top" data-section="top">
     <h1><span class="marca">Juegos</span> <em>retro</em></h1>
     <div class="vistas">
-      <button class:active={vista === "biblioteca"} onclick={() => (vista = "biblioteca")}>
+      <button data-nav class:active={vista === "biblioteca"} onclick={() => (vista = "biblioteca")}>
         🎮 Biblioteca
       </button>
-      <button class:active={vista === "coleccion"} onclick={() => (vista = "coleccion")}>
+      <button data-nav class:active={vista === "coleccion"} onclick={() => (vista = "coleccion")}>
         🏆 Colección
       </button>
     </div>
@@ -815,6 +860,7 @@
       <nav class="filtros">
         {#each SISTEMAS as s}
           <button
+            data-nav
             class:active={filtro === s.key}
             style="--c:{s.color}"
             onclick={() => (filtro = s.key)}
@@ -825,30 +871,31 @@
       </nav>
       <div class="filtros2">
         <input
+          data-nav
           class="buscar"
           type="search"
           placeholder="Buscar juego…"
           bind:value={busca}
         />
-        <button class="toggle" class:active={soloTengo} onclick={() => (soloTengo = !soloTengo)}>
+        <button data-nav class="toggle" class:active={soloTengo} onclick={() => (soloTengo = !soloTengo)}>
           {soloTengo ? "★ Mi biblioteca" : "Catálogo completo"}
         </button>
       </div>
       <div class="filtros3">
         <div class="generos">
-          <button class="gchip" class:active={generoSel === "Todos"} onclick={() => (generoSel = "Todos")}>
+          <button data-nav class="gchip" class:active={generoSel === "Todos"} onclick={() => (generoSel = "Todos")}>
             Todos
           </button>
           {#each generosDisponibles as g}
-            <button class="gchip" class:active={generoSel === g} onclick={() => (generoSel = g)}>
+            <button data-nav class="gchip" class:active={generoSel === g} onclick={() => (generoSel = g)}>
               {g}
             </button>
           {/each}
         </div>
         <div class="jugado-seg">
-          <button class:active={jugadoSel === "todos"} onclick={() => (jugadoSel = "todos")}>Todos</button>
-          <button class:active={jugadoSel === "si"} onclick={() => (jugadoSel = "si")}>✓ Jugados</button>
-          <button class:active={jugadoSel === "no"} onclick={() => (jugadoSel = "no")}>○ Sin jugar</button>
+          <button data-nav class:active={jugadoSel === "todos"} onclick={() => (jugadoSel = "todos")}>Todos</button>
+          <button data-nav class:active={jugadoSel === "si"} onclick={() => (jugadoSel = "si")}>✓ Jugados</button>
+          <button data-nav class:active={jugadoSel === "no"} onclick={() => (jugadoSel = "no")}>○ Sin jugar</button>
         </div>
       </div>
     {/if}
@@ -876,7 +923,7 @@
       {/if}
       <div class="sistemas">
         {#each stats as s}
-          <button class="sis-card" onclick={() => { vista = "biblioteca"; filtro = s.key; soloTengo = true; }}>
+          <button data-nav class="sis-card" onclick={() => { vista = "biblioteca"; filtro = s.key; soloTengo = true; }}>
             <div class="sis-top">
               <span class="sis-label" style="color:{s.color}">{s.label}</span>
               <span class="sis-pct">{s.pct}%</span>
@@ -902,7 +949,7 @@
         : "Catálogo vacío."}
     </div>
   {:else}
-    <section class="pasillo">
+    <section class="pasillo" data-section="secciones">
       <h2 class="pasillo-titulo">Otras secciones</h2>
       <div class="fila">
         <a class="card nav-card nav-movie" data-nav href="/?tab=movie" title="Películas">
@@ -936,7 +983,6 @@
             {#if it.face}
               <!-- De frente: carátula (estrenos / conocidos) -->
               <button
-                data-nav
                 class="card"
                 class:focused={fRow === r && fCol === c}
                 class:no-tengo={!tengo}
@@ -967,7 +1013,6 @@
               {@const enf = fRow === r && fCol === c}
               <!-- De lomo: spine fino; al enfocarlo se da vuelta y muestra la cara -->
               <button
-                data-nav
                 class="spine"
                 class:focused={enf}
                 class:girado={enf && !!boxarts[g.name]}

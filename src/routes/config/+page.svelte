@@ -36,6 +36,7 @@
   import { torrentDefaultDir, torrentCheckDir } from "$lib/torrents.svelte";
   import { notify } from "$lib/notifStore.svelte";
   import { ayuda } from "$lib/atajos/store.svelte";
+  import { navegar, enfocarPrimero } from "$lib/nav";
   import Gamepad from "$lib/Gamepad.svelte";
   import RemoteQr from "$lib/RemoteQr.svelte";
   import {
@@ -223,7 +224,15 @@
   let updTotal = $state(0);
 
   onMount(async () => {
-    ayuda.set("config", []);
+    ayuda.set("config", [
+      { tecla: "← → ↑ ↓", desc: "Moverse entre ajustes" },
+      { tecla: "Enter · Espacio", desc: "Activar / marcar" },
+      { tecla: "Esc · Backspace", desc: "Volver a inicio" },
+      { tecla: "I-I", desc: "Ayuda" },
+    ]);
+    // Sin foco inicial la pantalla arrancaba muerta para mando: las flechas no
+    // tenían desde dónde salir y no había forma de llegar a ningún control.
+    setTimeout(() => enfocarPrimero(document.querySelector(".cfg-root") ?? document), 60);
     loadConfig();
     tmdb = config.tmdbKey;
     omdb = config.omdbKey;
@@ -373,21 +382,48 @@
 
   // Esc/Backspace en /config: si hay flow RD activo, Esc lo cancela; si no,
   // ambas vuelven al home. Backspace en inputs queda intocable (borra texto).
+  // Tipos de <input> donde las flechas horizontales son del control (mueven el
+  // cursor o el valor) y no de la navegación.
+  const TEXTO = ["text", "password", "search", "url", "email", "tel", "number"];
+
   function onGlobalKey(e: KeyboardEvent) {
-    if (e.key !== "Escape" && e.key !== "Backspace") return;
     const t = e.target as HTMLElement | null;
     const tag = t?.tagName;
+    const tipo = (t as HTMLInputElement | null)?.type ?? "";
     const inText =
       tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" ||
       (t?.isContentEditable ?? false);
-    if (e.key === "Escape" && rdLink) {
+
+    if (e.key === "Escape" || e.key === "Backspace") {
+      if (e.key === "Escape" && rdLink) {
+        e.preventDefault();
+        cancelRd();
+        return;
+      }
+      if (e.key === "Backspace" && inText) return;
       e.preventDefault();
-      cancelRd();
+      back();
       return;
     }
-    if (e.key === "Backspace" && inText) return;
-    e.preventDefault();
-    back();
+
+    if (e.key.startsWith("Arrow")) {
+      // Sliders y campos de texto se quedan con lo suyo; ↑↓ igual sirven para
+      // salir del campo, que es lo que uno espera con un control.
+      const horizontal = e.key === "ArrowLeft" || e.key === "ArrowRight";
+      if (tipo === "range") return;
+      if (horizontal && (tag === "TEXTAREA" || (tag === "INPUT" && TEXTO.includes(tipo)))) return;
+      if (tag === "SELECT") return;
+      e.preventDefault();
+      navegar(e.key.slice(5).toLowerCase() as "up" | "down" | "left" | "right");
+      return;
+    }
+
+    // Enter sobre radio/checkbox: los marca. Nativamente solo responden a
+    // Espacio, y en el mando el botón A manda Enter.
+    if (e.key === "Enter" && tag === "INPUT" && (tipo === "radio" || tipo === "checkbox")) {
+      e.preventDefault();
+      (t as HTMLInputElement).click();
+    }
   }
 
   async function startRd() {
@@ -692,7 +728,7 @@
 <div class="cfg-root">
   <div class="cfg-wrap">
     <header class="cfg-head">
-      <button class="back" onclick={back} title="Volver">← Volver</button>
+      <button data-nav class="back" onclick={back} title="Volver">← Volver</button>
       <h1>Configuración</h1>
     </header>
 
@@ -706,7 +742,7 @@
             la clave desde el teléfono. Llega al campo que tengas seleccionado aquí.
           </p>
           {#if !phoneUrl}
-            <button class="btn-link" onclick={conectarCelular} disabled={phoneBusy}>
+            <button data-nav class="btn-link" onclick={conectarCelular} disabled={phoneBusy}>
               {phoneBusy ? "Conectando…" : "📱 Conectar celular"}
             </button>
           {:else}
@@ -731,14 +767,14 @@
             Gratis en <code>themoviedb.org/settings/api</code>. Sin esto, no hay catálogo.
           </p>
           <div class="key-row">
-            <input
+            <input data-nav
               type={showTmdb ? "text" : "password"}
               bind:value={tmdb}
               placeholder="tmdb_xxxxxxxxxxxxxxxxxxxxxxxx"
               autocomplete="off"
               spellcheck="false"
             />
-            <button class="reveal" onclick={() => (showTmdb = !showTmdb)} title={showTmdb ? "Ocultar" : "Mostrar"}>
+            <button data-nav class="reveal" onclick={() => (showTmdb = !showTmdb)} title={showTmdb ? "Ocultar" : "Mostrar"}>
               {showTmdb ? "🙈" : "👁"}
             </button>
           </div>
@@ -751,14 +787,14 @@
             ratings (IMDb/RT/Metacritic) y sinopsis extendida al abrir un título.
           </p>
           <div class="key-row">
-            <input
+            <input data-nav
               type={showOmdb ? "text" : "password"}
               bind:value={omdb}
               placeholder="xxxxxxxx"
               autocomplete="off"
               spellcheck="false"
             />
-            <button class="reveal" onclick={() => (showOmdb = !showOmdb)} title={showOmdb ? "Ocultar" : "Mostrar"}>
+            <button data-nav class="reveal" onclick={() => (showOmdb = !showOmdb)} title={showOmdb ? "Ocultar" : "Mostrar"}>
               {showOmdb ? "🙈" : "👁"}
             </button>
           </div>
@@ -772,36 +808,36 @@
             <div class="rd-linked">
               <span class="dot ok"></span>
               <span>Cuenta vinculada</span>
-              <button class="btn-sec" onclick={unlinkRd}>Desvincular</button>
+              <button data-nav class="btn-sec" onclick={unlinkRd}>Desvincular</button>
             </div>
           {:else if rdLink}
             <div class="rd-flow">
-              <p class="rd-step">1. Andá a <button class="rd-link" onclick={openVerify}>{rdLink.verification_url}</button></p>
+              <p class="rd-step">1. Andá a <button data-nav class="rd-link" onclick={openVerify}>{rdLink.verification_url}</button></p>
               <p class="rd-step">2. Ingresá este código:</p>
               <div class="rd-code">{rdLink.user_code}</div>
               <p class="rd-wait">
                 <span class="spinner"></span>
                 Esperando autorización… <em>{fmtMmSs(secondsLeft)}</em>
               </p>
-              <button class="btn-sec" onclick={cancelRd}>Cancelar</button>
+              <button data-nav class="btn-sec" onclick={cancelRd}>Cancelar</button>
             </div>
           {:else}
-            <button class="btn-link" onclick={startRd} disabled={rdStarting}>
+            <button data-nav class="btn-link" onclick={startRd} disabled={rdStarting}>
               {rdStarting ? "Conectando…" : "Vincular cuenta"}
             </button>
-            <button class="link-tiny" onclick={() => (showRdAdvanced = !showRdAdvanced)}>
+            <button data-nav class="link-tiny" onclick={() => (showRdAdvanced = !showRdAdvanced)}>
               {showRdAdvanced ? "Ocultar avanzado" : "Pegar token manualmente"}
             </button>
             {#if showRdAdvanced}
               <div class="key-row" style="margin-top: 10px;">
-                <input
+                <input data-nav
                   type="password"
                   bind:value={rdManual}
                   placeholder="access_token"
                   autocomplete="off"
                   spellcheck="false"
                 />
-                <button class="btn-sec" onclick={saveManualToken} disabled={!rdManual.trim()}>
+                <button data-nav class="btn-sec" onclick={saveManualToken} disabled={!rdManual.trim()}>
                   Guardar
                 </button>
               </div>
@@ -816,27 +852,27 @@
               Prueba: busca fuentes torrent y resuelve la 1ª vía RD.
             </p>
             <div class="key-row">
-              <input
+              <input data-nav
                 bind:value={testImdb}
                 placeholder="tt0816692"
                 autocomplete="off"
                 spellcheck="false"
               />
-              <button class="btn-sec" onclick={runRdTest} disabled={testRunning}>
+              <button data-nav class="btn-sec" onclick={runRdTest} disabled={testRunning}>
                 {testRunning ? "Probando…" : "Probar"}
               </button>
             </div>
             <div class="test-btns">
-              <button class="btn-sec" onclick={runAccountTest}>
+              <button data-nav class="btn-sec" onclick={runAccountTest}>
                 👤 Cuenta RD
               </button>
-              <button class="btn-sec" onclick={runCacheTest} disabled={testRunning || !testSrcs.length}>
+              <button data-nav class="btn-sec" onclick={runCacheTest} disabled={testRunning || !testSrcs.length}>
                 ⚡ Cache
               </button>
-              <button class="btn-sec" onclick={runMpvTest} disabled={!testUrl}>
+              <button data-nav class="btn-sec" onclick={runMpvTest} disabled={!testUrl}>
                 ▶ mpv
               </button>
-              <button class="btn-sec" onclick={runMpvStop}>
+              <button data-nav class="btn-sec" onclick={runMpvStop}>
                 ⏹ Detener
               </button>
             </div>
@@ -853,19 +889,19 @@
           </p>
 
           {#if updStage === "idle"}
-            <button class="btn-link" onclick={checkUpdate}>Buscar actualizaciones</button>
+            <button data-nav class="btn-link" onclick={checkUpdate}>Buscar actualizaciones</button>
           {:else if updStage === "checking"}
             <p class="upd-line"><span class="spinner"></span> Buscando…</p>
           {:else if updStage === "uptodate"}
             <p class="upd-line upd-ok">Estás al día.</p>
-            <button class="link-tiny" onclick={checkUpdate}>Volver a buscar</button>
+            <button data-nav class="link-tiny" onclick={checkUpdate}>Volver a buscar</button>
           {:else if updStage === "available"}
             <p class="upd-line">
               Disponible: <strong>v{updVersion}</strong>
             </p>
             {#if updNotes}<pre class="upd-notes">{updNotes}</pre>{/if}
-            <button class="btn-link" onclick={installUpdate}>Instalar y reiniciar</button>
-            <button class="link-tiny" onclick={() => { updStage = "idle"; }}>Más tarde</button>
+            <button data-nav class="btn-link" onclick={installUpdate}>Instalar y reiniciar</button>
+            <button data-nav class="link-tiny" onclick={() => { updStage = "idle"; }}>Más tarde</button>
           {:else if updStage === "installing"}
             <p class="upd-line"><span class="spinner"></span> Descargando…</p>
             {#if updTotal > 0}
@@ -878,7 +914,7 @@
             <p class="upd-line"><span class="spinner"></span> Reiniciando…</p>
           {:else if updStage === "error"}
             <p class="err">{updErr}</p>
-            <button class="link-tiny" onclick={checkUpdate}>Reintentar</button>
+            <button data-nav class="link-tiny" onclick={checkUpdate}>Reintentar</button>
           {/if}
         </section>
       </div>
@@ -890,7 +926,7 @@
           <div class="radio-group">
             {#each LANGS as l}
               <label class="radio">
-                <input type="radio" name="lang" value={l.id} bind:group={lang} />
+                <input data-nav type="radio" name="lang" value={l.id} bind:group={lang} />
                 <span>{l.label}</span>
               </label>
             {/each}
@@ -905,15 +941,15 @@
           </p>
           <div class="mode-group">
             <label class="mode-card" class:sel={mode === "auto"}>
-              <input type="radio" name="mode" value="auto" bind:group={mode} />
+              <input data-nav type="radio" name="mode" value="auto" bind:group={mode} />
               <div><strong>Auto</strong><span>Detecta y aplica el modo correcto.</span></div>
             </label>
             <label class="mode-card" class:sel={mode === "desktop"}>
-              <input type="radio" name="mode" value="desktop" bind:group={mode} />
+              <input data-nav type="radio" name="mode" value="desktop" bind:group={mode} />
               <div><strong>Escritorio</strong><span>Ventana con minimizar / maximizar / cerrar.</span></div>
             </label>
             <label class="mode-card" class:sel={mode === "kiosk"}>
-              <input type="radio" name="mode" value="kiosk" bind:group={mode} />
+              <input data-nav type="radio" name="mode" value="kiosk" bind:group={mode} />
               <div><strong>Kiosko / embedido</strong><span>Pantalla completa. Solo "Salir" + gestor WiFi.</span></div>
             </label>
           </div>
@@ -927,14 +963,14 @@
           </p>
           <div class="mode-group">
             <label class="mode-card" class:sel={subMode === "dub"}>
-              <input type="radio" name="subMode" value="dub" bind:group={subMode} />
+              <input data-nav type="radio" name="subMode" value="dub" bind:group={subMode} />
               <div>
                 <strong>Doblado</strong>
                 <span>Audio en español primero (Latino / Castellano).</span>
               </div>
             </label>
             <label class="mode-card" class:sel={subMode === "sub"}>
-              <input type="radio" name="subMode" value="sub" bind:group={subMode} />
+              <input data-nav type="radio" name="subMode" value="sub" bind:group={subMode} />
               <div>
                 <strong>Subtitulado</strong>
                 <span>Audio original con subtítulos en español.</span>
@@ -942,7 +978,7 @@
             </label>
           </div>
           <label class="toggle-row">
-            <input type="checkbox" bind:checked={verifyEsTracks} />
+            <input data-nav type="checkbox" bind:checked={verifyEsTracks} />
             <span>Verificar español real antes de reproducir</span>
           </label>
           <p class="hint">
@@ -959,14 +995,14 @@
           </p>
           <div class="mode-group">
             <label class="mode-card" class:sel={sourceSelect === "auto"}>
-              <input type="radio" name="sourceSelect" value="auto" bind:group={sourceSelect} />
+              <input data-nav type="radio" name="sourceSelect" value="auto" bind:group={sourceSelect} />
               <div>
                 <strong>Automática</strong>
                 <span>Reproduce la mejor al instante, sin preguntar.</span>
               </div>
             </label>
             <label class="mode-card" class:sel={sourceSelect === "manual"}>
-              <input type="radio" name="sourceSelect" value="manual" bind:group={sourceSelect} />
+              <input data-nav type="radio" name="sourceSelect" value="manual" bind:group={sourceSelect} />
               <div>
                 <strong>Manual</strong>
                 <span>Siempre muestra el selector para elegir tú la fuente.</span>
@@ -981,7 +1017,7 @@
           </p>
           <label class="field">
             <span class="field-label">Películas</span>
-            <input
+            <input data-nav
               type="text"
               bind:value={preferredSourceMovie}
               placeholder="ej. FullScrab, YIFY"
@@ -991,7 +1027,7 @@
           </label>
           <label class="field">
             <span class="field-label">Series</span>
-            <input
+            <input data-nav
               type="text"
               bind:value={preferredSourceSeries}
               placeholder="ej. MeGusta, FLUX"
@@ -1001,7 +1037,7 @@
           </label>
           <label class="field">
             <span class="field-label">Anime</span>
-            <input
+            <input data-nav
               type="text"
               bind:value={preferredSourceAnime}
               placeholder="ej. Erai-raws, SubsPlease"
@@ -1018,7 +1054,7 @@
           </p>
           <label class="field">
             <span class="field-label">Películas</span>
-            <input
+            <input data-nav
               type="text"
               bind:value={blockedSourceMovie}
               placeholder="ej. CAM, HDTS, TELESYNC"
@@ -1028,7 +1064,7 @@
           </label>
           <label class="field">
             <span class="field-label">Series</span>
-            <input
+            <input data-nav
               type="text"
               bind:value={blockedSourceSeries}
               placeholder="ej. HDTV, x265"
@@ -1038,7 +1074,7 @@
           </label>
           <label class="field">
             <span class="field-label">Anime</span>
-            <input
+            <input data-nav
               type="text"
               bind:value={blockedSourceAnime}
               placeholder="ej. HEVC, 480p"
@@ -1057,7 +1093,7 @@
           </p>
           <label class="field">
             <span class="field-label">Idioma</span>
-            <select bind:value={subsLang}>
+            <select data-nav bind:value={subsLang}>
               {#each SUB_LANGS as sl}
                 <option value={sl.id}>{sl.label}</option>
               {/each}
@@ -1066,7 +1102,7 @@
           <label class="field">
             <span class="field-label">Wyzie API key (opcional)</span>
             <div class="key-row">
-              <input
+              <input data-nav
                 type={showWyzie ? "text" : "password"}
                 value={wyzieKey}
                 oninput={(e) => updateWyzieKey(e.currentTarget.value)}
@@ -1074,14 +1110,14 @@
                 autocomplete="off"
                 spellcheck="false"
               />
-              <button type="button" class="btn-ghost" onclick={() => (showWyzie = !showWyzie)}>
+              <button data-nav type="button" class="btn-ghost" onclick={() => (showWyzie = !showWyzie)}>
                 {showWyzie ? "Ocultar" : "Mostrar"}
               </button>
             </div>
           </label>
           <label class="field">
             <span class="field-label">Tamaño de letra ({subSize}%)</span>
-            <input
+            <input data-nav
               type="range"
               min="50"
               max="200"
@@ -1100,7 +1136,7 @@
             {:else if config.osLinked}
               <div class="key-row">
                 <span class="os-linked">✓ Vinculada{config.osUser ? ` (${config.osUser})` : ""} — 20 descargas/día</span>
-                <button type="button" class="btn-ghost" onclick={unlinkOs}>Desvincular</button>
+                <button data-nav type="button" class="btn-ghost" onclick={unlinkOs}>Desvincular</button>
               </div>
             {:else}
               <p class="hint">
@@ -1108,10 +1144,10 @@
                 suben a 20/día.
                 <a href="https://www.opensubtitles.com/newuser" target="_blank" rel="noopener">Crear cuenta gratis →</a>
               </p>
-              <input type="text" bind:value={osUserInput} placeholder="Usuario" autocomplete="off" />
-              <input type="password" bind:value={osPassInput} placeholder="Contraseña" autocomplete="off" />
+              <input data-nav type="text" bind:value={osUserInput} placeholder="Usuario" autocomplete="off" />
+              <input data-nav type="password" bind:value={osPassInput} placeholder="Contraseña" autocomplete="off" />
               {#if osErr}<p class="err">{osErr}</p>{/if}
-              <button type="button" class="btn-ghost" disabled={osBusy} onclick={loginOs}>
+              <button data-nav type="button" class="btn-ghost" disabled={osBusy} onclick={loginOs}>
                 {osBusy ? "Vinculando…" : "Vincular cuenta"}
               </button>
             {/if}
@@ -1130,7 +1166,7 @@
           <div class="mode-group">
             {#each Array.from({ length: SCREENING_MAX - SCREENING_MIN + 1 }, (_, i) => i + SCREENING_MIN) as n}
               <label class="mode-card" class:sel={screeningConc === n}>
-                <input type="radio" name="screeningConc" value={n} bind:group={screeningConc} />
+                <input data-nav type="radio" name="screeningConc" value={n} bind:group={screeningConc} />
                 <div>
                   <strong>{n}</strong>
                   <span>
@@ -1152,12 +1188,12 @@
             mando. Aplica al próximo inicio de Kütral.
           </p>
           <label class="toggle-row">
-            <input type="checkbox" bind:checked={webAuto} />
+            <input data-nav type="checkbox" bind:checked={webAuto} />
             <span>Activar al iniciar la app</span>
           </label>
           <label class="field">
             <span class="field-label">Puerto</span>
-            <input
+            <input data-nav
               type="number"
               min="1024"
               max="65535"
@@ -1182,7 +1218,7 @@
             país y con tu proveedor de internet.
           </p>
           <label class="toggle-row">
-            <input type="checkbox" bind:checked={torrentLocal} onchange={aplicarTorrent} />
+            <input data-nav type="checkbox" bind:checked={torrentLocal} onchange={aplicarTorrent} />
             <span>Bajar en local cuando el debrid bloquee la fuente</span>
           </label>
           <p class="hint">Esta sección se aplica al instante, sin pulsar Guardar.</p>
@@ -1197,7 +1233,7 @@
             <div class="mode-group">
               {#each TORRENT_QUALITY_OPTIONS as q}
                 <label class="mode-card" class:sel={torrentMaxQuality === q.id}>
-                  <input
+                  <input data-nav
                     type="radio"
                     name="torrentMaxQuality"
                     value={q.id}
@@ -1213,7 +1249,7 @@
             </div>
             <label class="field">
               <span class="field-label">Peso máximo por archivo (GB)</span>
-              <input
+              <input data-nav
                 type="number"
                 min={TORRENT_MAX_GB_MIN}
                 max={TORRENT_MAX_GB_MAX}
@@ -1224,7 +1260,7 @@
             </label>
             <label class="field">
               <span class="field-label">Buffer antes de reproducir (MB)</span>
-              <input
+              <input data-nav
                 type="number"
                 min={TORRENT_BUFFER_MIN}
                 max={TORRENT_BUFFER_MAX}
@@ -1238,7 +1274,7 @@
             </p>
             <label class="field">
               <span class="field-label">Carpeta de descarga</span>
-              <input
+              <input data-nav
                 type="text"
                 placeholder={torrentDirPath}
                 bind:value={torrentDirInput}
@@ -1246,9 +1282,9 @@
               />
             </label>
             <div class="dir-row">
-              <button class="link-tiny" onclick={probarCarpeta}>Comprobar carpeta</button>
+              <button data-nav class="link-tiny" onclick={probarCarpeta}>Comprobar carpeta</button>
               {#if torrentDirInput.trim()}
-                <button
+                <button data-nav
                   class="link-tiny"
                   onclick={() => { torrentDirInput = ""; dirEstado = "idle"; dirMsg = ""; aplicarTorrent(); }}
                 >
@@ -1281,7 +1317,7 @@
           <div class="radio-group">
             {#each GAME_REGIONS as r}
               <label class="radio">
-                <input
+                <input data-nav
                   type="checkbox"
                   checked={gameRegions.includes(r.id)}
                   onchange={() => toggleRegion(r.id)}
@@ -1304,21 +1340,21 @@
             <ul class="iptv-listas">
               {#each iptvLists as lista, i}
                 <li class="iptv-item">
-                  <input
+                  <input data-nav
                     class="iptv-nombre"
                     type="text"
                     bind:value={lista.name}
                     placeholder="Nombre"
                     spellcheck="false"
                   />
-                  <input
+                  <input data-nav
                     class="iptv-url"
                     type="text"
                     bind:value={lista.url}
                     placeholder="https://…/lista.m3u"
                     spellcheck="false"
                   />
-                  <button class="iptv-del" title="Quitar" onclick={() => quitarLista(i)}>✕</button>
+                  <button data-nav class="iptv-del" title="Quitar" onclick={() => quitarLista(i)}>✕</button>
                 </li>
               {/each}
             </ul>
@@ -1327,14 +1363,14 @@
           {/if}
 
           <div class="iptv-add">
-            <input
+            <input data-nav
               class="iptv-nombre"
               type="text"
               bind:value={nuevaListaNombre}
               placeholder="Nombre (opcional)"
               spellcheck="false"
             />
-            <input
+            <input data-nav
               class="iptv-url"
               type="text"
               bind:value={nuevaListaUrl}
@@ -1342,12 +1378,12 @@
               spellcheck="false"
               onkeydown={(e) => e.key === "Enter" && agregarLista()}
             />
-            <button class="iptv-add-btn" onclick={agregarLista} disabled={!nuevaListaUrl.trim()}>
+            <button data-nav class="iptv-add-btn" onclick={agregarLista} disabled={!nuevaListaUrl.trim()}>
               + Agregar
             </button>
           </div>
 
-          <button class="btn-ghost" onclick={restaurarListaDefault}>
+          <button data-nav class="btn-ghost" onclick={restaurarListaDefault}>
             Restaurar listas por defecto (Español + global)
           </button>
         </section>
@@ -1371,9 +1407,9 @@
         <div class="asignar">
           <span>Asignar <b>{nombreBoton(selBtn)}</b> a:</span>
           {#each ACCIONES as a}
-            <button class="acc-chip" onclick={() => asignar(a.id)}>{a.label}</button>
+            <button data-nav class="acc-chip" onclick={() => asignar(a.id)}>{a.label}</button>
           {/each}
-          <button class="acc-chip cancel" onclick={() => (selBtn = null)}>cancelar</button>
+          <button data-nav class="acc-chip cancel" onclick={() => (selBtn = null)}>cancelar</button>
         </div>
       {/if}
 
@@ -1388,11 +1424,11 @@
           </div>
         {/each}
       </div>
-      <button class="ctrl-reset" onclick={restaurarControles}>Restaurar por defecto</button>
+      <button data-nav class="ctrl-reset" onclick={restaurarControles}>Restaurar por defecto</button>
     </section>
 
     <div class="actions">
-      <button class="btn-save" onclick={applyAndSave} disabled={!dirty}>
+      <button data-nav class="btn-save" onclick={applyAndSave} disabled={!dirty}>
         {saved ? "Guardado ✓" : "Guardar cambios"}
       </button>
       <p class="hint-actions">

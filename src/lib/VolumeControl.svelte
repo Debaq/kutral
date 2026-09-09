@@ -55,7 +55,7 @@
     try { await invoke("audio_set_mute", { muted: audio.muted }); } catch {}
   }
   function onKey(e: KeyboardEvent) {
-    if (e.key === "Escape") { e.preventDefault(); open = false; }
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); open = false; }
     if (e.key === "m" || e.key === "M") { e.preventDefault(); toggleMute(); }
   }
 </script>
@@ -70,11 +70,12 @@
     tabindex="-1"
   >
     <div class="row">
-      <button class="mute" onclick={toggleMute} title="Mute (M)">
+      <button data-nav class="mute" onclick={toggleMute} title="Mute (M)">
         {audio.muted || audio.volume === 0 ? "🔇" : audio.volume < 33 ? "🔈" : audio.volume < 66 ? "🔉" : "🔊"}
       </button>
       <input
         bind:this={slider}
+        data-nav
         type="range"
         min="0"
         max="100"

@@ -22,7 +22,7 @@
   }
 
   function onKey(e: KeyboardEvent) {
-    if (e.key === "Escape") { e.preventDefault(); open = false; }
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); open = false; }
   }
 
   function fmtAgo(at: number): string {
@@ -49,7 +49,7 @@
     <header class="nt-head">
       <strong>Notificaciones</strong>
       {#if notifs.list.length > 0}
-        <button class="nt-clear" onclick={clearAll}>Limpiar</button>
+        <button data-nav class="nt-clear" onclick={clearAll}>Limpiar</button>
       {/if}
     </header>
     {#if notifs.list.length === 0}
