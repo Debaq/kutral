@@ -4,6 +4,8 @@ export type OsInfo = {
 	is_kutral_os: boolean;
 	platform: 'windows' | 'macos' | 'linux' | 'other';
 	version: string | null;
+	/** Dentro de un flatpak: /app es de solo lectura y no hay nmcli/brightnessctl. */
+	sandboxed: boolean;
 };
 
 let cached: OsInfo | null = null;
@@ -23,4 +25,9 @@ export async function getOsInfo(): Promise<OsInfo> {
 export async function isKutralOs(): Promise<boolean> {
 	const info = await getOsInfo();
 	return info.is_kutral_os;
+}
+
+export async function isSandboxed(): Promise<boolean> {
+	const info = await getOsInfo();
+	return info.sandboxed;
 }

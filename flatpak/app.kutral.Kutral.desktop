@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Kütral
+Comment=Centro multimedia: películas, series, anime, IPTV y juegos
+Exec=kutral
+Icon=app.kutral.Kutral
+Terminal=false
+Categories=AudioVideo;Video;Player;
+StartupWMClass=Kütral

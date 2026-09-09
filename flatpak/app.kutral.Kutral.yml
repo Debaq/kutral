@@ -1,0 +1,161 @@
+# Kütral como Flatpak.
+#
+# Por qué existe: el AppImage empaquetaba gtk/glib/gst/webkit/libmpv de Ubuntu
+# 22.04 pero NO Mesa ni glibc, así que la capa del medio de 2022 hablaba con el
+# Mesa del host y reventaba (EGL_BAD_PARAMETER en el WebKitWebProcess, y
+# libmpv.so.1 API 1.109 contra un crate que pide 2.2). Acá el runtime de GNOME
+# pone webkit2gtk-4.1 + GTK3 + glibc, y los drivers los resuelve flatpak con
+# org.freedesktop.Platform.GL.*, incluida la NVIDIA propietaria del host.
+#
+# libmpv NO viene en el runtime: se compila acá (versiones tomadas del manifest
+# de Celluloid, que es la combinación probada mpv 0.41 + libplacebo 7.360.1).
+app-id: app.kutral.Kutral
+runtime: org.gnome.Platform
+runtime-version: '49'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+  - org.freedesktop.Sdk.Extension.node22
+command: kutral
+
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  - --filesystem=xdg-run/pipewire-0:ro
+  # Scrapers, debrid, TMDb/AniList, y el servidor web del mando (webserver.rs).
+  - --share=network
+  # dri para el GtkGLArea de mpv_embed y para RetroArch; input para el mando
+  # USB (padmap.rs lee /dev/input). Nada de --device=all.
+  # Pide flatpak >= 1.15: hasta 1.14 responde "Unknown device type input"
+  # (medido en debian:11 1.10.8, ubuntu:22.04 1.12.7, debian:12 1.14.10,
+  # ubuntu:24.04 1.14.6). Decisión tomada: quien tenga flatpak viejo que lo
+  # actualice; no vamos a abrir todos los devices por eso.
+  - --device=dri
+  - --device=input
+  # Descargas de torrent local (torrent.rs) y ROMs (emu.rs).
+  - --filesystem=xdg-download
+  - --filesystem=xdg-videos
+  # libmpv exige decimal con punto; GTK fija el locale del usuario y mpv_create
+  # devuelve NULL. mpv_embed.rs ya hace setlocale, esto es cinturón y tirantes.
+  - --env=LC_NUMERIC=C
+  # El front esconde wifi/brillo/volumen cuando no es Kütral OS; acá además el
+  # sandbox los bloquea (nmcli/brightnessctl/wpctl no existen dentro).
+  - --env=KUTRAL_SANDBOX=1
+  # ffprobe (probe.rs, verificación de pistas) NO necesita módulo ni extensión:
+  # el runtime ya trae /usr/bin/ffprobe 7.1.3 con https, y probe.rs lo invoca
+  # por PATH.
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node22/bin
+  # PROTOTIPO: cargo y npm bajan de la red durante el build. Flathub no lo
+  # permite (habría que vendorizar con flatpak-cargo-generator + node-generator),
+  # pero para repo propio sirve tal cual.
+  build-args:
+    - --share=network
+  env:
+    CARGO_HOME: /run/build/kutral/cargo
+
+modules:
+  - name: libass
+    cleanup:
+      - /include
+      - /lib/*.la
+      - /lib/pkgconfig
+    config-opts:
+      - --disable-static
+    sources:
+      - type: archive
+        url: https://github.com/libass/libass/releases/download/0.17.5/libass-0.17.5.tar.xz
+        sha256: 2dca25c0e0c837ddf00b52011b3f82cac1e4ddd3ad018227806b0c2288864acc
+
+  - name: libplacebo
+    buildsystem: meson
+    cleanup:
+      - /include
+      - /lib/pkgconfig
+    sources:
+      - type: git
+        url: https://github.com/haasn/libplacebo.git
+        tag: v7.360.1
+        commit: cee9b076f2c63104ccfd497fa79c39a867293ec4
+
+  - name: libmpv
+    buildsystem: meson
+    cleanup:
+      - /include
+      - /lib/pkgconfig
+      - /share/man
+    config-opts:
+      # cplayer=false: no queremos el binario mpv, solo la .so que linkea
+      # el crate libmpv2. lua/javascript fuera: mpv_embed.rs pone
+      # load-scripts=no en Linux (uosc es solo del camino no-Linux).
+      - -Dlibmpv=true
+      - -Dcplayer=false
+      - -Dbuild-date=false
+      - -Dalsa=disabled
+      - -Dlua=disabled
+      - -Djavascript=disabled
+      - -Dmanpage-build=disabled
+    sources:
+      - type: archive
+        url: https://github.com/mpv-player/mpv/archive/v0.41.0.tar.gz
+        sha256: ee21092a5ee427353392360929dc64645c54479aefdb5babc5cfbb5fad626209
+
+  - name: kutral
+    buildsystem: simple
+    # rustc invoca `cc` para linkear y no hereda el -L/app/lib que
+    # flatpak-builder pone en LDFLAGS: sin esto el link muere con
+    # "unable to find library -lmpv" aunque libmpv.so.2 esté en /app/lib.
+    build-options:
+      env:
+        LIBRARY_PATH: /app/lib
+        RUSTFLAGS: -L native=/app/lib
+    build-commands:
+      - npm ci
+      # OJO: tiene que ser la CLI de Tauri, no `cargo build --release`.
+      # Con cargo a secas el binario queda en modo dev: no embebe el frontend
+      # y el webview intenta cargar devUrl (http://localhost:1420), que dentro
+      # del sandbox no existe -> ventana en blanco y ni un invoke. La CLI
+      # corre beforeBuildCommand (npm run build) y embebe frontendDist.
+      # --no-bundle: el empaquetado lo hace flatpak-builder, no Tauri.
+      - npx tauri build --no-bundle
+      - install -Dm755 src-tauri/target/release/kutral /app/bin/kutral
+      # vendor/ va junto al ejecutable: es el 3er candidato de vendor_dir()
+      # (emu.rs:59) y config_dir() (mpv_embed.rs:1497), el único que no depende
+      # de cómo Tauri resuelva resource_dir() dentro del sandbox.
+      - mkdir -p /app/bin/vendor
+      - cp -r src-tauri/vendor/mpv-config /app/bin/vendor/
+      - install -Dm755 src-tauri/vendor/yt-dlp /app/bin/vendor/yt-dlp
+      # RetroArch: el AppImage del buildbot de libretro no corre dentro del
+      # sandbox (no hay FUSE) y con APPIMAGE_EXTRACT_AND_RUN se descomprime
+      # 30 MB a /tmp en cada arranque. Lo extraemos una vez, acá. El binario
+      # trae RPATH $ORIGIN/../lib, así que resuelve sus libs propias solo; el
+      # resto (SDL2, EGL, gbm, jack) las pone el runtime — verificado con ldd
+      # dentro del sandbox: 0 faltantes.
+      - chmod +x src-tauri/vendor/retroarch
+      - src-tauri/vendor/retroarch --appimage-extract > /dev/null
+      - mkdir -p /app/lib/retroarch
+      - cp -r squashfs-root/. /app/lib/retroarch/
+      # emu.rs busca vendor/retroarch (retroarch_bin(), emu.rs:79). El symlink
+      # deja la ruta donde la espera sin tocar el código.
+      - ln -sf ../../lib/retroarch/usr/bin/retroarch /app/bin/vendor/retroarch
+      - cp -r src-tauri/vendor/cores /app/bin/vendor/cores
+      - install -Dm644 flatpak/app.kutral.Kutral.desktop /app/share/applications/app.kutral.Kutral.desktop
+      - install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/app.kutral.Kutral.png
+      - install -Dm644 flatpak/app.kutral.Kutral.metainfo.xml /app/share/metainfo/app.kutral.Kutral.metainfo.xml
+    sources:
+      - type: dir
+        path: ..
+        skip:
+          - .git
+          - .svelte-kit
+          - build
+          - node_modules
+          - out
+          - out.tar.gz
+          # 48 MB del mpv de proceso externo: solo lo usa el camino
+          # cfg(not(target_os = "linux")) de player.rs.
+          - src-tauri/vendor/mpv
+          - src-tauri/target

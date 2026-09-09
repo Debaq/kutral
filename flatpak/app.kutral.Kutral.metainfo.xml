@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>app.kutral.Kutral</id>
+  <name>Kütral</name>
+  <summary>Centro multimedia</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>Películas, series, anime, IPTV y juegos, navegable con mando.</p>
+  </description>
+  <launchable type="desktop-id">app.kutral.Kutral.desktop</launchable>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="26.5.7" date="2026-09-09"/>
+  </releases>
+</component>

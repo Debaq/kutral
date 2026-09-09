@@ -2627,6 +2627,10 @@ pub struct OsInfo {
     is_kutral_os: bool,
     platform: &'static str,
     version: Option<String>,
+    /// Corriendo dentro de un sandbox (flatpak). Cambia lo que la app puede
+    /// hacer: /app es de solo lectura (el updater no puede instalar nada) y
+    /// nmcli/brightnessctl/wpctl no existen dentro.
+    sandboxed: bool,
 }
 
 fn detect_kutral_os() -> bool {
@@ -2653,6 +2657,19 @@ fn detect_kutral_os() -> bool {
     }
 }
 
+/// ¿Estamos dentro de un flatpak? El runtime siempre monta /.flatpak-info en
+/// el sandbox; es la forma canónica de detectarlo desde adentro.
+fn detect_sandbox() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        std::path::Path::new("/.flatpak-info").exists()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
 #[tauri::command]
 fn os_info() -> OsInfo {
     let platform = if cfg!(target_os = "windows") {
@@ -2668,6 +2685,7 @@ fn os_info() -> OsInfo {
         is_kutral_os: detect_kutral_os(),
         platform,
         version: std::env::var("KUTRAL_OS_VERSION").ok(),
+        sandboxed: detect_sandbox(),
     }
 }
 

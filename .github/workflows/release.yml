@@ -7,8 +7,10 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Notas del release (descargas + limitaciones). Las escribe este job, que es
+  # el primero; los otros dos suben sus artefactos al release ya creado.
   build-linux:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
@@ -35,21 +37,13 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
-            patchelf \
             libgtk-3-dev \
             libmpv-dev \
             libssl-dev \
             libsoup-3.0-dev \
             libjavascriptcoregtk-4.1-dev \
             p7zip-full \
-            unzip \
-            gstreamer1.0-plugins-base \
-            gstreamer1.0-plugins-good \
-            gstreamer1.0-plugins-bad \
-            gstreamer1.0-plugins-ugly \
-            gstreamer1.0-libav \
-            gstreamer1.0-gl \
-            gstreamer1.0-pulseaudio
+            unzip
 
       - name: Fetch vendored binaries (retroarch + cores + mpv)
         run: bash src-tauri/vendor/fetch.sh
@@ -57,33 +51,141 @@ jobs:
       - name: Install npm deps
         run: npm ci
 
-      - name: Build & sign Tauri (Linux .AppImage + latest.json)
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'Kütral ${{ github.ref_name }}'
-          releaseBody: |
-            Build automático multi-plataforma.
+      # Sin bundle: el AppImage está jubilado y el resto de los formatos los
+      # arma cada job por su cuenta (flatpak acá al lado, nsis/msi en Windows).
+      - name: Build binario Linux
+        run: npx tauri build --no-bundle
 
-            - **Linux**: descarga el `.AppImage` (portable, recomendado) o el binario `.bin` (ejecutable suelto). El updater usa el `.AppImage` firmado.
-            - **Windows**: descarga el `.msi` (instalador) o el `.exe` (NSIS).
-          releaseDraft: false
-          prerelease: false
-          includeUpdaterJson: true
+      - name: Guard - el binario tiene que linkear libmpv.so.2
+        # ubuntu-22.04 traía libmpv-dev 0.34 (libmpv.so.1, API 1.109) y el
+        # crate libmpv2 pide API 2.2: linkeaba igual y reventaba recién en
+        # runtime, en la máquina del usuario. Si vuelve a pasar, falla acá.
+        run: |
+          readelf -d src-tauri/target/release/kutral | grep -q 'libmpv\.so\.2' \
+            || { echo "::error::el binario no linkea libmpv.so.2"; \
+                 readelf -d src-tauri/target/release/kutral | grep -i mpv; exit 1; }
 
-      - name: Upload raw Linux binary (.bin con versión)
+      - name: Crear el release con las notas
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${{ github.ref_name }}"
-          SRC="src-tauri/target/release/kutral"
+          cat > notes.md <<'NOTES'
+          ## Descargas
+
+          - **Linux** — `kutral-VERSION-x86_64.flatpak`
+            ```
+            flatpak install --user kutral-VERSION-x86_64.flatpak
+            flatpak run app.kutral.Kutral
+            ```
+          - **Linux, binario suelto** — `kutral-VERSION-linux-x86_64.bin`. No es
+            autocontenido: pide `webkit2gtk-4.1`, `gtk3` y `mpv` ≥ 0.35 en el sistema.
+          - **Windows** — `.msi` (instalador) o `.exe` (NSIS).
+
+          ### El AppImage queda jubilado
+
+          Las versiones hasta la v26.5.7 no arrancaban en distros modernas:
+          empaquetaban libmpv 0.34 (`libmpv.so.1`) contra un binario que pide la
+          API 2.2, y WebKitGTK 2.36 contra el Mesa del host. Los síntomas eran
+          `VersionMismatch` y `Could not create default EGL display:
+          EGL_BAD_PARAMETER`. En su lugar va el flatpak: el runtime de GNOME pone
+          webkit, GTK3 y glibc, y los drivers los resuelve flatpak.
+
+          ## Limitaciones
+
+          - **Necesitas tus propias API keys.** Sin key de TMDb no cargan
+            películas ni series — anime, IPTV y juegos sí funcionan. Sin cuenta
+            debrid casi nada se reproduce: los scrapers devuelven magnets y
+            resolverlos es justamente lo que hace el debrid. El plan B es bajar el
+            torrent localmente, que es opt-in porque expone tu IP en el swarm.
+            OMDb y Wyzie son opcionales.
+          - **El flatpak pide flatpak ≥ 1.15.** Declara `--device=input` para el
+            mando USB, y hasta la 1.14 no entiende ese permiso (Debian 12 y
+            Ubuntu 24.04 traen 1.14: hay que actualizar flatpak).
+          - **Dentro del sandbox** no hay wifi, brillo ni volumen del sistema, y
+            el updater interno queda apagado: se actualiza con `flatpak update`.
+          - **Plataformas**: Linux y Windows, solo x86_64. No hay macOS ni ARM.
+            El reproductor mpv embebido es solo de Linux; en Windows mpv corre
+            como proceso aparte.
+          - **Juegos**: las ROMs salen de Myrient y el nombre tiene que calzar
+            exacto con el set No-Intro; cualquier diferencia es un 404.
+          NOTES
+          sed -i "s/VERSION/${VERSION}/g" notes.md
+          gh release create "$VERSION" \
+            --title "Kütral $VERSION" \
+            --notes-file notes.md \
+            || gh release edit "$VERSION" --notes-file notes.md
+
+      - name: Upload binario suelto (.bin)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ github.ref_name }}"
           OUT="kutral-${VERSION}-linux-x86_64.bin"
-          cp "$SRC" "$OUT"
+          cp src-tauri/target/release/kutral "$OUT"
           gh release upload "$VERSION" "$OUT" --clobber
+
+  build-flatpak:
+    needs: build-linux
+    # Distribución para cualquier Linux: el runtime de GNOME pone webkit2gtk,
+    # GTK3 y glibc, y los drivers los resuelve flatpak con
+    # org.freedesktop.Platform.GL.* (incluida la NVIDIA propietaria del host).
+    # No requiere instalar nada en la máquina del usuario más que flatpak.
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install flatpak
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder p7zip-full unzip
+
+      - name: Add flathub
+        run: |
+          flatpak remote-add --if-not-exists --user \
+            flathub https://flathub.org/repo/flathub.flatpakrepo
+
+      - name: Cache flatpak runtimes
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/flatpak
+          key: flatpak-gnome49-${{ hashFiles('flatpak/app.kutral.Kutral.yml') }}
+          restore-keys: flatpak-gnome49-
+
+      - name: Install runtime + SDK
+        run: |
+          flatpak install --user -y --noninteractive flathub \
+            org.gnome.Platform//49 \
+            org.gnome.Sdk//49 \
+            org.freedesktop.Sdk.Extension.rust-stable//25.08 \
+            org.freedesktop.Sdk.Extension.node22//25.08
+
+      - name: Fetch vendored binaries (retroarch + cores + yt-dlp)
+        run: bash src-tauri/vendor/fetch.sh
+
+      - name: Build flatpak
+        working-directory: flatpak
+        run: |
+          flatpak-builder --user --repo=repo --force-clean \
+            --state-dir .flatpak-builder \
+            .build app.kutral.Kutral.yml
+
+      - name: Bundle .flatpak
+        working-directory: flatpak
+        run: |
+          VERSION="${{ github.ref_name }}"
+          flatpak build-bundle repo \
+            "kutral-${VERSION}-x86_64.flatpak" app.kutral.Kutral
+
+      - name: Upload al release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ github.ref_name }}"
+          gh release upload "$VERSION" \
+            "flatpak/kutral-${VERSION}-x86_64.flatpak" --clobber
 
   build-windows:
     runs-on: windows-latest

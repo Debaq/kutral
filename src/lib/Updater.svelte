@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { check, type Update } from "@tauri-apps/plugin-updater";
   import { relaunch } from "@tauri-apps/plugin-process";
-  import { isKutralOs } from "$lib/os";
+  import { isKutralOs, isSandboxed } from "$lib/os";
   import { notify } from "$lib/notifStore.svelte";
   import { player } from "$lib/playerState.svelte";
 
@@ -21,6 +21,17 @@
       kutral = await isKutralOs();
     } catch {
       kutral = false;
+    }
+    // En flatpak /app es de solo lectura: el updater de Tauri no puede
+    // instalar nada, y ofrecerlo solo lleva a un error al final de la
+    // descarga. Ahí actualiza `flatpak update`, no nosotros.
+    try {
+      if (await isSandboxed()) {
+        stage = "uptodate";
+        return;
+      }
+    } catch {
+      // Si no se puede saber, seguimos como siempre.
     }
     try {
       const u = await check();

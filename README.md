@@ -9,12 +9,12 @@
 [![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-24C8DB?style=for-the-badge&logo=tauri&logoColor=white)](https://tauri.app)
 [![Frontend: SvelteKit](https://img.shields.io/badge/frontend-SvelteKit-FF3E00?style=for-the-badge&logo=svelte&logoColor=white)](https://kit.svelte.dev)
 [![Backend: Rust](https://img.shields.io/badge/backend-Rust-000000?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white)](#downloads)
+[![Platform: Linux | Windows](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-0078D6?style=for-the-badge)](#downloads)
 
 *Kütral* (Mapudungun for **fire**) is a lightweight, native desktop app that turns
 your discovery flow into something fast, beautiful and offline-aware.
 
-[Download](#downloads) · [Features](#features) · [Quick start](#quick-start) · [Architecture](#architecture) · [Roadmap](#roadmap)
+[Download](#downloads) · [Limitations](#limitations) · [Features](#features) · [Quick start](#quick-start) · [Architecture](#architecture) · [Roadmap](#roadmap)
 
 ---
 
@@ -46,11 +46,61 @@ of the time. No accounts. No telemetry. No tabs.
 
 ## Downloads
 
-Grab the latest Windows installer (`.msi`) or portable build (`.exe`) from the
-[Releases page](https://github.com/Debaq/kutral/releases/latest).
+From the [Releases page](https://github.com/Debaq/kutral/releases/latest):
+
+| Platform | Artifact | Notes |
+|---|---|---|
+| Linux | `kutral-<tag>-x86_64.flatpak` | Recommended. `flatpak install --user kutral-*.flatpak` |
+| Linux | `kutral-<tag>-linux-x86_64.bin` | Loose binary. Not self-contained — see Limitations |
+| Windows | `.msi` / `.exe` | Installer / NSIS portable |
 
 Builds are produced automatically by GitHub Actions on every tagged release.
-macOS and Linux targets are planned — see [Roadmap](#roadmap).
+
+> **The AppImage is retired.** Builds up to v26.5.7 did not start on modern
+> distros — they bundled libmpv 0.34 (`libmpv.so.1`) against a binary asking for
+> client API 2.2, and WebKitGTK 2.36 against the host's Mesa, producing
+> `VersionMismatch` and `Could not create default EGL display:
+> EGL_BAD_PARAMETER`. The flatpak replaces it: the GNOME runtime supplies
+> webkit, GTK3 and glibc, and flatpak resolves the GPU drivers.
+
+## Limitations
+
+Worth knowing before you download. Some of these are by design, some are just
+where things stand.
+
+**You bring your own API keys — Kütral ships with none.**
+
+- Without a [TMDb key](https://www.themoviedb.org/settings/api) the movie and
+  series catalogs do not load at all. Anime (AniList), IPTV and Games work
+  without it.
+- Without a debrid account (Real-Debrid) almost nothing plays. The scrapers
+  return magnet links; turning those into a playable URL is exactly what debrid
+  does. The fallback is downloading the torrent locally, which is opt-in
+  because it puts your IP in the swarm.
+- OMDb (extra ratings) and Wyzie (extra subtitles) are optional.
+
+**The flatpak needs flatpak ≥ 1.15.** It declares `--device=input` for USB
+gamepad support (`padmap.rs` reads `/dev/input`), and releases up to 1.14 reject
+that permission outright. Debian 12 and Ubuntu 24.04 still ship 1.14 — update
+flatpak first.
+
+**Inside the sandbox, some things are gone:**
+
+- Wi-Fi, screen brightness and system volume. They shell out to `nmcli`,
+  `brightnessctl` and `wpctl`, none of which exist in the sandbox. The UI only
+  surfaces them in kiosk mode on Kütral OS anyway.
+- The built-in updater is disabled — `/app` is read-only. Use `flatpak update`.
+
+**The loose `.bin` is not self-contained.** It needs `webkit2gtk-4.1`, `gtk3`
+and `mpv` ≥ 0.35 (`libmpv.so.2`) installed on the host. It exists for Kütral OS,
+which ships them.
+
+**Platforms**: Linux and Windows, x86_64 only. No macOS, no ARM. The embedded
+mpv player is Linux-only; on Windows mpv runs as a separate process.
+
+**Games**: ROMs are fetched from Myrient and the file name has to match the
+No-Intro set exactly — any mismatch is a 404. Gamepad remapping is Linux-only
+and needs your user in the `input` group.
 
 ## Quick start
 
@@ -143,7 +193,7 @@ kutral/
 │   ├── Cargo.toml
 │   └── tauri.conf.json      Window, bundle, security config
 ├── .github/workflows/
-│   └── release.yml          Tag v* → Windows .msi + .exe to Releases
+│   └── release.yml          Tag v* → Linux .flatpak + .bin, Windows .msi + .exe
 ├── Kutral.sh                Project management script (dev/build/release)
 └── package.json
 ```
@@ -157,8 +207,8 @@ kutral/
 2. Commit: `chore(release): vYYYY.M.N`
 3. Tag: `git tag -a vYYYY.MM.N -m "..."` — the **tag** can use the CalVer
    `YYYY.MM.N` form; the **internal** version must stay strict semver.
-4. `git push --tags` — GitHub Actions builds `.msi` + `.exe`, creates the
-   release, attaches the binaries.
+4. `git push --tags` — GitHub Actions builds the Linux `.flatpak` and `.bin`
+   plus the Windows `.msi` and `.exe`, creates the release, attaches everything.
 
 ## Roadmap
 
