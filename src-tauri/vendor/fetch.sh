@@ -15,7 +15,7 @@ mkdir -p cores
 for c in fceumm snes9x mgba gambatte melonds; do
   if [ -f "cores/${c}_libretro.so" ]; then echo "  ya está: $c"; continue; fi
   echo "  bajando: $c"
-  curl -sSL -o "cores/$c.zip" "$CORES/${c}_libretro.so.zip"
+  curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o "cores/$c.zip" "$CORES/${c}_libretro.so.zip"
   unzip -o -q "cores/$c.zip" -d cores
   rm "cores/$c.zip"
 done
@@ -26,7 +26,14 @@ if [ -f retroarch ]; then
 else
   command -v 7z >/dev/null || { echo "falta 7z (p7zip)"; exit 1; }
   tmp=$(mktemp -d)
-  curl -sSL -o "$tmp/RetroArch.7z" "$RA"
+  curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o "$tmp/RetroArch.7z" "$RA"
+  # El buildbot devuelve ~190 MB. Si llega mucho menos es una página de error
+  # del CDN, no el archivo: cortar acá y no en el 7z, que dice "Headers Error"
+  # y no explica nada.
+  sz=$(stat -c%s "$tmp/RetroArch.7z")
+  if [ "$sz" -lt 50000000 ]; then
+    echo "  RetroArch.7z vino cortado ($sz bytes), no es el archivo"; exit 1
+  fi
   7z e -y "$tmp/RetroArch.7z" \
     "RetroArch-Linux-x86_64/RetroArch-Linux-x86_64.AppImage" -o"$tmp" >/dev/null
   mv "$tmp/RetroArch-Linux-x86_64.AppImage" retroarch
@@ -38,12 +45,12 @@ echo ">> mpv (AppImage)"
 if [ -f mpv ]; then
   echo "  ya está"
 else
-  url=$(curl -sSL "$MPV_API" \
+  url=$(curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors "$MPV_API" \
     | grep -oE '"browser_download_url": *"[^"]*anylinux-x86_64\.AppImage"' \
     | head -1 | sed -E 's/.*"(https[^"]+)"$/\1/')
   if [ -z "$url" ]; then echo "  no encontré el AppImage de mpv"; exit 1; fi
   echo "  bajando: $url"
-  curl -sSL -o mpv "$url"
+  curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o mpv "$url"
   chmod +x mpv
 fi
 
@@ -54,7 +61,7 @@ echo ">> yt-dlp (trailers de YouTube)"
 if [ -f yt-dlp ]; then
   echo "  ya está"
 else
-  curl -sSL -o yt-dlp \
+  curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o yt-dlp \
     "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux"
   chmod +x yt-dlp
 fi
@@ -66,13 +73,13 @@ if [ -d mpv-config/scripts/uosc ]; then
   echo "  ya está"
 else
   command -v unzip >/dev/null || { echo "falta unzip"; exit 1; }
-  uurl=$(curl -sSL "https://api.github.com/repos/tomasklaen/uosc/releases/latest" \
+  uurl=$(curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors "https://api.github.com/repos/tomasklaen/uosc/releases/latest" \
     | grep -oE '"browser_download_url": *"[^"]*uosc\.zip"' \
     | head -1 | sed -E 's/.*"(https[^"]+)"$/\1/')
   if [ -z "$uurl" ]; then echo "  no encontré uosc.zip"; exit 1; fi
   echo "  bajando: $uurl"
   mkdir -p mpv-config
-  curl -sSL -o /tmp/uosc.zip "$uurl"
+  curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o /tmp/uosc.zip "$uurl"
   unzip -o -q /tmp/uosc.zip -d mpv-config
   rm /tmp/uosc.zip
 fi
