@@ -2499,6 +2499,9 @@ pub struct WifiStatus {
     connected_ssid: Option<String>,
 }
 
+// nmcli es de Kütral OS: fuera de Linux los comandos de wifi devuelven un
+// valor fijo y nadie llama a esto.
+#[cfg(target_os = "linux")]
 fn parse_nmcli_line(line: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut cur = String::new();

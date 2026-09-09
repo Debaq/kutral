@@ -12,8 +12,6 @@ use std::sync::Mutex;
 use std::io::{BufRead, BufReader, Read, Write};
 #[cfg(not(target_os = "linux"))]
 use std::process::Child;
-#[cfg(not(target_os = "linux"))]
-use std::time::Duration;
 
 /// Estado del player de proceso (solo no-Linux). En Linux el handle vive en
 /// `mpv_embed`; este campo queda sin usar pero el tipo es común al `manage`.
@@ -35,6 +33,9 @@ pub struct IptvItem {
 
 /// Ítem de un picker in-video provisto por el frontend (ej. lista de subtítulos
 /// descargables). Al elegirlo, el backend emite "player:menu-pick" con `id`.
+/// Solo Linux: el picker vive en el embed de libmpv. Fuera de ahí el comando
+/// recibe el JSON crudo y no lo mira, así que el tipo ni existe.
+#[cfg(target_os = "linux")]
 #[derive(serde::Deserialize)]
 pub struct PickerItem {
     pub label: String,
@@ -515,9 +516,13 @@ pub mod imp {
         Ok(())
     }
 
-    // El picker in-video solo existe con libmpv embebido (Linux). Stub no-op.
+    // El picker in-video solo existe con libmpv embebido (Linux). Stub no-op:
+    // recibe los ítems como JSON crudo, porque acá nadie los lee.
     #[tauri::command]
-    pub fn mpv_open_picker(_title: String, _items: Vec<PickerItem>) -> Result<(), String> {
+    pub fn mpv_open_picker(
+        _title: String,
+        _items: Vec<serde_json::Value>,
+    ) -> Result<(), String> {
         Ok(())
     }
 
@@ -686,7 +691,7 @@ pub mod imp {
             Ok(s) => s,
             Err(_) => return serde_json::Map::new(),
         };
-        let _ = s.set_read_timeout(Some(Duration::from_millis(400)));
+        let _ = s.set_read_timeout(Some(std::time::Duration::from_millis(400)));
         query_props(&mut s, names)
     }
 
