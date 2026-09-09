@@ -28,6 +28,7 @@
     seriesId,
     title,
     backdrop = null,
+    poster = null,
     stillBase,
     seasons,
     apiKey,
@@ -40,6 +41,8 @@
     seriesId: number;
     title: string;
     backdrop?: string | null;
+    /** Portada de la serie: reemplazo cuando el capítulo no trae captura. */
+    poster?: string | null;
     stillBase: string; // prefijo para still_path (ej. https://image.tmdb.org/t/p/w300)
     seasons: Season[];
     apiKey: string;
@@ -238,6 +241,11 @@
               <div class="ep-still-wrap">
                 {#if ep.still_path}
                   <img class="ep-still" src={ep.still_path.startsWith("http") ? ep.still_path : `${stillBase}${ep.still_path}`} alt="" loading="lazy" />
+                {:else if poster}
+                  <!-- Sin captura del capítulo: la portada, apagada y con el
+                       número encima, en vez de un recuadro vacío. -->
+                  <img class="ep-still ep-still-fallback" src={poster} alt="" loading="lazy" />
+                  <span class="ep-still-num">{ep.episode_number}</span>
                 {:else}
                   <div class="ep-still ep-still-empty">{ep.episode_number}</div>
                 {/if}
@@ -426,6 +434,22 @@
     object-fit: cover;
     border-radius: 6px;
     background: #1a1a22;
+  }
+  .ep-still-fallback { object-position: center 30%; filter: brightness(0.55); }
+  .ep-still-num {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 112px;
+    height: 63px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    font-weight: 800;
+    color: #fff;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
+    pointer-events: none;
   }
   .ep-still-empty {
     display: flex;

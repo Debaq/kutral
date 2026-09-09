@@ -1255,6 +1255,10 @@
     // encarga de que "Tendencia" (solo anime) no se cuele en pelis/series.
     aplicarFiltrosGuardados(t);
     statusMap = new Map();
+    // Estos dos también van por id, y el id cambia de universo entre pestañas
+    // (TMDb ↔ AniList). Arrastrarlos mezclaba datos de un catálogo en el otro.
+    imdbIdMap = new Map();
+    seasonsMap = new Map();
     loadGenres();
     resetAndLoad(false);
   }
@@ -2012,6 +2016,17 @@
     void registerBackShortcuts(false);
   }
 
+  // ¿El título seleccionado se puede reproducir? Mismo criterio que usa el
+  // resto de la app para abrir el menú (imdb en TMDb, kitsu en anime de
+  // AniList). El panel de info miraba SOLO imdb_id, así que todo el anime salía
+  // sellado "NO DISPONIBLE" aunque sus capítulos abren sin problema.
+  const disponibleSel = $derived(
+    !!selected &&
+      (selected.imdb_id
+        ? !unavailableSet.has(selected.imdb_id)
+        : !!selected.kitsu_id),
+  );
+
   const EMPTY_PICK: TrailerPick = { ytKey: "", apple: "", playable: false, err: "" };
 
   // Bajamos OMDb (premios/ratings/plot largo) + trailer en paralelo cuando se
@@ -2547,6 +2562,7 @@
     seriesId={selected.id}
     title={selected.title}
     backdrop={selected.backdrop_path ? art(selected.backdrop_path, "w1280", 1280) : null}
+    poster={selected.poster_path ? art(selected.poster_path, "w300", 300) : null}
     stillBase={`${IMG}/w300`}
     seasons={selected.seasons ?? []}
     apiKey={apiKey}
@@ -2646,7 +2662,7 @@
           {#if selected.poster_path}
             <div class="poster-wrap">
               <img class="poster" src={art(selected.poster_path, "w342", 342)} alt="" onerror={onImgError} />
-              {#if !selected.imdb_id}
+              {#if !disponibleSel}
                 <span class="poster-stamp">NO DISPONIBLE</span>
               {/if}
             </div>
@@ -2695,7 +2711,7 @@
               {/if}
             </div>
           {/if}
-          {#if selected.imdb_id && !unavailableSet.has(selected.imdb_id)}
+          {#if disponibleSel}
             {#if selected.media_type === "tv"}
               <!-- Series: la reproducción es por capítulo (lista de Temporadas
                    abajo). No hay "Descubrir" de título; solo Trailer. -->
@@ -2866,6 +2882,17 @@
                 >
                   {#if ep.still_path}
                     <img src={art(ep.still_path, "w300", 300)} alt={ep.name} loading="lazy" onerror={onImgError} />
+                  {:else if selected?.poster_path}
+                    <!-- Sin captura del capítulo: la portada de la serie antes
+                         que un cuadro gris con el número. -->
+                    <img
+                      class="ep-fallback"
+                      src={art(selected.poster_path, "w300", 300)}
+                      alt={ep.name}
+                      loading="lazy"
+                      onerror={onImgError}
+                    />
+                    <span class="ep-num">E{ep.episode_number}</span>
                   {:else}
                     <div class="no-poster ep-noimg">E{ep.episode_number}</div>
                   {/if}
@@ -3112,9 +3139,13 @@
               {@const date = it.release_date || it.first_air_date || ""}
               {@const year = date.slice(0, 4)}
               {@const st = statusMap.get(it.id)}
-              {@const itImdb = imdbIdMap.get(it.id)}
+              <!-- imdbIdMap y seasonsMap se llenan con ids de TMDb. Los del
+                   catálogo de anime son de AniList y caen en el mismo rango
+                   numérico: sin este guardo, una card de anime heredaba el
+                   imdb (y el sello "NO DISPONIBLE") de una peli cualquiera. -->
+              {@const itImdb = tab === "anime" ? undefined : imdbIdMap.get(it.id)}
               {@const unavail = itImdb ? unavailableSet.has(itImdb) : false}
-              {@const nseasons = seasonsMap.get(it.id)}
+              {@const nseasons = tab === "anime" ? undefined : seasonsMap.get(it.id)}
               {@const clv = tab === "anime" ? claveMedio(null, it.id) : claveMedio(itImdb)}
               {@const vis = clv ? estadoDe(clv) : null}
               {#if st !== "none"}
@@ -4320,6 +4351,22 @@
 
   /* Capítulos: thumbnail apaisado 16/9 en vez del poster 2/3. */
   .ep-card img, .ep-card .ep-noimg { aspect-ratio: 16/9; }
+  /* Sin captura propia usamos la portada, recortada al mismo 16/9 y algo
+     apagada para que no compita con los capítulos que sí tienen imagen. El
+     número va encima, que si no todos los capítulos se ven idénticos. */
+  .ep-card .ep-fallback { object-position: center 30%; filter: brightness(0.6); }
+  .ep-card .ep-num {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    font-weight: 800;
+    color: #fff;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.9);
+    pointer-events: none;
+  }
 
   /* Barra de encabezado del listado de capítulos (back + breadcrumb). */
   .ep-head-bar {
