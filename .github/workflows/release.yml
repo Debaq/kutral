@@ -202,8 +202,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${{ github.ref_name }}"
+          # --repo explícito: dentro del contenedor los archivos son de otro
+          # uid y git corta con "detected dubious ownership", así que gh no
+          # puede deducir el repo solo. Con --repo no toca git.
           gh release upload "$VERSION" \
-            "flatpak/kutral-${VERSION}-x86_64.flatpak" --clobber
+            "flatpak/kutral-${VERSION}-x86_64.flatpak" \
+            --repo "${{ github.repository }}" --clobber
 
   build-windows:
     runs-on: windows-latest
