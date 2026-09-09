@@ -141,41 +141,26 @@ jobs:
     needs: build-linux
     # Distribución para cualquier Linux: el runtime de GNOME pone webkit2gtk,
     # GTK3 y glibc, y los drivers los resuelve flatpak con
-    # org.freedesktop.Platform.GL.* (incluida la NVIDIA propietaria del host).
-    # No requiere instalar nada en la máquina del usuario más que flatpak.
+    # org.freedesktop.Platform.GL.*, incluida la NVIDIA propietaria del host.
+    #
+    # Corre en la imagen de Flathub, no sobre el runner pelado. El runner trae
+    # flatpak 1.14 y flatpak-builder 1.4.2, y esa combinación falla de dos
+    # formas distintas: 1.14 rechaza el --device=input del manifest, y 1.4.2 no
+    # pasa --libdir, con lo que meson instala en /app/lib64 y mpv no encuentra
+    # libplacebo. La imagen trae 1.18.1 y 1.4.9, más GNOME 49, gh, 7z y unzip.
     runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-49
+      options: --privileged
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install flatpak
+      # Lo único que la imagen no trae.
+      - name: Extensiones de SDK (rust + node)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y flatpak p7zip-full unzip
-
-      - name: Add flathub
-        run: |
-          flatpak remote-add --if-not-exists --user \
-            flathub https://flathub.org/repo/flathub.flatpakrepo
-
-      - name: Cache flatpak runtimes
-        uses: actions/cache@v4
-        with:
-          path: ~/.local/share/flatpak
-          key: flatpak-gnome49-${{ hashFiles('flatpak/app.kutral.Kutral.yml') }}
-          restore-keys: flatpak-gnome49-
-
-      # org.flatpak.Builder en vez del flatpak-builder de apt: el runner trae
-      # flatpak 1.14 y su `build-finish` rechaza --device=input (ver el manifest).
-      # El de flathub trae su propia libflatpak moderna, y además fija --libdir,
-      # que es la otra cosa que el de Ubuntu no hace.
-      - name: Install builder + runtime + SDK
-        run: |
-          flatpak install --user -y --noninteractive flathub \
-            org.flatpak.Builder \
-            org.gnome.Platform//49 \
-            org.gnome.Sdk//49 \
+          flatpak install -y --noninteractive flathub \
             org.freedesktop.Sdk.Extension.rust-stable//25.08 \
             org.freedesktop.Sdk.Extension.node22//25.08
 
@@ -197,8 +182,7 @@ jobs:
       - name: Build flatpak
         working-directory: flatpak
         run: |
-          flatpak run --filesystem=host org.flatpak.Builder \
-            --user --repo=repo --force-clean \
+          flatpak-builder --repo=repo --force-clean \
             --state-dir .flatpak-builder \
             .build app.kutral.Kutral.yml
 
