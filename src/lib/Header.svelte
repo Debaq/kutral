@@ -38,7 +38,9 @@
   let webRunning = $state(false);
   let webUrl = $state<string | null>(null);
   let prevOnline = true;
-  const hidden = $derived(player.playing);
+  // El asistente inicial se presenta solo: la barra con las pestañas de la app
+  // ahí solo invita a salirse a medias.
+  const hidden = $derived(player.playing || $page.url.pathname.startsWith("/bienvenida"));
   const unread = $derived(unreadCount());
   // El botón de descargas solo aparece si hay algo en la cola: sin plan B
   // activo (o sin bloqueos DMCA) no ensucia el encabezado.

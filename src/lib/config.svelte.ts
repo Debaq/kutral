@@ -107,6 +107,14 @@ export const TORRENT_BUFFER_DEFAULT = 24;
 export const TORRENT_BUFFER_MIN = 8;
 export const TORRENT_BUFFER_MAX = 200;
 
+// Presets del buffer. Los MB no le dicen nada a nadie; el arranque y los
+// cortes sí. El campo numérico sigue ahí para afinar.
+export const TORRENT_BUFFER_OPTIONS: { mb: number; label: string; hint: string }[] = [
+	{ mb: 12, label: "Arranque rápido", hint: "Empieza antes. Se corta si hay poca gente compartiendo." },
+	{ mb: 24, label: "Equilibrado", hint: "Recomendado." },
+	{ mb: 64, label: "Sin cortes", hint: "Tarda más en empezar y aguanta los bajones." },
+];
+
 export const SUB_LANGS: { id: string; label: string }[] = [
 	{ id: "es", label: "Español" },
 	{ id: "en", label: "English" },
@@ -170,9 +178,10 @@ export const config = $state({
 	webPort: 8080,
 	// Horas tras las cuales auto-eliminar torrents de la lista RD. 0 = nunca.
 	rdCleanupHours: 0,
-	// Plan B cuando el debrid bloquea un hash por DMCA (451): bajar el torrent
-	// localmente y reproducirlo mientras se descarga. OPT-IN: sin debrid de por
-	// medio tu IP queda expuesta en el swarm (RD hacía de proxy).
+	// Bajar el torrent con el cliente local y reproducirlo mientras se descarga.
+	// Con debrid es el plan B del 451/DMCA; sin debrid vinculado es la única vía
+	// de reproducción. OPT-IN en los dos casos: sin el debrid de intermediario
+	// tu IP queda expuesta en el swarm.
 	torrentLocal: false,
 	// MB a bufferear antes de abrir el reproductor con el torrent local.
 	torrentBufferMb: TORRENT_BUFFER_DEFAULT,

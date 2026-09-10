@@ -422,8 +422,10 @@
   // cada inspección cuesta resolver el magnet + leer el header (~5-15s).
   const MAX_PROBES = 4;
   // Torrents que se intentan bajar en local antes de rendirse. Cada intento
-  // fallido cuesta el timeout de metadata del backend, así que son pocos.
+  // fallido cuesta el timeout de metadata del backend, así que son pocos. Sin
+  // debrid la descarga local es la única vía, no un plan B: ahí vale insistir.
   const MAX_TORRENT_TRIES = 2;
+  const MAX_TORRENT_TRIES_SOLO = 4;
 
   // ¿La pista del probe es español? lang ISO (spa/es/es-419…) o título
   // ("Latino", "Español (España)", "Spanish [LAS]"…).
@@ -484,12 +486,14 @@
   // y salta las fuentes sin español embebido; si ninguna de las inspeccionadas
   // trae, reproduce la mejor igual (los subs externos siguen de respaldo).
   async function playFrom(startIdx: number) {
-    dbg(`playFrom start=${startIdx} n=${view.length} fam=${famFilter} rd=${rdLinked} verify=${config.verifyEsTracks}`);
-    // Sin debrid solo se puede reproducir lo que YA trae URL directa (fuentes
-    // web tipo jkanime). Los magnets sí lo necesitan, así que se filtran en el
-    // bucle en vez de bloquear todo el picker.
-    if (!rdLinked && !view.some((s) => s.url)) {
-      error = "Vincula tu debrid en Configuración para reproducir.";
+    dbg(`playFrom start=${startIdx} n=${view.length} fam=${famFilter} rd=${rdLinked} local=${config.torrentLocal} verify=${config.verifyEsTracks}`);
+    // Sin debrid quedan dos vías: las fuentes que ya traen URL directa (web
+    // tipo jkanime) y la descarga local. Sin ninguna de las dos no hay nada
+    // que intentar.
+    if (!rdLinked && !config.torrentLocal && !view.some((s) => s.url)) {
+      error =
+        'Sin debrid y sin descarga local no hay forma de reproducir. ' +
+        'Activa "Descarga local" en Configuración o vincula un debrid.';
       return;
     }
     resolving = true;
@@ -502,15 +506,21 @@
     let lastErr = "";
     // Mejor fuente que resolvió pero NO trae español: respaldo si ninguna trae.
     let fallback: { url: string; s: Src } | null = null;
-    // Fuentes que el debrid rechazó pero que SÍ tienen magnet: candidatas al
-    // plan B (bajarlas nosotros). El 451 es cumplimiento legal de RD, no falta
-    // de seeds, así que la mejor bloqueada suele bajarse sin problema.
+    // Candidatas a bajar en local: las que el debrid rechazó (el 451 es
+    // cumplimiento legal de RD, no falta de seeds, así que suelen bajarse sin
+    // problema) y, sin debrid vinculado, todas las que traen magnet.
     const rechazadas: Src[] = [];
 
     for (let i = startIdx; i < view.length && tried < MAX_TRIES; i++) {
       const s = view[i];
       if (!s.magnet && !s.url) { dbg(`#${i} SKIP (sin magnet ni url)`); continue; }
-      if (!rdLinked && !s.url) { dbg(`#${i} SKIP (magnet sin debrid)`); continue; }
+      // Sin debrid no hay a quién pedirle que resuelva el magnet: la fuente
+      // pasa directo a la lista de descarga local, sin gastar un intento.
+      if (!rdLinked && !s.url) {
+        if (s.magnet) rechazadas.push(s);
+        dbg(`#${i} -> local (magnet sin debrid)`);
+        continue;
+      }
       dbg(`#${i} intento url=${!!s.url} magnet=${!!s.magnet} ${(s.title || "").slice(0, 40)}`);
       tried++;
       focusIdx = i;
@@ -566,10 +576,10 @@
 
     dbg(`fin RD: tried=${tried} blocked=${blocked} sinEs=${sinEs} lastErr=${lastErr.slice(0, 60)}`);
 
-    // Plan B: ninguna fuente pasó por el debrid, pero el torrent sigue vivo.
-    // Lo bajamos nosotros y lo reproducimos mientras se descarga. Acá el orden
-    // que importa es OTRO: con debrid mandaba la caché de RD, bajando en local
-    // manda cuánta gente está compartiendo el archivo.
+    // Descarga local: con debrid es el plan B (nada pasó, pero el torrent
+    // sigue vivo); sin debrid es la vía principal. Acá el orden que importa es
+    // OTRO: con debrid mandaba la caché de RD, bajando en local manda cuánta
+    // gente está compartiendo el archivo.
     let pesadas = 0;
     if (config.torrentLocal && rechazadas.length) {
       const aptas = rechazadas.filter((c) => {
@@ -578,7 +588,16 @@
         return false;
       });
       const porSeeders = aptas.sort((a, b) => (b.seeders || 0) - (a.seeders || 0));
-      for (const cand of porSeeders.slice(0, MAX_TORRENT_TRIES)) {
+      // Sin debrid esta es la vía principal, así que se respeta la fuente que
+      // el usuario marcó en la lista: va primero aunque otra tenga más seeds.
+      const elegida = view[startIdx];
+      const iSel = elegida ? porSeeders.indexOf(elegida) : -1;
+      if (!rdLinked && iSel > 0) {
+        porSeeders.splice(iSel, 1);
+        porSeeders.unshift(elegida);
+      }
+      const tope = rdLinked ? MAX_TORRENT_TRIES : MAX_TORRENT_TRIES_SOLO;
+      for (const cand of porSeeders.slice(0, tope)) {
         if (await playViaTorrent(cand)) return;
         if (torrentCancel) return; // el usuario canceló o lo mandó a la cola
       }
@@ -596,6 +615,10 @@
         `Sube el tope en Configuración o busca una versión más liviana.`;
     } else if (blocked > 0) {
       error = `Sin fuentes reproducibles: ${blocked} bloqueada(s) por el debrid (DMCA) y la descarga local tampoco pudo. Prueba "🔄 Rebuscar fuentes" u otra calidad.`;
+    } else if (!rdLinked && rechazadas.length) {
+      error =
+        "La descarga local no pudo arrancar ninguna fuente. Casi siempre es falta de " +
+        'gente compartiendo: prueba otra calidad o "🔄 Rebuscar fuentes".';
     } else {
       error = `No se pudo reproducir ninguna fuente. ${lastErr}`;
     }
@@ -653,11 +676,15 @@
       notify(
         "warn",
         "Reproduciendo desde descarga local",
-        "El debrid bloqueó esta fuente por DMCA, así que el archivo lo estás bajando y compartiendo tú.",
+        rdLinked
+          ? "El debrid bloqueó esta fuente por DMCA. La estás bajando y compartiendo tú."
+          : "Sin debrid: la estás bajando y compartiendo tú. Tu IP queda visible para el resto del torrent.",
       );
       void mpv([
         "show-text",
-        "Desde descarga local: el debrid bloqueó esta fuente",
+        rdLinked
+          ? "Descarga local: el debrid bloqueó esta fuente"
+          : "Descarga local: sin debrid",
         "5000",
       ]);
       return true;

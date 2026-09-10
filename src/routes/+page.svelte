@@ -16,6 +16,7 @@
   import EpisodePicker from "$lib/EpisodePicker.svelte";
   import PostCreditos from "$lib/PostCreditos.svelte";
   import { esFinReal, type FinPayload } from "$lib/finVideo";
+  import { WEB_PLAYER_ENABLED } from "$lib/features";
   import { ANIME_GENRES, ANILIST_SORTS, anilistGenresCSV, animeSeasonOptions } from "$lib/anime";
   import RemoteQr from "$lib/RemoteQr.svelte";
   import {
@@ -2150,14 +2151,16 @@
 
   // --- Acciones del menú ---
   function menuContinue() { void startDiscover(); }      // web con resume
-  // "Empezar de nuevo". Con debrid no se borra el historial: solo se lanza
-  // desde 0. Borrarlo perdería el dato de que ya la habías visto a medias.
+  // "Empezar de nuevo". No se borra el historial: solo se lanza desde 0.
+  // Borrarlo perdería el dato de que ya la habías visto a medias. La ruta de
+  // fuentes vale con y sin debrid, así que solo el player web (apagado) usa
+  // el camino viejo.
   function menuRestart() {
-    if (config.rdLinked) {
-      openDebrid(true, true);
+    if (WEB_PLAYER_ENABLED && !config.rdLinked) {
+      void restartDiscover();
       return;
     }
-    void restartDiscover();
+    openDebrid(true, true);
   }
   // Abre la ruta debrid. Películas → lista directa. Series/anime → elegir
   // temporada/episodio primero.

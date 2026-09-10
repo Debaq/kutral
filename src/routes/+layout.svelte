@@ -10,7 +10,8 @@
   import ResumePill from "$lib/ResumePill.svelte";
   import SubsService from "$lib/SubsService.svelte";
   import HistorialTracker from "$lib/HistorialTracker.svelte";
-  import { config, loadConfig, initDetection, initRd } from "$lib/config.svelte";
+  import { config, loadConfig, initDetection, initRd, refreshRdLinked } from "$lib/config.svelte";
+  import { onboardingHecho, faltaLoMinimo } from "$lib/onboarding";
   import { initTorrentSession, startQueuePoll, stopQueuePoll } from "$lib/torrents.svelte";
   import { setConcurrenciaScreening } from "$lib/screening.svelte";
   import { cargarHistorial } from "$lib/historial.svelte";
@@ -164,7 +165,7 @@
     // Historial + favoritos a memoria: el grid pinta ticks sin query por card.
     void cargarHistorial();
     // Migra/lee credenciales RD del store seguro del backend.
-    void initRd();
+    void initRd().then(abrirAsistenteSiHaceFalta);
     // Propagar concurrencia configurada al worker Rust.
     void setConcurrenciaScreening(config.screeningConcurrency);
     // Descarga local activada: levanta la sesión torrent para recuperar la cola
@@ -212,6 +213,22 @@
       }, SPLASH_MIN_MS);
     }
   });
+
+  // Primera vez: si no hay catálogo NI forma de reproducir, el asistente. Se
+  // consulta después de initRd porque rdLinked llega del backend, no de
+  // localStorage. Si ya se pasó por el asistente no vuelve a aparecer, aunque
+  // falte todo: fue una decisión del usuario.
+  async function abrirAsistenteSiHaceFalta() {
+    if (onboardingHecho()) return;
+    if (window.location.pathname.startsWith("/bienvenida")) return;
+    await refreshRdLinked();
+    const falta = faltaLoMinimo({
+      tmdbKey: config.tmdbKey,
+      rdLinked: config.rdLinked,
+      torrentLocal: config.torrentLocal,
+    });
+    if (falta) void goto("/bienvenida");
+  }
 
   const kiosk = $derived(
     config.loaded && (

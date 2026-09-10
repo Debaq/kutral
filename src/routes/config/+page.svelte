@@ -22,6 +22,7 @@
     TORRENT_BUFFER_DEFAULT,
     TORRENT_BUFFER_MIN,
     TORRENT_BUFFER_MAX,
+    TORRENT_BUFFER_OPTIONS,
     TORRENT_QUALITY_OPTIONS,
     TORRENT_MAX_GB_DEFAULT,
     TORRENT_MAX_GB_MIN,
@@ -37,6 +38,7 @@
   import { notify } from "$lib/notifStore.svelte";
   import { ayuda } from "$lib/atajos/store.svelte";
   import { navegar, enfocarPrimero } from "$lib/nav";
+  import { resetOnboarding } from "$lib/onboarding";
   import Gamepad from "$lib/Gamepad.svelte";
   import RemoteQr from "$lib/RemoteQr.svelte";
   import {
@@ -513,6 +515,13 @@
     goto("/");
   }
 
+  // Vuelve a abrir el asistente inicial. Se limpia la marca para que, si se
+  // cierra a mitad, la próxima vez tampoco se dé por hecho.
+  function repetirAsistente() {
+    resetOnboarding();
+    goto("/bienvenida");
+  }
+
   // Esc/Backspace en /config: si hay flow RD activo, Esc lo cancela; si no,
   // ambas vuelven al home. Backspace en inputs queda intocable (borra texto).
   // Tipos de <input> donde las flechas horizontales son del control (mueven el
@@ -863,6 +872,9 @@
     <header class="cfg-head">
       <button data-nav class="back" onclick={back} title="Volver">← Volver</button>
       <h1>Configuración</h1>
+      <button data-nav class="back" onclick={repetirAsistente} title="Volver a pasar por el asistente inicial">
+        Repetir asistente
+      </button>
     </header>
 
     <div class="cfg-grid">
@@ -935,7 +947,7 @@
 
         <section class="block">
           <h2>RealDebrid</h2>
-          <p class="hint">Vinculá tu cuenta para streaming premium sin publicidad.</p>
+          <p class="hint">Vincula tu cuenta para streaming premium sin publicidad.</p>
 
           {#if config.rdLinked && !rdLink}
             <div class="rd-linked">
@@ -945,8 +957,8 @@
             </div>
           {:else if rdLink}
             <div class="rd-flow">
-              <p class="rd-step">1. Andá a <button data-nav class="rd-link" onclick={openVerify}>{rdLink.verification_url}</button></p>
-              <p class="rd-step">2. Ingresá este código:</p>
+              <p class="rd-step">1. Abre <button data-nav class="rd-link" onclick={openVerify}>{rdLink.verification_url}</button></p>
+              <p class="rd-step">2. Escribe este código:</p>
               <div class="rd-code">{rdLink.user_code}</div>
               <p class="rd-wait">
                 <span class="spinner"></span>
@@ -1336,32 +1348,33 @@
         </section>
 
         <section class="block">
-          <h2>Descarga local (si el debrid bloquea)</h2>
+          <h2>Descarga local</h2>
           <p class="hint">
-            Real-Debrid rechaza ciertos torrents por DMCA (error 451). No es que
-            el torrent esté muerto: es cumplimiento legal de ellos. Con esto
-            activado, Kütral baja esa fuente por su cuenta y la reproduce
-            mientras se descarga.
+            Kütral baja el torrent y lo reproduce mientras se descarga, sin
+            debrid de por medio.
+            {#if config.rdLinked}
+              Con tu debrid vinculado se usa solo cuando él rechaza una fuente
+              por DMCA (error 451).
+            {:else}
+              <strong>Sin debrid vinculado es la única forma de reproducir.</strong>
+            {/if}
           </p>
           <p class="warn-box">
-            <strong>Ojo con esto:</strong> el debrid funcionaba como intermediario
-            — los demás usuarios del torrent veían la IP de Real-Debrid, no la
-            tuya. Bajando en local tu IP queda visible para todos los que
-            comparten ese archivo. Actívalo solo si sabes lo que implica en tu
-            país y con tu proveedor de internet.
+            <strong>Tu IP queda visible</strong> para el resto de la gente que
+            comparte ese archivo. El debrid hacía de intermediario; acá no hay
+            ninguno. Decide sabiendo eso.
           </p>
           <label class="toggle-row">
             <input data-nav type="checkbox" bind:checked={torrentLocal} onchange={aplicarTorrent} />
-            <span>Bajar en local cuando el debrid bloquee la fuente</span>
+            <span>Bajar y reproducir en local</span>
           </label>
           <p class="hint">Esta sección se aplica al instante, sin pulsar Guardar.</p>
           {#if torrentLocal}
             <p class="hint">
-              Con el debrid el peso del archivo daba lo mismo: lo servía él a
-              velocidad de fibra. Bajándolo tú hay que sostener el bitrate o el
-              video se corta — un 4K de 60 GB pide unos 67 Mbps constantes; un
-              1080p normal de 4 GB, unos 4,5 Mbps. Estos topes valen
-              <strong>solo</strong> para la descarga local.
+              Bajándolo tú hay que sostener el bitrate del archivo o el video se
+              corta: un 4K de 60 GB pide unos 67 Mbps constantes; un 1080p de
+              4 GB, unos 4,5 Mbps. Estos topes valen <strong>solo</strong> para
+              la descarga local.
             </p>
             <div class="mode-group">
               {#each TORRENT_QUALITY_OPTIONS as q}
@@ -1391,8 +1404,26 @@
                 onchange={aplicarTorrent}
               />
             </label>
+            <p class="field-label">Cuánto bajar antes de empezar a ver</p>
+            <div class="mode-group">
+              {#each TORRENT_BUFFER_OPTIONS as b}
+                <label class="mode-card" class:sel={torrentBufferMb === b.mb}>
+                  <input data-nav
+                    type="radio"
+                    name="torrentBufferMb"
+                    value={b.mb}
+                    bind:group={torrentBufferMb}
+                    onchange={aplicarTorrent}
+                  />
+                  <div>
+                    <strong>{b.label}</strong>
+                    <span>{b.hint} ({b.mb} MB)</span>
+                  </div>
+                </label>
+              {/each}
+            </div>
             <label class="field">
-              <span class="field-label">Buffer antes de reproducir (MB)</span>
+              <span class="field-label">O el valor exacto (MB)</span>
               <input data-nav
                 type="number"
                 min={TORRENT_BUFFER_MIN}
@@ -1402,8 +1433,9 @@
               />
             </label>
             <p class="hint">
-              Más buffer = arranca más lento pero se corta menos si el torrent
-              tiene pocos usuarios compartiendo.
+              Más buffer = arranca más lento y se corta menos. Con internet
+              lento o un torrent con poca gente, sube esto antes que bajar la
+              calidad.
             </p>
             <label class="field">
               <span class="field-label">Carpeta de descarga</span>

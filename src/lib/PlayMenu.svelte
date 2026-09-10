@@ -140,13 +140,16 @@
       // Prioridad: si hay RealDebrid, va debrid primero (mejor calidad, directo
       // a mpv) y el player web queda como alternativa.
       //
-      // Sin debrid Y sin player web no queda ninguna vía de reproducción, pero
-      // igual mostramos "Ver con debrid": SourcePicker responde con "Vincula tu
-      // debrid en Configuración para reproducir", que es accionable. Un menú
-      // vacío no le dice nada al user.
+      // Sin debrid la misma entrada sirve igual: SourcePicker busca fuentes y
+      // las baja en local si el usuario activó esa opción. Por eso el nombre
+      // cambia — "Ver con debrid" mentiría cuando no hay debrid.
       a.push({
         id: "rd",
-        label: progressLabel ? `⚡  Continuar (${progressLabel})` : "⚡  Ver con debrid",
+        label: progressLabel
+          ? `⚡  Continuar (${progressLabel})`
+          : hasRd
+            ? "⚡  Ver con debrid"
+            : "▶  Descubrir",
         primary: true,
       });
       // El historial guarda el minuto: si hay algo empezado, hace falta la
