@@ -14,6 +14,8 @@
   import PlayMenu from "$lib/PlayMenu.svelte";
   import QRCode from "qrcode";
   import EpisodePicker from "$lib/EpisodePicker.svelte";
+  import PostCreditos from "$lib/PostCreditos.svelte";
+  import { esFinReal, type FinPayload } from "$lib/finVideo";
   import { ANIME_GENRES, ANILIST_SORTS, anilistGenresCSV, animeSeasonOptions } from "$lib/anime";
   import RemoteQr from "$lib/RemoteQr.svelte";
   import {
@@ -44,6 +46,7 @@
     esFavorito,
     alternarFavorito,
     setContexto,
+    contextoActual,
     limpiarContexto,
     type FilaHistorial,
     type MediaMeta,
@@ -73,7 +76,7 @@
   // Despacha el cierre correcto según el modo actual al momento de presionar Esc/Backspace.
   // Evita el bug donde Esc en playmenu llamaba a stopDiscover (que no-op) y dejaba la vista colgada.
   function dispatchBack() {
-    if (mode === "playmenu" || mode === "episodes" || mode === "sources") {
+    if (mode === "playmenu" || mode === "episodes" || mode === "sources" || mode === "fin") {
       closeSources();
     } else if (mode === "discover" || mode === "trailer" || mode === "unavailable") {
       stopDiscover();
@@ -631,7 +634,7 @@
     };
   }
 
-  let mode = $state<"browse" | "discover" | "trailer" | "unavailable" | "sources" | "playmenu" | "episodes">("browse");
+  let mode = $state<"browse" | "discover" | "trailer" | "unavailable" | "sources" | "playmenu" | "episodes" | "fin">("browse");
   let checkingDiscover = $state(false);
   // Pantalla de último recurso: QR al video de YouTube.
   let trailerQr = $state<string>("");
@@ -2193,6 +2196,246 @@
     };
   });
 
+  // ---- Fin del video: pantalla de "qué ver después" ----------------------
+  // El backend avisa con "mpv:fin" cuando el archivo se acabó solo (distinto de
+  // salir con Esc). Lo que NUNCA puede seguir es otra fuente de la lista: todas
+  // son el mismo archivo, así que la película se repetiría.
+  //
+  // En vez del corte seco al catálogo se abre una pantalla de fin: capítulo
+  // siguiente (con Enter, nada arranca solo) y recomendaciones del título.
+  type SugerenciaFin = { id: number; title: string; posterUrl: string | null; year: string };
+  type SiguienteFin = { season: number; episode: number; nombre: string; stillUrl: string | null };
+
+  let finTitulo = $state("");
+  let finBackdrop = $state<string | null>(null);
+  let finSiguiente = $state<SiguienteFin | null>(null);
+  let finSugerencias = $state<SugerenciaFin[]>([]);
+  let finCargando = $state(false);
+  // Ítem completo de cada sugerencia: `pick()` lo necesita para abrir la ficha.
+  const finItems = new Map<number, ListItem>();
+  // Episodio al que apunta finSiguiente (para el contexto del historial).
+  let finSiguienteEp: EpisodeMini | null = null;
+
+  $effect(() => {
+    let un: UnlistenFn | undefined;
+    void listen<FinPayload>("mpv:fin", (e) => void alTerminar(e.payload)).then((u) => (un = u));
+    return () => {
+      if (un) un();
+    };
+  });
+
+  async function alTerminar(payload: FinPayload) {
+    // Corte del stream a mitad: no terminó nada. Lo resuelve el SourcePicker
+    // (vuelve a la lista para elegir otra fuente).
+    if (!esFinReal(payload)) return;
+    // Lo que terminó tiene que ser el título abierto acá. Si se lanzó desde
+    // otro lado (la pill de "seguir viendo", otra ruta), `selected` puede ser
+    // cualquier otra cosa y recomendaríamos "porque viste" un título que nadie
+    // vio.
+    if (!selected || contextoActual()?.clave !== claveSel) {
+      closeSources();
+      return;
+    }
+    finTitulo = selected.title;
+    finBackdrop = selected.backdrop_path ? art(selected.backdrop_path, "w1280", 1280) : null;
+    finSiguiente = null;
+    finSiguienteEp = null;
+    finSugerencias = [];
+    finItems.clear();
+    finCargando = true;
+    mode = "fin";
+    setFs(true);
+    void registerBackShortcuts(false);
+
+    const esEpisodio =
+      currentKind() !== "movie" && sourcesSeason != null && sourcesEpisode != null;
+    if (esEpisodio) {
+      const sig = await siguienteEpisodio(sourcesSeason!, sourcesEpisode!);
+      if (sig) {
+        finSiguienteEp = sig.ep ?? null;
+        finSiguiente = {
+          season: sig.season,
+          episode: sig.episode,
+          nombre: sig.ep?.name ?? "",
+          stillUrl: sig.ep?.still_path ? art(sig.ep.still_path, "w300", 300) : null,
+        };
+      }
+    }
+    finSugerencias = await sugerenciasDe();
+    finCargando = false;
+    // Nada que ofrecer (sin capítulo siguiente y sin red): no dejamos al user
+    // mirando una pantalla vacía.
+    if (!finSiguiente && !finSugerencias.length) closeSources();
+  }
+
+  // Enter sobre "Siguiente capítulo": mismo camino que elegirlo a mano.
+  function verSiguienteCapitulo() {
+    const sig = finSiguiente;
+    if (!sig) return;
+    sourcesSeason = sig.season;
+    sourcesEpisode = sig.episode;
+    // El capítulo nuevo arranca desde el principio aunque el título tuviera
+    // progreso guardado de otra vez.
+    empezarDeCero = true;
+    setContexto(
+      metaDe(
+        sig.season,
+        sig.episode,
+        finSiguienteEp ?? ({ episode_number: sig.episode, name: sig.nombre, still_path: null } as EpisodeMini),
+      ),
+    );
+    sourcesAutoplay = true;
+    mode = "sources"; // la key del SourcePicker cambia → busca fuentes del nuevo
+  }
+
+  // Enter sobre una sugerencia: abre su ficha de reproducción, igual que
+  // elegirla en el catálogo.
+  function verSugerencia(id: number) {
+    const it = finItems.get(id);
+    if (!it) return;
+    void pickAndDiscover(it);
+  }
+
+  // "Porque viste X": recomendaciones del título que acaba de terminar.
+  // Anime → AniList (secuela primero); películas y series → TMDb.
+  async function sugerenciasDe(): Promise<SugerenciaFin[]> {
+    if (!selected) return [];
+    try {
+      let items: ListItem[] = [];
+      if (tab === "anime") {
+        const r = await invoke<ListResp>("anilist_relacionados", { id: selected.id });
+        items = r.results ?? [];
+      } else {
+        if (!apiKey) return [];
+        items = await recomendacionesTmdb(selected.id);
+      }
+      return await filtrarSugerencias(items);
+    } catch (e) {
+      console.warn("[fin] sugerencias", e);
+      return [];
+    }
+  }
+
+  async function recomendacionesTmdb(id: number): Promise<ListItem[]> {
+    const mediaType = tabToMediaType(tab);
+    const pedir = async (kind: "recommendations" | "similar") => {
+      const r = await invoke<ListResp>("tmdb_recommendations", {
+        mediaType,
+        id,
+        page: 1,
+        apiKey,
+        kind,
+      });
+      return r.results ?? [];
+    };
+    const recs = await pedir("recommendations");
+    // TMDb devuelve pocas (o ninguna) recomendación en títulos de nicho:
+    // "similar" es el respaldo, con el mismo shape.
+    if (recs.length >= 4) return recs;
+    const sim = await pedir("similar").catch(() => [] as ListItem[]);
+    return [...recs, ...sim.filter((x) => !recs.some((y) => y.id === x.id))];
+  }
+
+  const MAX_SUGERENCIAS = 8;
+
+  // Deja fuera lo que no sirve ofrecer: lo ya visto, lo marcado como no
+  // disponible y (en TMDb) lo que no tiene imdb, que es lo que necesitan los
+  // scrapers para encontrar fuentes.
+  async function filtrarSugerencias(items: ListItem[]): Promise<SugerenciaFin[]> {
+    const out: SugerenciaFin[] = [];
+    if (tab === "anime") {
+      for (const it of items) {
+        if (out.length >= MAX_SUGERENCIAS) break;
+        if (estadoDe(claveMedio(null, it.id))?.visto) continue;
+        out.push(aSugerencia(it));
+      }
+      return out;
+    }
+    // TMDb: el imdb sale de item_status (una llamada por título). Se miran solo
+    // las primeras candidatas, en paralelo, para no encadenar 20 llamadas.
+    const candidatas = items.slice(0, MAX_SUGERENCIAS + 6);
+    const estados = await Promise.all(
+      candidatas.map((it) =>
+        invoke<{ has_imdb: boolean; imdb_id: string | null }>("item_status", {
+          mediaType: tabToMediaType(tab),
+          id: it.id,
+          apiKey,
+        }).catch(() => null),
+      ),
+    );
+    for (let i = 0; i < candidatas.length && out.length < MAX_SUGERENCIAS; i++) {
+      const st = estados[i];
+      if (!st?.has_imdb || !st.imdb_id) continue; // sin imdb no hay fuentes
+      if (unavailableSet.has(st.imdb_id)) continue;
+      if (estadoDe(claveMedio(st.imdb_id))?.visto) continue;
+      out.push(aSugerencia(candidatas[i]));
+    }
+    return out;
+  }
+
+  function aSugerencia(it: ListItem): SugerenciaFin {
+    finItems.set(it.id, it);
+    const fecha = it.release_date || it.first_air_date || "";
+    return {
+      id: it.id,
+      title: it.title || it.name || "",
+      posterUrl: it.poster_path ? art(it.poster_path, "w342", 342) : null,
+      year: fecha.slice(0, 4),
+    };
+  }
+
+  // Capítulo siguiente: el que sigue dentro de la temporada y, si se acabó, el
+  // primero de la siguiente. Los "Especiales" (temporada 0) no entran en la
+  // cadena: no son la continuación de nada.
+  async function siguienteEpisodio(
+    season: number,
+    episode: number,
+  ): Promise<{ season: number; episode: number; ep?: EpisodeMini } | null> {
+    if (!selected) return null;
+    const enTemporada = await cargarEpisodios(season);
+    const prox = enTemporada
+      .filter((e) => e.episode_number > episode)
+      .sort((a, b) => a.episode_number - b.episode_number)[0];
+    if (prox) return { season, episode: prox.episode_number, ep: prox };
+    // El anime de AniList trae TODOS los capítulos en una lista: si ahí no hay
+    // siguiente, no hay temporada que buscar.
+    if (selected.is_anime) return null;
+    const siguientes = (selected.seasons ?? [])
+      .filter((x) => x.season_number > season && x.season_number > 0 && x.episode_count > 0)
+      .sort((a, b) => a.season_number - b.season_number);
+    for (const t of siguientes) {
+      const eps = await cargarEpisodios(t.season_number);
+      const primero = eps.sort((a, b) => a.episode_number - b.episode_number)[0];
+      if (primero) {
+        return { season: t.season_number, episode: primero.episode_number, ep: primero };
+      }
+      // Sin datos de episodios pero la temporada existe: al capítulo 1 igual.
+      if (t.episode_count > 0) return { season: t.season_number, episode: 1 };
+    }
+    return null;
+  }
+
+  // Episodios de una temporada, con el mismo cache que usa el grid.
+  async function cargarEpisodios(seasonNumber: number): Promise<EpisodeMini[]> {
+    if (!selected) return [];
+    const key = `${selected.id}:${seasonNumber}`;
+    const hit = seasonEpCache.get(key);
+    if (hit) return hit;
+    try {
+      const eps = selected.is_anime
+        ? await invoke<EpisodeMini[]>("anizip_episodes", { anilistId: selected.id })
+        : await invoke<EpisodeMini[]>("tmdb_season", {
+            id: selected.id,
+            seasonNumber,
+            apiKey,
+          });
+      seasonEpCache.set(key, eps);
+      return eps;
+    } catch {
+      return [];
+    }
+  }
+
   // Episodio elegido en EpisodePicker → a la lista de fuentes.
   function onPickEpisode(
     season: number,
@@ -2538,6 +2781,9 @@
       }
       return;
     }
+    // La pantalla de fin maneja TODO su teclado (Esc incluido): si acá también
+    // cerráramos, un Esc dispararía dos cierres.
+    if (mode === "fin") return;
     if (mode === "playmenu" || mode === "episodes" || mode === "sources") {
       if (e.key === "Escape" || e.key === "Backspace") {
         e.preventDefault();
@@ -2615,7 +2861,21 @@
     onWeb={menuWeb}
     onClose={closeSources}
   />
+{:else if mode === "fin"}
+  <PostCreditos
+    title={finTitulo}
+    backdrop={finBackdrop}
+    siguiente={finSiguiente}
+    sugerencias={finSugerencias}
+    cargando={finCargando}
+    onSiguiente={verSiguienteCapitulo}
+    onElegir={verSugerencia}
+    onClose={closeSources}
+  />
 {:else if mode === "sources" && (selected?.imdb_id || selected?.kitsu_id)}
+  <!-- key: al saltar al capítulo siguiente hay que rehacer la búsqueda de
+       fuentes desde cero; sin remontar, el picker seguiría con las del anterior. -->
+  {#key `${selected.id}:${sourcesSeason}:${sourcesEpisode}`}
   <SourcePicker
     imdbId={selected.imdb_id ?? ""}
     kind={currentKind()}
@@ -2631,6 +2891,7 @@
     onClose={closeSources}
     onWeb={menuWeb}
   />
+  {/key}
 {:else if mode === "discover" && selected?.imdb_id}
   <div class="discover-mode">
     <button data-nav class="back-btn" onclick={stopDiscover} title="Volver (Esc / Backspace)">

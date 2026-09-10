@@ -21,7 +21,7 @@ use std::ffi::{c_void, CString};
 use std::path::PathBuf;
 use std::ptr;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::OnceLock;
 
 use gtk::prelude::*;
@@ -54,6 +54,10 @@ static LIVE: AtomicBool = AtomicBool::new(false);
 /// Lo que está en pantalla es un trailer: no es una sesión "de verdad", así que
 /// Esc la cierra en vez de dejarla esperando en la pill.
 static TRAILER: AtomicBool = AtomicBool::new(false);
+/// Generación de la sesión en pantalla. La sube cualquier cosa que reemplace
+/// lo que sonaba (play, trailer, IPTV) y con eso invalida al vigía de fin de
+/// archivo de la sesión anterior, que si no seguiría mirando lo nuevo.
+static END_GEN: AtomicU64 = AtomicU64::new(0);
 /// Se está abriendo un archivo nuevo y todavía no llegó su primer frame. Sin
 /// esto la GLArea sigue mostrando el ÚLTIMO FRAME congelado de lo anterior
 /// mientras el stream abre y llena el búfer (varios segundos en torrent/debrid),
@@ -2000,6 +2004,7 @@ pub fn play(url: &str, title: Option<&str>, start_secs: Option<u64>) -> Result<(
     let _ = mpv.set_property("pause", false);
     show_surface();
     notify_state(true);
+    watch_media_end();
     eprintln!("[mpv-embed] play listo");
     Ok(())
 }
@@ -2007,6 +2012,7 @@ pub fn play(url: &str, title: Option<&str>, start_secs: Option<u64>) -> Result<(
 /// Reproduce un playlist m3u (IPTV) arrancando en `start`.
 pub fn play_iptv(playlist_path: &str, start: usize) -> Result<(), String> {
     let mpv = MPV.get().ok_or("mpv no inicializado")?;
+    bump_end_gen(); // un canal en vivo no "termina": nadie debe vigilarlo
     TRAILER.store(false, Ordering::SeqCst);
     clear_pending();
     let _ = mpv.set_property("playlist-start", start as i64);
@@ -2044,6 +2050,7 @@ pub fn play_trailer(url: &str, title: Option<&str>) -> Result<(), String> {
         set_pending(pending);
     }
     TRAILER.store(true, Ordering::SeqCst);
+    bump_end_gen(); // el trailer tiene su propio vigía (watch_trailer_end)
     if let Some(t) = title {
         let _ = mpv.set_property("force-media-title", t);
     }
@@ -2059,6 +2066,77 @@ pub fn play_trailer(url: &str, title: Option<&str>) -> Result<(), String> {
     notify_session();
     watch_trailer_end();
     Ok(())
+}
+
+/// Sube la generación de sesión (mata al vigía de fin anterior) y devuelve la
+/// nueva.
+fn bump_end_gen() -> u64 {
+    END_GEN.fetch_add(1, Ordering::SeqCst) + 1
+}
+
+/// Vigila el final NATURAL del archivo. Sin bucle de eventos de libmpv acá, se
+/// sondea desde el hilo GTK una vez por segundo (mismo patrón que el trailer).
+///
+/// Solo cuenta como fin si antes llegó a reproducir de verdad: recién soltado
+/// el `loadfile`, mpv sigue en idle y todavía no cargó nada, y creerle ahí
+/// daría por terminada una película que ni empezó.
+fn watch_media_end() {
+    let gen = bump_end_gen();
+    let Some(app) = APP.get() else { return };
+    let _ = app.run_on_main_thread(move || {
+        let mut arranco = false;
+        let mut ultima_pos = 0.0_f64;
+        let mut ultima_dur = 0.0_f64;
+        glib::timeout_add_local(std::time::Duration::from_millis(1000), move || {
+            // Otra sesión tomó la pantalla, o esto ya no es una película.
+            if END_GEN.load(Ordering::SeqCst) != gen
+                || TRAILER.load(Ordering::SeqCst)
+                || LIVE.load(Ordering::SeqCst)
+            {
+                return glib::ControlFlow::Break;
+            }
+            // Cerrado a mano: no hay fin que avisar.
+            if !RUNNING.load(Ordering::SeqCst) && !SUSPENDED.load(Ordering::SeqCst) {
+                return glib::ControlFlow::Break;
+            }
+            // Suspendido (Esc): el archivo sigue vivo y pausado fuera de
+            // pantalla; se retoma con la pill.
+            if SUSPENDED.load(Ordering::SeqCst) {
+                return glib::ControlFlow::Continue;
+            }
+            // Última posición conocida ANTES de que mpv suelte el archivo: al
+            // quedar idle, time-pos/duration ya no existen.
+            let pos = get_f64("time-pos");
+            if pos > 0.0 {
+                ultima_pos = pos;
+                ultima_dur = get_f64("duration");
+            }
+            if !arranco {
+                arranco = !get_bool("idle-active") && pos > 0.0;
+                return glib::ControlFlow::Continue;
+            }
+            if get_bool("idle-active") || get_bool("eof-reached") {
+                fin_de_archivo(ultima_pos, ultima_dur);
+                return glib::ControlFlow::Break;
+            }
+            glib::ControlFlow::Continue
+        });
+    });
+}
+
+/// La película o el capítulo llegó al final solo. Se avisa ANTES de cerrar para
+/// que el front distinga "terminó" de "salió": las otras fuentes de la lista
+/// son la MISMA película, así que saltar a la siguiente la repetiría.
+/// Además va la última posición conocida: un stream que se muere a mitad
+/// también deja a mpv en idle, y el front necesita distinguirlo (ahí no
+/// corresponde ofrecer "qué ver después", sino volver a la lista de fuentes).
+fn fin_de_archivo(pos: f64, duration: f64) {
+    eprintln!("[mpv-embed] fin de archivo en {pos:.0}s/{duration:.0}s → mpv:fin");
+    if let Some(app) = APP.get() {
+        use tauri::Emitter;
+        let _ = app.emit("mpv:fin", serde_json::json!({ "pos": pos, "duration": duration }));
+    }
+    let _ = stop_inner();
 }
 
 /// Cuando el trailer llega al final se cierra solo (mpv queda idle con pantalla

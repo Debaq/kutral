@@ -3094,6 +3094,7 @@ pub fn run() {
             kodios::kodios_search,
             anilist::anilist_discover,
             anilist::anilist_detail,
+            anilist::anilist_relacionados,
             anilist::anizip_episodes,
             probe::ffprobe_tracks,
             rd::rd_resolve,

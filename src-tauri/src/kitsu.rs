@@ -19,6 +19,8 @@ use crate::{EpisodeMini, PersonMini, SeasonMini, TmdbItem, TmdbListResp};
 use std::time::Duration;
 
 const BASE: &str = "https://kitsu.io/api/edge/anime";
+/// Relaciones entre títulos (secuela, precuela, spin-off…): recurso aparte.
+const REL_BASE: &str = "https://kitsu.io/api/edge/media-relationships";
 /// Tope duro de la API: `page[limit]` > 20 devuelve 400.
 const PER_PAGE: u32 = 20;
 
@@ -222,6 +224,128 @@ pub async fn discover(
 }
 
 // ========================================================================
+// Qué ver después (respaldo de las recomendaciones de AniList)
+// ========================================================================
+
+/// Secuela + parecidos, con lo que da Kitsu.
+///
+/// Kitsu no tiene "recomendaciones de la comunidad" como AniList, así que los
+/// parecidos salen de sus categorías: mismos géneros, ordenados por
+/// popularidad. Es más grueso que una recomendación real, pero mantiene la
+/// pantalla de fin viva mientras AniList esté caída.
+pub async fn relacionados(kitsu_id: u64) -> Result<TmdbListResp, String> {
+    let mut results: Vec<TmdbItem> = Vec::new();
+    let mut vistos: Vec<u64> = vec![public_id(kitsu_id)];
+
+    // La continuación primero: es lo que se quiere al terminar una temporada.
+    // La relación vive en su propio recurso (`/anime/{id}/mediaRelationships`
+    // no existe: 404 Route Not Found).
+    if let Ok(v) = get(&format!(
+        "{REL_BASE}?filter%5Bsource_id%5D={kitsu_id}&filter%5Bsource_type%5D=Anime\
+         &include=destination&page%5Blimit%5D=20"
+    ))
+    .await
+    {
+        // Los destinos vienen en `included`; `data` dice el rol de cada uno.
+        let destinos: Vec<&serde_json::Value> = v["included"]
+            .as_array()
+            .map(|a| a.iter().filter(|n| n["type"] == "anime").collect())
+            .unwrap_or_default();
+        if let Some(rels) = v["data"].as_array() {
+            for rel in rels
+                .iter()
+                .filter(|r| s(&r["attributes"]["role"]).as_deref() == Some("sequel"))
+            {
+                let dest = &rel["relationships"]["destination"]["data"];
+                if dest["type"] != "anime" {
+                    continue;
+                }
+                let Some(nodo) = destinos.iter().find(|n| n["id"] == dest["id"]) else { continue };
+                empujar(nodo, &mut results, &mut vistos);
+            }
+        }
+    }
+
+    // Parecidos por categoría. Dos categorías como mucho: con más, el filtro
+    // (que es AND) deja de devolver nada.
+    let cats = categorias(kitsu_id).await;
+    if !cats.is_empty() {
+        let url = format!(
+            "{BASE}?filter%5Bcategories%5D={}&sort=-userCount&page%5Blimit%5D={PER_PAGE}",
+            cats.join(",")
+        );
+        if let Ok(v) = get(&url).await {
+            if let Some(a) = v["data"].as_array() {
+                for nodo in a {
+                    empujar(nodo, &mut results, &mut vistos);
+                }
+            }
+        }
+    }
+    Ok(TmdbListResp { page: 1, total_pages: 1, results })
+}
+
+fn empujar(nodo: &serde_json::Value, results: &mut Vec<TmdbItem>, vistos: &mut Vec<u64>) {
+    let it = node_to_item(nodo);
+    if it.id <= KITSU_ID_BASE || vistos.contains(&it.id) {
+        return;
+    }
+    vistos.push(it.id);
+    results.push(it);
+}
+
+/// Slugs de categoría con los que buscar parecidos.
+///
+/// Kitsu etiqueta con categorías MUY finas ("post-apocalypse", "violence"):
+/// filtrar por esas devuelve cuatro títulos de nicho. Se prefieren los géneros
+/// grandes (los mismos que traduce `genre_slug`), y solo si el anime no tiene
+/// ninguno se cae a lo que haya.
+async fn categorias(kitsu_id: u64) -> Vec<String> {
+    let Ok(v) = get(&format!("{BASE}/{kitsu_id}?include=categories")).await else {
+        return Vec::new();
+    };
+    let todas: Vec<String> = v["included"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter(|c| c["type"] == "categories")
+                .filter_map(|c| s(&c["attributes"]["slug"]))
+                .collect()
+        })
+        .unwrap_or_default();
+    let amplias: Vec<String> = todas
+        .iter()
+        .filter(|slug| SLUGS_AMPLIOS.contains(&slug.as_str()))
+        .take(2)
+        .cloned()
+        .collect();
+    if !amplias.is_empty() {
+        return amplias;
+    }
+    todas.into_iter().take(2).collect()
+}
+
+/// Los géneros "de estante" de Kitsu (mismo conjunto que `genre_slug`).
+const SLUGS_AMPLIOS: &[&str] = &[
+    "action",
+    "adventure",
+    "comedy",
+    "drama",
+    "fantasy",
+    "horror",
+    "mecha",
+    "music",
+    "mystery",
+    "psychological",
+    "romance",
+    "science-fiction",
+    "slice-of-life",
+    "sports",
+    "supernatural",
+    "thriller",
+];
+
+// ========================================================================
 // Episodios
 // ========================================================================
 
@@ -375,6 +499,25 @@ mod tests {
         // Un id de AniList (rango bajo) no se confunde con uno de Kitsu.
         assert_eq!(split_id(154587), None);
         assert_eq!(split_id(0), None);
+    }
+
+    /// Red real: la pantalla de fin servida por el respaldo. Attack on Titan
+    /// (7442) tiene secuela declarada y categorías de sobra.
+    #[tokio::test]
+    #[ignore]
+    async fn relacionados_trae_secuela_y_parecidos() {
+        let r = relacionados(7442).await.expect("relacionados");
+        assert!(r.results.len() > 3, "muy pocos: {}", r.results.len());
+        // La secuela va primero: es lo que se ofrece al terminar la temporada.
+        let primero = r.results[0].name.clone().unwrap_or_default();
+        assert!(
+            primero.contains("Attack on Titan"),
+            "el primero debería ser la continuación, fue: {primero}"
+        );
+        for it in &r.results {
+            assert!(it.id > KITSU_ID_BASE, "id sin base: {}", it.id);
+            assert_ne!(it.id, public_id(7442), "no se recomienda a sí mismo");
+        }
     }
 
     #[tokio::test]

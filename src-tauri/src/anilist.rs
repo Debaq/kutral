@@ -402,6 +402,94 @@ pub(crate) fn extract_ids(anizip: &serde_json::Value) -> AnimeIds {
     }
 }
 
+// ========================================================================
+// Comando: qué ver después de terminar un anime
+// ========================================================================
+
+/// Secuela (o continuación directa) primero, después las recomendaciones de la
+/// comunidad. Es lo que alimenta la pantalla de fin: al terminar la temporada 1
+/// lo que se quiere ofrecer es la temporada 2, no "otro anime parecido".
+///
+/// Devuelve el mismo shape que el catálogo (TmdbListResp) para que la pantalla
+/// de fin trate igual a anime, series y películas.
+#[tauri::command]
+pub async fn anilist_relacionados(id: u64) -> Result<TmdbListResp, String> {
+    // Id del catálogo de respaldo: lo atiende Kitsu de punta a punta.
+    if let Some(kid) = crate::kitsu::split_id(id) {
+        return crate::kitsu::relacionados(kid).await;
+    }
+    // AniList caída: el anime es suyo, pero ani.zip sabe su equivalente en
+    // Kitsu y desde ahí se arma la misma lista (secuela + parecidos).
+    if anilist_is_down() {
+        return por_kitsu(id).await;
+    }
+    const CAMPOS: &str = "id type isAdult
+      title { romaji english }
+      coverImage { extraLarge large }
+      description
+      averageScore
+      startDate { year month day }";
+    let query = format!(
+        "query ($id: Int) {{
+          Media(id: $id, type: ANIME) {{
+            relations {{ edges {{ relationType(version: 2) node {{ {CAMPOS} }} }} }}
+            recommendations(sort: RATING_DESC, perPage: 12) {{
+              nodes {{ mediaRecommendation {{ {CAMPOS} }} }}
+            }}
+          }}
+        }}"
+    );
+    // Si AniList se cae JUSTO acá (es lo normal: la marca como caída este
+    // mismo intento), la lista igual sale por Kitsu.
+    let data = match gql(&query, serde_json::json!({ "id": id })).await {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("[anilist] relacionados falló: {e}");
+            return por_kitsu(id).await;
+        }
+    };
+    let m = &data["Media"];
+
+    let mut results: Vec<TmdbItem> = Vec::new();
+    let mut vistos: Vec<u64> = vec![id];
+    let push = |nodo: &serde_json::Value, results: &mut Vec<TmdbItem>, vistos: &mut Vec<u64>| {
+        // Solo anime reproducible por la ruta normal: nada de manga ni +18.
+        if s(&nodo["type"]).as_deref() != Some("ANIME") || nodo["isAdult"].as_bool() == Some(true) {
+            return;
+        }
+        let it = media_to_item(nodo);
+        if it.id == 0 || vistos.contains(&it.id) {
+            return;
+        }
+        vistos.push(it.id);
+        results.push(it);
+    };
+
+    // SEQUEL = la continuación. El resto de relaciones (precuelas, adaptaciones,
+    // spin-offs) no son "lo que sigue" y quedan fuera a propósito.
+    if let Some(edges) = m["relations"]["edges"].as_array() {
+        for e in edges.iter().filter(|e| s(&e["relationType"]).as_deref() == Some("SEQUEL")) {
+            push(&e["node"], &mut results, &mut vistos);
+        }
+    }
+    if let Some(nodes) = m["recommendations"]["nodes"].as_array() {
+        for n in nodes {
+            push(&n["mediaRecommendation"], &mut results, &mut vistos);
+        }
+    }
+    Ok(TmdbListResp { page: 1, total_pages: 1, results })
+}
+
+/// Respaldo por Kitsu para un id de AniList: ani.zip traduce el id y Kitsu pone
+/// la secuela y los parecidos. Sin traducción no hay nada que ofrecer, y una
+/// lista vacía es mejor que un error al terminar un capítulo.
+async fn por_kitsu(anilist_id: u64) -> Result<TmdbListResp, String> {
+    let vacia = TmdbListResp { page: 1, total_pages: 1, results: Vec::new() };
+    let Ok(z) = anizip_fetch(anilist_id).await else { return Ok(vacia) };
+    let Some(kid) = extract_ids(&z).kitsu_id else { return Ok(vacia) };
+    Ok(crate::kitsu::relacionados(kid).await.unwrap_or(vacia))
+}
+
 /// Lista de episodios para el EpisodePicker (mismo shape que tmdb_season).
 /// still_path lleva URL completa. Solo episodios regulares (sin specials).
 ///
@@ -673,6 +761,30 @@ fn status_es(st: &str) -> String {
 mod tests {
     use super::*;
 
+    /// "Qué ver después" tiene que responder con AniList sana o caída: con la
+    /// API apagada, ani.zip traduce el id y contesta Kitsu. 16498 = Attack on
+    /// Titan (id de AniList).
+    #[tokio::test]
+    #[ignore]
+    async fn relacionados_responde_con_anilist_caida_o_no() {
+        let r = anilist_relacionados(16498).await.expect("relacionados");
+        assert!(!r.results.is_empty(), "sin nada que ofrecer al terminar");
+        for it in &r.results {
+            assert_ne!(it.id, 16498, "no se recomienda a sí mismo");
+            assert!(it.name.as_deref().is_some_and(|n| !n.is_empty()));
+        }
+        let fuente = if crate::kitsu::split_id(r.results[0].id).is_some() {
+            "kitsu"
+        } else {
+            "anilist"
+        };
+        eprintln!(
+            "OK  fuente={fuente} | {} sugerencias | 1ª: {}",
+            r.results.len(),
+            r.results[0].name.clone().unwrap_or_default()
+        );
+    }
+
     /// La invariante que importa: la pestaña anime devuelve resultados, sirva
     /// quien sirva. Con AniList caída tiene que responder Kitsu; si AniList
     /// revive, responde ella. El test pasa en los dos casos a propósito — lo
@@ -680,9 +792,16 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn el_catalogo_anime_responde_igual() {
-        let r = anilist_discover(1, Some("POPULARITY_DESC".into()), None, None, None, None)
-            .await
-            .expect("catálogo");
+        // El comando en sí pide un AppHandle (cachea la página en disco), que
+        // no existe en un test. Se replica su ruta sin cache: AniList y, si no
+        // contesta, Kitsu.
+        let sort = Some("POPULARITY_DESC".to_string());
+        let r = match discover_anilist(1, sort.clone(), None, None, None, None).await {
+            Ok(r) if !r.results.is_empty() => r,
+            _ => crate::kitsu::discover(1, sort, None, None, None, None)
+                .await
+                .expect("catálogo"),
+        };
         assert!(!r.results.is_empty(), "pestaña anime vacía");
 
         let first = r.results[0].id;

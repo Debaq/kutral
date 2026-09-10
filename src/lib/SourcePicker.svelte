@@ -5,6 +5,7 @@
   // no procesa navegación.
   import { invoke } from "@tauri-apps/api/core";
   import { setNowPlaying } from "$lib/playerState.svelte";
+  import { esFinReal, type FinPayload } from "$lib/finVideo";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { config } from "$lib/config.svelte";
   import { WEB_PLAYER_ENABLED } from "$lib/features";
@@ -104,6 +105,10 @@
   // no significa lo mismo: hay que quedarse en la lista para elegir otra, no
   // devolver al catálogo. El backend avisa antes de cerrar (ver mpv_embed.rs).
   let cambiandoFuente = false;
+  // El video llegó al final SOLO (evento "mpv:fin" del backend). Quien decide
+  // qué sigue es la página (menú en películas, próximo capítulo en series), así
+  // que acá solo hay que no tratarlo como un cierre normal.
+  let terminoSolo = false;
   let mpvPoll: ReturnType<typeof setInterval> | null = null;
 
   // Plan B: descarga local del torrent cuando el debrid lo bloquea (451/DMCA).
@@ -841,12 +846,36 @@
     void listen<boolean>("mpv:state", (e) => {
       if (e.payload === false) {
         stopMpvPoll();
+        if (terminoSolo) {
+          terminoSolo = false;
+          return; // la página ya decidió: menú o siguiente capítulo
+        }
         if (cambiandoFuente) {
           cambiandoFuente = false;
           volverALista();
           return;
         }
         onClose();
+      }
+    }).then((u) => (un = u));
+    return () => {
+      if (un) un();
+    };
+  });
+
+  // Fin de reproducción: el backend avisa antes de cerrar. Dos casos distintos:
+  //   - terminó de verdad → decide la página (menú o siguiente capítulo);
+  //   - se cortó a mitad (stream muerto) → esta fuente no sirve, se vuelve a la
+  //     lista con ella marcada para elegir otra.
+  $effect(() => {
+    let un: UnlistenFn | undefined;
+    void listen<FinPayload>("mpv:fin", (e) => {
+      terminoSolo = true;
+      stopMpvPoll();
+      if (!esFinReal(e.payload)) {
+        dbg("corte a mitad: vuelvo a la lista de fuentes");
+        volverALista();
+        error = "Esa fuente se cortó antes de terminar. Prueba con otra.";
       }
     }).then((u) => (un = u));
     return () => {
