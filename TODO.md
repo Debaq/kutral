@@ -266,3 +266,47 @@ La escalada de cache es portable desde el día uno:
 Lo único que queda degradado en Windows hasta que se haga B es la pantalla de
 "mejor bájala y la ves después": en Linux es overlay propio, en Windows un
 `show-text` con una tecla.
+
+---
+
+# Trailers de YouTube: yt-dlp al día y bloqueos
+
+Ya resuelto (commit `1ed678c`): el trailer se resolvía dos veces con yt-dlp —una
+para preguntar si era reproducible, otra dentro de mpv vía ytdl_hook—, y la
+segunda falla no tenía salida visible, así que quedaba el QR con trailers que sí
+servían. Ahora `yt_trailer_src` (`lib.rs:832`) resuelve una sola vez y entrega
+las URLs directas.
+
+Queda pendiente, sin urgencia:
+
+## A. yt-dlp se queda viejo dentro del paquete — *medio*
+
+`vendor/fetch.sh:68` y `fetch-windows.ps1` bajan yt-dlp una vez y lo saltan si ya
+está; el binario que sale en el paquete es el del día del build y nunca cambia.
+YouTube rompe extractors cada pocas semanas, así que la app envejece sola:
+funciona al lanzarla y deja de funcionar un mes después, sin que nadie toque
+nada.
+
+`yt-dlp -U` no sirve: se reemplaza en su propia ruta y `/app` del flatpak es solo
+lectura (Program Files igual, sin admin).
+
+Trabajo:
+- Copia escribible en el directorio de datos del usuario, con prioridad sobre
+  `vendor/` en `ytdlp_bin()` (`lib.rs:806`) y `ytdlp_path()` (`mpv_embed.rs:1532`,
+  `player.rs:405` — las tres buscan igual, conviene unificarlas).
+- Consultar la última release de GitHub como máximo una vez al día, en segundo
+  plano, sin bloquear el arranque.
+- Validar lo bajado con `--version` antes de usarlo; si falla, seguir con el
+  vendorizado. Nunca quedar sin yt-dlp por una descarga a medias.
+- Costo: ~40 MB por actualización en Linux, ~17 MB en Windows.
+
+## B. Videos que YouTube bloquea — *bajo*
+
+Age-gate, bloqueo regional y el "Sign in to confirm you're not a bot" por IP.
+Varía por video y por día, así que se ve como "a veces no funciona".
+
+- Mitigación barata: si el primer intento falla, reintentar con otro cliente
+  (`--extractor-args "youtube:player_client=tv"`, o `ios`). Destraba bastantes.
+- El age-gate duro no tiene arreglo sin cookies de una cuenta, y eso no
+  corresponde en un equipo de living.
+- Fallback ya existente: trailer de Apple, y si no, QR.
