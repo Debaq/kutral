@@ -194,3 +194,75 @@ Proveedores y su forma de autenticar:
 Ojo: cada uno consulta lo cacheado a su manera, y hay que **verificar si el
 `instantAvailability` de RealDebrid sigue vivo** — `rd.rs:198` lo usa y RD lo
 marcó para deprecar. Si ya cayó, el "instantáneo" de hoy puede estar mintiendo.
+
+---
+
+# Player en Windows: OSD y controles propios
+
+Bloque aparte, **sin decidir**. Salió al planificar el aviso por OSD de la
+escalada de cache: en Windows el reproductor no tiene la interfaz que tiene en
+Linux, y queremos que la tenga. Acá queda el mapa para elegir camino.
+
+## Qué hay hoy
+
+Windows compila y se empaqueta (`.github/workflows/release.yml:212`, NSIS+MSI)
+y sí lleva uosc: `fetch-windows.ps1` vendoriza `mpv.exe` y `spawn_mpv`
+(`player.rs:400`) le pasa `--config-dir` con nuestro `mpv-config`. O sea, OSD
+hay — el de uosc, que es **mouse-first**. Lo que no hay es lo nuestro.
+
+| | Linux (embed) | Windows (proceso) |
+|---|---|---|
+| Ventana | una sola, mpv dentro del GtkGLArea | dos: mpv fullscreen sobre la app |
+| Barra de control | nuestra, ASS, navegable con d-pad/mando | uosc, solo mouse |
+| Menú de pistas/subs | nuestro (`mpv_embed.rs:1149` `open_menu`) | el de uosc |
+| Picker de subs del front | `mpv_open_picker` | **stub no-op** (`player.rs:519`) |
+| `mpv:fin` → PostCreditos, próximo capítulo | sí (`mpv_embed.rs:2137`) | **no se emite** |
+| `player:cambiar-fuente` | botón en la barra (`mpv_embed.rs:1045`) | **no existe** |
+| Portada de carga | tapa el frame viejo | no |
+| Brillo, pill, gamepad | sí | parcial |
+
+Causa: `mpv_embed.rs` (2525 líneas) está atado a GTK — `GtkGLArea` + EGL para
+el render, señales GTK para mouse/teclado, `glib::timeout_add_local` para todos
+los relojes.
+
+**El dibujo NO es lo atado.** La barra y los menús se pintan con el comando
+`osd-overlay` de mpv (`put_overlay`, `mpv_embed.rs:777`): ASS puro, idéntico en
+cualquier plataforma y disponible **también por IPC**. Lo atado a GTK es el
+render, el input y los timers.
+
+## Caminos
+
+**A. Portar el embed a Windows.** libmpv con `--wid` sobre un HWND hijo de la
+ventana Tauri; en Windows no hace falta el camino OpenGL, mpv se pinta solo en
+ese HWND. Hay que reescribir la capa de input (Win32/Tauri en vez de señales
+GTK) y los timers. Da ventana única y paridad total. El más caro y el de más
+riesgo: foco, z-order y DPI conviviendo con WebView2.
+
+**B. Misma UI, por IPC, sin embeber.** mpv sigue siendo proceso aparte, pero:
+un hilo lector del pipe que parsee eventos (`end-file`, `observe_property`) —
+de ahí salen `mpv:fin`, el picker y `cambiar-fuente` — y nuestra barra ASS
+mandada con `osd-overlay` por el mismo pipe. Los constructores de ASS
+(`build_bar_ass`, `build_seek_ass`, `menu_geom`…) son funciones puras de
+string: se extraen de `mpv_embed.rs` a un módulo compartido y las usan las dos
+plataformas. Quedan las dos ventanas, pero se recupera todo lo demás de la
+tabla. Bastante menos trabajo que A y no toca el camino de Linux.
+
+**C. libmpv en proceso, con ventana propia de mpv.** Mismo acceso directo a
+propiedades y eventos que en Linux, sin pelear con el HWND. Ahorra el IPC pero
+tampoco da ventana única.
+
+**Recomendación: B primero.** Recupera el OSD y los controles navegables con
+mando sin el riesgo de A, y deja A como paso posterior si se quiere la ventana
+única — porque después de B, A solo cambia *dónde* se pinta, no *qué*.
+
+## Lo que esto NO bloquea
+
+La escalada de cache es portable desde el día uno:
+- `show-text` funciona hoy en Windows por IPC (`mpv_cmd`).
+- `read_props` (`player.rs:684`) ya lee propiedades por el pipe en Windows, así
+  que `paused-for-cache`, `demuxer-cache-duration` y `cache-speed` se leen en
+  las dos plataformas, y `set_property` sube `cache-pause-wait` igual.
+
+Lo único que queda degradado en Windows hasta que se haga B es la pantalla de
+"mejor bájala y la ves después": en Linux es overlay propio, en Windows un
+`show-text` con una tecla.
