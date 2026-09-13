@@ -19,6 +19,7 @@ mod mpv_embed;
 mod screening;
 mod torrent;
 mod webserver;
+mod winproc;
 
 const TMDB_BASE: &str = "https://api.themoviedb.org/3";
 const LANG: &str = "es-ES";
@@ -846,6 +847,7 @@ async fn yt_playable(app: tauri::AppHandle, key: String) -> Result<bool, String>
     let url = format!("https://www.youtube.com/watch?v={}", k);
 
     let mut cmd = tokio::process::Command::new(&bin);
+    winproc::hide_console_tokio(&mut cmd);
     let fut = cmd
         .args([
             "--no-playlist",

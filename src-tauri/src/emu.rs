@@ -703,6 +703,7 @@ pub fn emu_play(
     kill_existing(&state);
 
     let mut cmd = Command::new(&bin);
+    crate::winproc::hide_console(&mut cmd);
     // RetroArch va como AppImage: correrlo sin FUSE (se auto-extrae a /tmp).
     cmd.env("APPIMAGE_EXTRACT_AND_RUN", "1");
     cmd.arg("-L")

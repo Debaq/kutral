@@ -455,6 +455,8 @@ pub mod imp {
         let _ = std::fs::remove_file(ipc_path());
 
         let mut cmd = Command::new(mpv_bin(app));
+        // Windows: sin consola parpadeando al abrir el player.
+        crate::winproc::hide_console(&mut cmd);
         #[cfg(not(windows))]
         cmd.env("APPIMAGE_EXTRACT_AND_RUN", "1");
         cmd.arg(format!("--input-ipc-server={}", ipc_path()))

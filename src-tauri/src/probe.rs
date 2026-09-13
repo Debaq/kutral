@@ -26,7 +26,9 @@ pub async fn ffprobe_tracks(url: String) -> Result<Vec<ProbeTrack>, String> {
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         return Err("probe: solo URLs http(s)".into());
     }
-    let child = tokio::process::Command::new("ffprobe")
+    let mut cmd = tokio::process::Command::new("ffprobe");
+    crate::winproc::hide_console_tokio(&mut cmd);
+    let child = cmd
         .args([
             "-v",
             "error",
