@@ -179,7 +179,7 @@
       if (puedeBajar && !hasLocal) {
         a.push({
           id: "bajar",
-          label: bajando ? "📥  Se está bajando…" : "📥  Bajar para después",
+          label: bajando ? "📥  Ya está en la cola" : "📥  Bajar para después",
         });
       }
       a.push(...web);

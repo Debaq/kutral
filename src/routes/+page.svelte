@@ -12,6 +12,8 @@
   import { config } from "$lib/config.svelte";
   import SourcePicker from "$lib/SourcePicker.svelte";
   import { tieneDescarga, estadoDescarga } from "$lib/descargas.svelte";
+  import { encolar, yaEnCola } from "$lib/colaDescargas.svelte";
+  import { notify } from "$lib/notifStore.svelte";
   import PlayMenu from "$lib/PlayMenu.svelte";
   import QRCode from "qrcode";
   import EpisodePicker from "$lib/EpisodePicker.svelte";
@@ -625,6 +627,10 @@
     claveSel && selected?.media_type === "movie"
       ? estadoDescarga(claveSel) === "bajando"
       : false,
+  );
+  // Pedida pero todavía sin empezar: espera que se libere un lugar.
+  const enColaSel = $derived(
+    claveSel && selected?.media_type === "movie" ? yaEnCola(claveSel) : false,
   );
 
   // Metadatos que el historial necesita para escribir una fila. `season`/
@@ -2201,7 +2207,31 @@
   // "Bajar para después": la misma lista de fuentes, pero al elegir encola en
   // vez de reproducir. Con sourceSelect en automático ni se muestra: agarra la
   // mejor que quepa en el tope y vuelve.
-  function menuBajar() {
+  async function menuBajar() {
+    if (!selected || !claveSel) return;
+    // En automático no hay nada que elegir: va derecho a la cola, que la baja
+    // cuando haya lugar. Así pedir cinco películas seguidas no arranca cinco
+    // descargas peleándose la conexión.
+    if (config.sourceSelect === "auto") {
+      const n = await encolar([
+        {
+          clave: claveSel,
+          title: selected.title,
+          kind: currentKind(),
+          imdbId: selected.imdb_id ?? "",
+          originalTitle: selected.original_title ?? null,
+          kitsuId: selected.kitsu_id ?? null,
+        },
+      ]);
+      notify(
+        "info",
+        n ? "En la cola" : enColaSel ? "Ya estaba en la cola" : "Ya la tienes",
+        n ? `${selected.title} — te avisamos cuando esté lista.` : selected.title,
+      );
+      closeSources();
+      return;
+    }
+    // En manual el usuario quiere elegir el release: para eso está la lista.
     sourcesDescargar = true;
     sourcesSeason = null;
     sourcesEpisode = null;
@@ -2869,14 +2899,14 @@
     hasTrailer={!!(menuTrailerPick.ytKey || menuTrailerPick.apple)}
     hasRd={config.rdLinked}
     hasLocal={localSel && selected.media_type !== "tv"}
-    bajando={bajandoSel}
+    bajando={bajandoSel || enColaSel}
     puedeBajar={config.torrentLocal && selected.media_type === "movie"}
     onContinue={menuContinue}
     onRestart={menuRestart}
     onRealDebrid={menuRealDebrid}
     onResearch={menuResearch}
     onTrailer={menuTrailer}
-    onDownload={menuBajar}
+    onDownload={() => void menuBajar()}
     onClose={closeSources}
   />
 {:else if mode === "episodes" && (selected?.imdb_id || selected?.kitsu_id)}
@@ -2890,6 +2920,10 @@
     apiKey={apiKey}
     animeId={selected.is_anime ? selected.id : null}
     clave={claveSel}
+    imdbId={selected.imdb_id ?? ""}
+    kind={currentKind()}
+    originalTitle={selected.original_title ?? null}
+    kitsuId={selected.kitsu_id ?? null}
     onPick={onPickEpisode}
     onWeb={menuWeb}
     onClose={closeSources}
@@ -3079,6 +3113,8 @@
                 <div class="local-note">📁 Ya está en tu equipo — arranca al instante, sin internet</div>
               {:else if bajandoSel}
                 <div class="local-note bajando">📥 Bajándola ahora — te avisamos cuando esté lista</div>
+              {:else if enColaSel}
+                <div class="local-note bajando">⏳ En la cola de descargas — arranca cuando haya lugar</div>
               {/if}
               <div class="action-row">
                 {#if prog && prog.completed}

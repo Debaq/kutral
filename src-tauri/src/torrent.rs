@@ -752,6 +752,39 @@ pub fn local_file_size(path: String) -> Option<u64> {
         .map(|m| m.len())
 }
 
+/// Bytes libres en la partición donde caen las descargas. Bajar una temporada
+/// entera son decenas de GB: llenar el disco del equipo rompe bastante más que
+/// la descarga, así que la cola pregunta antes de cada una.
+#[tauri::command]
+pub fn disk_free(app: tauri::AppHandle, dir: Option<String>) -> Result<u64, String> {
+    let d = output_dir(&app, dir.as_deref())?;
+    // Si la carpeta todavía no existe, la partición de su padre sirve igual.
+    let objetivo = if d.exists() {
+        d
+    } else {
+        d.parent().map(PathBuf::from).unwrap_or(d)
+    };
+    espacio_libre(&objetivo)
+}
+
+#[cfg(unix)]
+fn espacio_libre(p: &std::path::Path) -> Result<u64, String> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(p.as_os_str().as_bytes())
+        .map_err(|e| format!("ruta inválida: {e}"))?;
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
+        return Err(format!("statvfs: {}", std::io::Error::last_os_error()));
+    }
+    // f_bavail (no f_bfree): los bloques reservados para root no son nuestros.
+    Ok(st.f_bavail as u64 * st.f_frsize as u64)
+}
+
+#[cfg(not(unix))]
+fn espacio_libre(_p: &std::path::Path) -> Result<u64, String> {
+    Err("espacio libre no disponible en esta plataforma".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{is_video, local_file_size, mime_for, parse_range, stream_url};

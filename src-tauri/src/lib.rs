@@ -3035,6 +3035,41 @@ pub fn run() {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 9,
+            description: "cola de descargas pendientes",
+            // Lo que el usuario pidió bajar pero todavía no empezó. Existe
+            // porque el cliente torrent baja TODO en paralelo: 24 capítulos a
+            // la vez se reparten los seeds y no termina ninguno. Acá esperan
+            // su turno, de a pocos por vez (config.torrentMaxParalelas).
+            //
+            // No se guarda el magnet: se busca al llegar el turno. Un magnet
+            // de hace tres días puede estar sin seeds, y la búsqueda fresca
+            // además respeta la config de idioma/calidad del momento.
+            sql: "CREATE TABLE IF NOT EXISTS descargas_pendientes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    clave TEXT NOT NULL,
+                    season INTEGER NOT NULL DEFAULT -1,
+                    episode INTEGER NOT NULL DEFAULT -1,
+                    title TEXT NOT NULL,
+                    -- 'T1 E4' en series, vacío en películas.
+                    etiqueta TEXT NOT NULL DEFAULT '',
+                    imdb_id TEXT NOT NULL DEFAULT '',
+                    kind TEXT NOT NULL,
+                    original_title TEXT,
+                    kitsu_id INTEGER,
+                    -- 'espera' | 'buscando' | 'error'
+                    estado TEXT NOT NULL DEFAULT 'espera',
+                    error TEXT,
+                    added_at INTEGER NOT NULL,
+                    UNIQUE (clave, season, episode)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_pend_orden
+                    ON descargas_pendientes(added_at, id);
+            ",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -3143,6 +3178,7 @@ pub fn run() {
             torrent::torrent_default_dir,
             torrent::torrent_check_dir,
             torrent::local_file_size,
+            torrent::disk_free,
             player::imp::mpv_play,
             player::imp::mpv_play_trailer,
             player::imp::mpv_play_iptv,

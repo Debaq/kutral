@@ -16,6 +16,7 @@
   import { setConcurrenciaScreening } from "$lib/screening.svelte";
   import { cargarHistorial } from "$lib/historial.svelte";
   import { cargarDescargas } from "$lib/descargas.svelte";
+  import { cola, cargarCola, arrancarMotor } from "$lib/colaDescargas.svelte";
   import { ACCIONES, loadGamepadMap, gamepadCaptured, type GamepadMap } from "$lib/controls";
   import { ayuda } from "$lib/atajos/store.svelte";
   let { children } = $props();
@@ -178,6 +179,11 @@
     if (config.torrentLocal) {
       void initTorrentSession()
         .then((n) => { if (n > 0) startQueuePoll(); })
+        // La cola de pendientes se retoma después de levantar la sesión: el
+        // motor necesita saber cuántas descargas hay vivas para decidir si
+        // puede arrancar la siguiente.
+        .then(() => cargarCola())
+        .then(() => { if (cola.filas.length) arrancarMotor(); })
         .catch((e) => console.warn("[torrent init]", e));
     }
     // Auto-arranque del servidor web si el user lo activó en config.

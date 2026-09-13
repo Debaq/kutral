@@ -14,6 +14,7 @@
   import { config, isKioskActive } from "$lib/config.svelte";
   import { notify, unreadCount } from "$lib/notifStore.svelte";
   import { torrents, activeCount } from "$lib/torrents.svelte";
+  import { cola, enEspera } from "$lib/colaDescargas.svelte";
 
   type WifiState = { online: boolean; connected_ssid: string | null };
 
@@ -44,8 +45,10 @@
   const unread = $derived(unreadCount());
   // El botón de descargas solo aparece si hay algo en la cola: sin plan B
   // activo (o sin bloqueos DMCA) no ensucia el encabezado.
-  const torActivas = $derived(activeCount());
-  const torHay = $derived(torrents.list.length > 0);
+  // El número del badge cuenta lo que falta: lo que está bajando MÁS lo que
+  // espera turno. Con 20 capítulos encolados, un "2" sería mentira.
+  const torActivas = $derived(activeCount() + enEspera());
+  const torHay = $derived(torrents.list.length > 0 || cola.filas.length > 0);
 
   function only<T extends "vol" | "br" | "notif" | "web" | "tor">(which: T) {
     volOpen = which === "vol" ? !volOpen : false;

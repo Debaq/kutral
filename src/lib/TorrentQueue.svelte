@@ -16,11 +16,22 @@
   } from "$lib/torrents.svelte";
   import { config } from "$lib/config.svelte";
   import { olvidarPorHash } from "$lib/descargas.svelte";
+  import {
+    cola,
+    quitarDeCola,
+    vaciarCola,
+    reintentar,
+    arrancarMotor,
+  } from "$lib/colaDescargas.svelte";
+  import { invoke } from "@tauri-apps/api/core";
 
   let { open = $bindable(false) } = $props<{ open?: boolean }>();
 
   let card: HTMLDivElement | null = $state(null);
   let dir = $state("");
+  // Espacio libre en la partición de las descargas. Se lee al abrir el
+  // popover: es justo donde el usuario decide si sigue encolando o no.
+  let libre = $state<number | null>(null);
   // Id con confirmación de borrado pendiente (borrar archivo es irreversible).
   let confirmId = $state<number | null>(null);
 
@@ -31,6 +42,12 @@
       // La elegida por el usuario manda; si no eligió, la que propone el sistema.
       if (config.torrentDir.trim()) dir = config.torrentDir.trim();
       else void torrentDefaultDir().then((d: string) => (dir = d)).catch(() => {});
+      void invoke<number>("disk_free", { dir: config.torrentDir.trim() || null })
+        .then((n) => (libre = n))
+        .catch(() => (libre = null));
+      // Abrir la cola es buen momento para empujarla: si algo quedó esperando
+      // de la sesión anterior, arranca acá.
+      arrancarMotor();
       window.addEventListener("mousedown", onOutside);
     } else {
       confirmId = null;
@@ -99,10 +116,12 @@
   >
     <header class="tq-head">
       <strong>Descargas</strong>
-      {#if dir}<span class="tq-dir" title={dir}>{dir}</span>{/if}
+      <span class="tq-dir" title={dir}>
+        {#if libre !== null}{fmtBytes(libre)} libres{/if}{#if dir && libre !== null} · {/if}{dir}
+      </span>
     </header>
 
-    {#if !torrents.list.length}
+    {#if !torrents.list.length && !cola.filas.length}
       <p class="tq-empty">
         {torrents.loaded ? "Sin descargas" : "Cargando…"}
       </p>
@@ -149,6 +168,46 @@
         {/each}
       </ul>
     {/if}
+
+    {#if cola.filas.length}
+      <div class="tq-cola">
+        <div class="tq-cola-head">
+          <strong>En espera ({cola.filas.length})</strong>
+          <button data-nav class="tq-act" onclick={() => void vaciarCola()}>Vaciar</button>
+        </div>
+        <p class="tq-cola-why">
+          Bajan de a {config.torrentMaxParalelas}: repartir los seeds entre todas
+          no las hace más rápidas, solo retrasa a todas por igual.
+        </p>
+        <ul class="tq-list">
+          {#each cola.filas as f (f.id)}
+            <li class="tq-item" class:err={f.estado === "error"}>
+              <div class="tq-top">
+                <span class="tq-title">
+                  {f.title}{f.etiqueta ? ` · ${f.etiqueta}` : ""}
+                </span>
+                <span class="tq-pct">
+                  {f.estado === "buscando" ? "buscando…" : f.estado === "error" ? "error" : "en cola"}
+                </span>
+              </div>
+              {#if f.estado === "error" && f.error}
+                <p class="tq-warn">{f.error}</p>
+              {/if}
+              <div class="tq-acts">
+                {#if f.estado === "error"}
+                  <button data-nav class="tq-act" onclick={() => void reintentar(f.id)}>
+                    ↻ Reintentar
+                  </button>
+                {/if}
+                <button data-nav class="tq-act" onclick={() => void quitarDeCola(f.id)}>
+                  Quitar
+                </button>
+              </div>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
   </div>
 {/if}
 
@@ -167,6 +226,19 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+  }
+  .tq-cola {
+    border-top: 1px solid #22222c;
+    padding-top: 4px;
+  }
+  .tq-cola-head {
+    display: flex; justify-content: space-between; align-items: center; gap: 10px;
+    padding: 10px 14px 2px;
+    font-size: 12.5px;
+  }
+  .tq-cola-why {
+    margin: 0; padding: 0 14px 6px;
+    color: #6e6e78; font-size: 11px; line-height: 1.4;
   }
   .tq-head {
     display: flex; justify-content: space-between; align-items: baseline; gap: 10px;

@@ -7,6 +7,11 @@
   import { onMount } from "svelte";
   import { WEB_PLAYER_ENABLED } from "$lib/features";
   import { estadoEpisodio } from "$lib/historial.svelte";
+  import { config } from "$lib/config.svelte";
+  import { notify } from "$lib/notifStore.svelte";
+  import { estadoDescarga } from "$lib/descargas.svelte";
+  import { encolar, yaEnCola, cola } from "$lib/colaDescargas.svelte";
+  import type { Kind } from "$lib/fuentes";
 
   type Season = {
     season_number: number;
@@ -34,6 +39,10 @@
     apiKey,
     animeId = null,
     clave = "",
+    imdbId = "",
+    kind = "series",
+    originalTitle = null,
+    kitsuId = null,
     onPick,
     onWeb,
     onClose,
@@ -51,6 +60,12 @@
     animeId?: number | null;
     /** Clave del historial (imdb_id o `anilist:<id>`). Vacía = sin marcas. */
     clave?: string;
+    // Lo que necesita la búsqueda de fuentes para bajar un capítulo sin pasar
+    // por el reproductor (ver colaDescargas).
+    imdbId?: string;
+    kind?: Kind;
+    originalTitle?: string | null;
+    kitsuId?: number | null;
     onPick: (season: number, episode: number, ep?: { name: string; still_path: string | null }) => void;
     onWeb: () => void;
     onClose: () => void;
@@ -138,6 +153,74 @@
     return pct > 0 ? { visto: false, pct } : null;
   }
 
+  // Estado de descarga del capítulo: en disco, bajando o esperando turno.
+  // `cola.filas` se lee a propósito (aunque no se use el valor) para que la
+  // marca se repinte sola cuando el motor saca algo de la cola.
+  function marcaDescarga(epNum: number): "lista" | "bajando" | "cola" | null {
+    const s = seasons[seasonIdx];
+    if (!clave || !s) return null;
+    void cola.filas.length;
+    const est = estadoDescarga(clave, s.season_number, epNum);
+    if (est === "completa") return "lista";
+    if (est === "bajando") return "bajando";
+    return yaEnCola(clave, s.season_number, epNum) ? "cola" : null;
+  }
+
+  // Bajar la temporada completa: encola lo que falte y vuelve. Los capítulos
+  // ya bajados o ya encolados se saltan solos.
+  let encolandoTemporada = $state(false);
+  async function bajarTemporada() {
+    const s = seasons[seasonIdx];
+    if (!s || !episodes.length || !clave) return;
+    encolandoTemporada = true;
+    try {
+      const n = await encolar(
+        episodes.map((ep) => ({
+          clave,
+          season: s.season_number,
+          episode: ep.episode_number,
+          title,
+          etiqueta: `T${s.season_number} E${ep.episode_number}`,
+          imdbId,
+          kind,
+          originalTitle,
+          kitsuId,
+        })),
+      );
+      if (n > 0) {
+        notify(
+          "info",
+          `${n} ${n === 1 ? "capítulo" : "capítulos"} en la cola`,
+          `${title} · ${s.name}. Bajan de a ${config.torrentMaxParalelas}; te avisamos por cada uno.`,
+        );
+      } else {
+        notify("info", "Nada que bajar", `Ya tienes ${s.name} completa o en cola.`);
+      }
+    } finally {
+      encolandoTemporada = false;
+    }
+  }
+
+  /** Un solo capítulo a la cola (botón de la fila). */
+  async function bajarEpisodio(epNum: number) {
+    const s = seasons[seasonIdx];
+    if (!s || !clave) return;
+    const n = await encolar([
+      {
+        clave,
+        season: s.season_number,
+        episode: epNum,
+        title,
+        etiqueta: `T${s.season_number} E${epNum}`,
+        imdbId,
+        kind,
+        originalTitle,
+        kitsuId,
+      },
+    ]);
+    if (n) notify("info", "En la cola", `${title} · T${s.season_number} E${epNum}`);
+  }
+
   function scrollFocused() {
     queueMicrotask(() => {
       document
@@ -172,6 +255,15 @@
         if (pane === "seasons") gotoEpisodes();
         else chooseEpisode();
         break;
+      case "d":
+      case "D":
+        // Bajar sin reproducir: la temporada entera desde el panel izquierdo,
+        // el capítulo enfocado desde el derecho.
+        if (!config.torrentLocal || !clave) break;
+        e.preventDefault();
+        if (pane === "seasons") void bajarTemporada();
+        else if (episodes[epIdx]) void bajarEpisodio(episodes[epIdx].episode_number);
+        break;
       case "Escape":
       case "Backspace":
         e.preventDefault();
@@ -199,6 +291,16 @@
     <header class="ep-head">
       <button class="ep-back" onclick={onClose}>← Volver</button>
       <h2>{title}</h2>
+      {#if config.torrentLocal && clave}
+        <button
+          class="ep-bajar"
+          onclick={bajarTemporada}
+          disabled={encolandoTemporada || !episodes.length}
+          title="Encola los capítulos que te falten (tecla D)"
+        >
+          📥 Bajar temporada
+        </button>
+      {/if}
       {#if WEB_PLAYER_ENABLED}
         <button class="ep-web" onclick={onWeb}>🌐 Ver en web</button>
       {/if}
@@ -230,6 +332,7 @@
         {:else}
           {#each episodes as ep, i (ep.episode_number)}
             {@const m = marca(ep.episode_number)}
+            {@const d = marcaDescarga(ep.episode_number)}
             <button
               class="ep-item"
               class:focused={pane === "episodes" && epIdx === i}
@@ -253,6 +356,13 @@
                   <span class="ep-tick" title="Ya lo viste">✓</span>
                 {:else if m}
                   <span class="ep-barra"><span class="ep-barra-fill" style:width="{m.pct}%"></span></span>
+                {/if}
+                {#if d === "lista"}
+                  <span class="ep-dl lista" title="En tu equipo: se ve sin internet">📁</span>
+                {:else if d === "bajando"}
+                  <span class="ep-dl bajando" title="Bajando ahora">📥</span>
+                {:else if d === "cola"}
+                  <span class="ep-dl cola" title="En la cola, esperando turno">⏳</span>
                 {/if}
               </div>
               <div class="ep-text">
@@ -397,6 +507,35 @@
   .ep-item.ep-visto .ep-still {
     opacity: 0.45;
   }
+  /* Estado de descarga del capítulo: arriba a la izquierda para no chocar con
+     el tick de "ya lo viste", que va abajo a la derecha. */
+  .ep-dl {
+    position: absolute;
+    left: 4px;
+    top: 4px;
+    padding: 1px 5px;
+    border-radius: 5px;
+    font-size: 11px;
+    line-height: 1.5;
+    background: rgba(8, 8, 12, 0.8);
+  }
+  .ep-dl.lista { color: #8fe3a8; }
+  .ep-dl.bajando { color: #f3c489; }
+  .ep-dl.cola { color: #9a9aa6; }
+
+  .ep-bajar {
+    margin-left: auto;
+    background: rgba(243, 169, 81, 0.14);
+    border: 1px solid rgba(243, 169, 81, 0.45);
+    color: #f3c489;
+    padding: 6px 12px;
+    border-radius: 7px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .ep-bajar:disabled { opacity: 0.45; cursor: default; }
+
   .ep-tick {
     position: absolute;
     right: 4px;

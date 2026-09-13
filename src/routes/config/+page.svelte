@@ -27,6 +27,9 @@
     TORRENT_MAX_GB_DEFAULT,
     TORRENT_MAX_GB_MIN,
     TORRENT_MAX_GB_MAX,
+    TORRENT_PARALELAS_DEFAULT,
+    TORRENT_PARALELAS_MIN,
+    TORRENT_PARALELAS_MAX,
     IPTV_DEFAULT_LISTS,
     type ModeOverride,
     type IptvList,
@@ -278,6 +281,7 @@
   let torrentBufferMb = $state(config.torrentBufferMb);
   let torrentMaxQuality = $state(config.torrentMaxQuality);
   let torrentMaxGb = $state(config.torrentMaxGb);
+  let torrentMaxParalelas = $state(config.torrentMaxParalelas);
   let torrentDirPath = $state("");
   let torrentDirInput = $state(config.torrentDir);
   let dirEstado = $state<"idle" | "probando" | "ok" | "error">("idle");
@@ -391,6 +395,7 @@
     torrentBufferMb = config.torrentBufferMb;
     torrentMaxQuality = config.torrentMaxQuality;
     torrentMaxGb = config.torrentMaxGb;
+    torrentMaxParalelas = config.torrentMaxParalelas;
     torrentDirInput = config.torrentDir;
     // Solo informativo; no levanta la sesión torrent si no está iniciada.
     try { torrentDirPath = await torrentDefaultDir(); } catch {}
@@ -486,6 +491,11 @@
       Math.max(TORRENT_MAX_GB_MIN, Number(torrentMaxGb) || TORRENT_MAX_GB_DEFAULT),
     );
     torrentMaxGb = config.torrentMaxGb;
+    config.torrentMaxParalelas = Math.min(
+      TORRENT_PARALELAS_MAX,
+      Math.max(TORRENT_PARALELAS_MIN, Math.round(torrentMaxParalelas) || TORRENT_PARALELAS_DEFAULT),
+    );
+    torrentMaxParalelas = config.torrentMaxParalelas;
     config.torrentDir = torrentDirInput.trim();
     saveConfig();
   }
@@ -1404,6 +1414,21 @@
                 onchange={aplicarTorrent}
               />
             </label>
+            <label class="field">
+              <span class="field-label">Descargas a la vez</span>
+              <input data-nav
+                type="number"
+                min={TORRENT_PARALELAS_MIN}
+                max={TORRENT_PARALELAS_MAX}
+                bind:value={torrentMaxParalelas}
+                onchange={aplicarTorrent}
+              />
+            </label>
+            <p class="hint">
+              Cuántas descargas de la cola corren juntas. Más no es más rápido:
+              tu conexión es la misma y se reparte entre todas, así que lo único
+              que cambia es que ninguna queda lista hasta el final.
+            </p>
             <p class="field-label">Cuánto bajar antes de empezar a ver</p>
             <div class="mode-group">
               {#each TORRENT_BUFFER_OPTIONS as b}

@@ -98,6 +98,12 @@ export const TORRENT_QUALITY_OPTIONS: {
 
 // Peso máximo del archivo aceptado para bajar en local, en GB.
 export const TORRENT_MAX_GB_DEFAULT = 6;
+// Descargas que corren a la vez. Más no es más rápido: el cliente reparte la
+// conexión y los seeds entre todas, así que 12 capítulos en paralelo tardan lo
+// mismo que de a dos... pero ninguno queda listo hasta el final.
+export const TORRENT_PARALELAS_DEFAULT = 2;
+export const TORRENT_PARALELAS_MIN = 1;
+export const TORRENT_PARALELAS_MAX = 5;
 export const TORRENT_MAX_GB_MIN = 1;
 export const TORRENT_MAX_GB_MAX = 80;
 
@@ -189,6 +195,8 @@ export const config = $state({
 	// ahí el peso no cuesta nada porque no lo bajas tú.
 	torrentMaxQuality: "p1080" as TorrentQuality,
 	torrentMaxGb: TORRENT_MAX_GB_DEFAULT,
+	// Cuántas descargas de la cola corren a la vez (ver colaDescargas).
+	torrentMaxParalelas: TORRENT_PARALELAS_DEFAULT,
 	// Carpeta de descarga. Vacío = la que propone el sistema (Descargas/Kutral).
 	torrentDir: "",
 	// Regiones de ROM aceptadas en Juegos (ids de GAME_REGIONS).
@@ -248,6 +256,10 @@ export function loadConfig() {
 	config.torrentMaxGb = Number.isFinite(tgb)
 		? Math.min(TORRENT_MAX_GB_MAX, Math.max(TORRENT_MAX_GB_MIN, tgb))
 		: TORRENT_MAX_GB_DEFAULT;
+	const tpar = parseInt(localStorage.getItem("torrent_paralelas") || "", 10);
+	config.torrentMaxParalelas = Number.isFinite(tpar)
+		? Math.min(TORRENT_PARALELAS_MAX, Math.max(TORRENT_PARALELAS_MIN, tpar))
+		: TORRENT_PARALELAS_DEFAULT;
 	config.torrentDir = localStorage.getItem("torrent_dir") || "";
 	const gr = localStorage.getItem("game_regions");
 	if (gr !== null) {
@@ -308,6 +320,7 @@ export function saveConfig() {
 	localStorage.setItem("torrent_buffer_mb", String(config.torrentBufferMb));
 	localStorage.setItem("torrent_max_quality", config.torrentMaxQuality);
 	localStorage.setItem("torrent_max_gb", String(config.torrentMaxGb));
+	localStorage.setItem("torrent_paralelas", String(config.torrentMaxParalelas));
 	localStorage.setItem("torrent_dir", config.torrentDir.trim());
 	localStorage.setItem("game_regions", config.gameRegions.join(","));
 	const listas = (config.iptvLists.length ? config.iptvLists : IPTV_DEFAULT_LISTS)
