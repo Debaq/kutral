@@ -3191,6 +3191,8 @@ pub fn run() {
             player::imp::mpv_running,
             player::imp::mpv_status,
             player::imp::mpv_tracks,
+            player::imp::mpv_cache_stats,
+            player::imp::mpv_set_cache,
             opensubtitles::os_login,
             opensubtitles::os_status,
             opensubtitles::os_clear,

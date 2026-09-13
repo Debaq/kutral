@@ -30,6 +30,11 @@
     TORRENT_PARALELAS_DEFAULT,
     TORRENT_PARALELAS_MIN,
     TORRENT_PARALELAS_MAX,
+    CACHE_PRESETS,
+    CACHE_WAIT_MIN,
+    CACHE_WAIT_MAX,
+    CACHE_WAIT_MAX_DEFAULT,
+    cachePresetActual,
     IPTV_DEFAULT_LISTS,
     type ModeOverride,
     type IptvList,
@@ -263,6 +268,10 @@
   let subSize = $state(config.subSize);
   let subMode = $state<SubMode>(config.subMode);
   let sourceSelect = $state<SourceSelect>(config.sourceSelect);
+  let cachePreset = $state(config.cachePreset);
+  let cacheWait = $state(config.cacheWait);
+  let cacheAuto = $state(config.cacheAuto);
+  let cacheWaitMax = $state(config.cacheWaitMax);
   let verifyEsTracks = $state(config.verifyEsTracks);
   let preferredSourceMovie = $state(config.preferredSourceMovie);
   let preferredSourceSeries = $state(config.preferredSourceSeries);
@@ -381,6 +390,10 @@
     subSize = config.subSize;
     subMode = config.subMode;
     sourceSelect = config.sourceSelect;
+    cachePreset = config.cachePreset;
+    cacheWait = config.cacheWait;
+    cacheAuto = config.cacheAuto;
+    cacheWaitMax = config.cacheWaitMax;
     verifyEsTracks = config.verifyEsTracks;
     preferredSourceMovie = config.preferredSourceMovie;
     preferredSourceSeries = config.preferredSourceSeries;
@@ -426,6 +439,10 @@
     subSize !== config.subSize ||
     subMode !== config.subMode ||
     sourceSelect !== config.sourceSelect ||
+    cachePreset !== config.cachePreset ||
+    cacheWait !== config.cacheWait ||
+    cacheAuto !== config.cacheAuto ||
+    cacheWaitMax !== config.cacheWaitMax ||
     verifyEsTracks !== config.verifyEsTracks ||
     preferredSourceMovie !== config.preferredSourceMovie ||
     preferredSourceSeries !== config.preferredSourceSeries ||
@@ -451,6 +468,18 @@
     config.subSize = Math.min(200, Math.max(50, Math.round(subSize)));
     config.subMode = subMode;
     config.sourceSelect = sourceSelect;
+    config.cachePreset = cachePreset;
+    config.cacheWait = Math.min(
+      CACHE_WAIT_MAX,
+      Math.max(CACHE_WAIT_MIN, Number(cacheWait) || cachePresetActual().wait),
+    );
+    cacheWait = config.cacheWait;
+    config.cacheAuto = cacheAuto;
+    config.cacheWaitMax = Math.min(
+      CACHE_WAIT_MAX,
+      Math.max(config.cacheWait, Number(cacheWaitMax) || CACHE_WAIT_MAX_DEFAULT),
+    );
+    cacheWaitMax = config.cacheWaitMax;
     config.verifyEsTracks = verifyEsTracks;
     config.preferredSourceMovie = preferredSourceMovie.trim();
     config.preferredSourceSeries = preferredSourceSeries.trim();
@@ -1235,6 +1264,61 @@
               placeholder="ej. HEVC, 480p"
               autocomplete="off"
               spellcheck="false"
+            />
+          </label>
+        </section>
+
+        <section class="block">
+          <h2>Cacheo de red</h2>
+          <p class="hint">
+            Cuánto video junta el reproductor antes de seguir cuando la conexión
+            se atraganta. El problema típico no es que el cache sea chico, sino
+            que arranca de nuevo con muy poco y se vuelve a cortar enseguida.
+          </p>
+          <div class="mode-group">
+            {#each CACHE_PRESETS as p}
+              <label class="mode-card" class:sel={cachePreset === p.id}>
+                <input data-nav
+                  type="radio"
+                  name="cachePreset"
+                  value={p.id}
+                  bind:group={cachePreset}
+                  onchange={() => (cacheWait = p.wait)}
+                />
+                <div>
+                  <strong>{p.label}</strong>
+                  <span>{p.hint} ({p.wait} s)</span>
+                </div>
+              </label>
+            {/each}
+          </div>
+          <label class="field">
+            <span class="field-label">O el valor exacto (segundos)</span>
+            <input data-nav
+              type="number"
+              min={CACHE_WAIT_MIN}
+              max={CACHE_WAIT_MAX}
+              bind:value={cacheWait}
+            />
+          </label>
+          <label class="toggle-row">
+            <input data-nav type="checkbox" bind:checked={cacheAuto} />
+            <span>Subirlo solo cuando la red se porta mal</span>
+          </label>
+          <p class="hint">
+            Con esto activo, tras varios cortes seguidos el reproductor duplica
+            la espera y avisa en pantalla. Si llega al tope y sigue cortándose
+            —o si mide que la conexión no alcanza para el peso del archivo—
+            ofrece bajarla y verla después, que es la única salida real ahí.
+          </p>
+          <label class="field">
+            <span class="field-label">Tope de la subida automática (segundos)</span>
+            <input data-nav
+              type="number"
+              min={CACHE_WAIT_MIN}
+              max={CACHE_WAIT_MAX}
+              bind:value={cacheWaitMax}
+              disabled={!cacheAuto}
             />
           </label>
         </section>

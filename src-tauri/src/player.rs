@@ -68,6 +68,28 @@ pub struct MpvSession {
     pub live: bool,
 }
 
+/// Lo que hace falta para saber si la red está aguantando el video.
+///
+/// `cache_secs` son segundos de video ya bufferados por delante;
+/// `cache_speed`, los bytes/s que entran. Las dos juntas distinguen los dos
+/// problemas que se parecen en pantalla: el buffer que se vacía y vuelve
+/// (sube la espera y listo) del caudal que NO alcanza para el bitrate del
+/// archivo, donde ningún buffer sirve y solo queda bajarla antes de verla.
+#[derive(serde::Serialize, Default)]
+pub struct CacheStats {
+    pub running: bool,
+    /// mpv está detenido esperando que se llene el cache.
+    pub paused_for_cache: bool,
+    pub cache_secs: f64,
+    pub cache_speed: f64,
+    pub duration: f64,
+    pub pos: f64,
+    /// Tamaño del archivo si el stream lo declara (Content-Length). 0 si no.
+    pub file_size: f64,
+    /// Segundos que mpv junta antes de reanudar tras un corte.
+    pub pause_wait: f64,
+}
+
 /// Una pista (audio/sub) del contenedor: verdad del archivo, no del nombre.
 #[derive(serde::Serialize, Default)]
 pub struct MpvTrack {
@@ -240,6 +262,49 @@ pub mod imp {
             sub: mpv_embed::get_bool("sub-visibility"),
             title: mpv_embed::get_string("media-title"),
         }
+    }
+
+    #[tauri::command]
+    pub fn mpv_cache_stats(_state: tauri::State<'_, PlayerState>) -> CacheStats {
+        if !mpv_embed::is_running() {
+            return CacheStats::default();
+        }
+        CacheStats {
+            running: true,
+            paused_for_cache: mpv_embed::get_bool("paused-for-cache"),
+            cache_secs: mpv_embed::get_f64("demuxer-cache-duration"),
+            cache_speed: mpv_embed::get_f64("cache-speed"),
+            duration: mpv_embed::get_f64("duration"),
+            pos: mpv_embed::get_f64("time-pos"),
+            file_size: mpv_embed::get_f64("file-size"),
+            pause_wait: mpv_embed::get_f64("cache-pause-wait"),
+        }
+    }
+
+    /// Ajusta el cacheo de red en caliente. Se llama al empezar (preset del
+    /// usuario) y cada vez que la escalada automática sube la espera.
+    #[tauri::command]
+    pub fn mpv_set_cache(
+        wait_secs: f64,
+        readahead_secs: f64,
+        max_mb: u64,
+    ) -> Result<(), String> {
+        // Los tres se intentan aunque uno falle: `cache-pause-wait` es el que
+        // arregla el síntoma, y perderlo porque una versión de mpv no acepta
+        // otro en caliente sería el peor cambio posible.
+        let mut err = String::new();
+        for (k, v) in [
+            ("cache-pause-wait", format!("{wait_secs}")),
+            ("demuxer-readahead-secs", format!("{readahead_secs}")),
+            ("demuxer-max-bytes", format!("{max_mb}MiB")),
+        ] {
+            if let Err(e) = mpv_embed::set_prop(k, &v) {
+                if err.is_empty() {
+                    err = e;
+                }
+            }
+        }
+        if err.is_empty() { Ok(()) } else { Err(err) }
     }
 
     /// Traduce tecla canónica del mando a comando mpv. `true` si la manejó
@@ -608,6 +673,67 @@ pub mod imp {
     #[tauri::command]
     pub fn mpv_running(state: tauri::State<'_, PlayerState>) -> bool {
         alive(&state)
+    }
+
+    #[tauri::command]
+    pub fn mpv_cache_stats(state: tauri::State<'_, PlayerState>) -> CacheStats {
+        if !alive(&state) {
+            return CacheStats::default();
+        }
+        let p = read_props(&[
+            "paused-for-cache",
+            "demuxer-cache-duration",
+            "cache-speed",
+            "duration",
+            "time-pos",
+            "file-size",
+            "cache-pause-wait",
+        ]);
+        let num = |k: &str| p.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0);
+        CacheStats {
+            running: true,
+            paused_for_cache: p
+                .get("paused-for-cache")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            cache_secs: num("demuxer-cache-duration"),
+            cache_speed: num("cache-speed"),
+            duration: num("duration"),
+            pos: num("time-pos"),
+            file_size: num("file-size"),
+            pause_wait: num("cache-pause-wait"),
+        }
+    }
+
+    /// Igual que en Linux, pero por el pipe: mpv acepta set_property por IPC,
+    /// así que la escalada de cache funciona idéntica sin embed.
+    #[tauri::command]
+    pub fn mpv_set_cache(
+        wait_secs: f64,
+        readahead_secs: f64,
+        max_mb: u64,
+    ) -> Result<(), String> {
+        let set = |name: &str, val: String| {
+            mpv_cmd(vec![
+                serde_json::Value::String("set_property".into()),
+                serde_json::Value::String(name.into()),
+                serde_json::Value::String(val),
+            ])
+        };
+        // Igual que en Linux: uno que falle no se lleva a los otros dos.
+        let mut err = String::new();
+        for (k, v) in [
+            ("cache-pause-wait", format!("{wait_secs}")),
+            ("demuxer-readahead-secs", format!("{readahead_secs}")),
+            ("demuxer-max-bytes", format!("{max_mb}MiB")),
+        ] {
+            if let Err(e) = set(k, v) {
+                if err.is_empty() {
+                    err = e;
+                }
+            }
+        }
+        if err.is_empty() { Ok(()) } else { Err(err) }
     }
 
     pub fn remote_to_mpv(app: &tauri::AppHandle, key: &str) -> bool {

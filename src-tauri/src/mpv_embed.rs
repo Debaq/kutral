@@ -2311,6 +2311,14 @@ fn json_to_arg(v: &serde_json::Value) -> String {
     }
 }
 
+/// Escribe una propiedad de mpv como texto. mpv parsea el valor según el tipo
+/// real de la opción, así que sirve igual para números, segundos y flags.
+pub fn set_prop(name: &str, value: &str) -> Result<(), String> {
+    let mpv = MPV.get().ok_or("mpv no inicializado")?;
+    mpv.set_property(name, value)
+        .map_err(|e| format!("set {name}: {e}"))
+}
+
 pub fn get_f64(name: &str) -> f64 {
     MPV.get().and_then(|m| m.get_property::<f64>(name).ok()).unwrap_or(0.0)
 }

@@ -31,6 +31,13 @@
     fmtSize,
     type Src,
   } from "$lib/fuentes";
+  import { encolar as encolarPendiente } from "$lib/colaDescargas.svelte";
+  import {
+    iniciarVigilancia,
+    detenerVigilancia,
+    fmtBps,
+    type MotivoRendicion,
+  } from "$lib/cacheWatch.svelte";
   import {
     descargaUsable,
     registrarDescarga,
@@ -136,6 +143,13 @@
   let desdeLocal = $state(false);
   // Modo descarga: mensaje de la pantalla de "encolando".
   let encolando = $state(false);
+  // La red no da para ver esto en vivo: pantalla con las dos salidas reales
+  // (bajarla y verla después, o seguir igual). Ver cacheWatch.
+  let rendicion = $state<MotivoRendicion | null>(null);
+  // Lo que estaba sonando cuando la red se rindió, para poder retomarlo.
+  let rendicionSrc: { url: string; s: Src } | null = null;
+  // El usuario eligió seguir viendo igual: no se le vuelve a ofrecer nada.
+  let sinRendirse = false;
   // Fuentes que ya se vieron y se descartaron desde el reproductor (por título:
   // es lo que identifica al release en la lista). Se marcan como "ya probada".
   // (array y no Set: $state no rastrea mutaciones de Set sin svelte/reactivity)
@@ -387,16 +401,26 @@
   }
 
   // Lanza mpv con una URL ya resuelta y deja el picker en estado "playing".
-  async function launch(url: string, s: Src) {
+  async function launch(url: string, s: Src, desdeSegundos?: number) {
     resolvingMsg = "Abriendo reproductor…";
     desdeLocal = !!s.local;
     // Contexto para el buscador de subtítulos global (SubsService).
     setNowPlaying(imdbId, title);
     // Retomar donde quedó. 5 s de colchón: caer justo en el corte desorienta,
     // un poco de contexto previo hace que se retome la escena, no el frame.
-    const desde = retomarSegundos > 5 ? Math.floor(retomarSegundos) - 5 : 0;
+    const base = desdeSegundos ?? retomarSegundos;
+    const desde = base > 5 ? Math.floor(base) - 5 : 0;
     if (desde > 0) dbg(`retomando en ${desde}s`);
     await invoke("mpv_play", { url, title, startSecs: desde > 0 ? desde : null });
+    // El archivo del disco no pasa por la red: no hay cache que vigilar.
+    if (!s.local) {
+      void iniciarVigilancia({
+        desdeTorrent,
+        sizeBytes: s.size_bytes,
+        sinRendirse,
+        onRendirse: (m) => void redNoDa(m, url, s),
+      });
+    }
     resolving = false;
     playing = true;
     playingTitle = s.title;
@@ -555,6 +579,70 @@
         'gente compartiendo: prueba otra calidad o "🔄 Rebuscar fuentes".';
     } else {
       error = `No se pudo reproducir ninguna fuente. ${lastErr}`;
+    }
+  }
+
+  // ---- La red no da ---------------------------------------------------------
+
+  // El vigilante concluyó que esto no se puede ver en vivo. Se corta el video
+  // (con el archivo cortándose cada diez segundos igual no se veía) y se
+  // ofrecen las dos salidas honestas.
+  async function redNoDa(m: MotivoRendicion, url: string, s: Src) {
+    dbg(`red no da (${m.tipo}): necesita ${m.necesario} B/s, mide ${m.medido} B/s`);
+    rendicionSrc = { url, s };
+    rendicion = m;
+    // El cierre de mpv emite "mpv:state"=false, que por defecto cierra el
+    // picker entero. Esta bandera dice que no: la pantalla que sigue es esta.
+    cambiandoFuente = true;
+    stopMpvPoll();
+    try {
+      await invoke("mpv_stop");
+    } catch {
+      /* ya estaba cerrado */
+    }
+    playing = false;
+    desdeTorrent = false;
+  }
+
+  /** "Bajarla y verla después": a la cola y a otra cosa. */
+  async function rendicionBajar() {
+    const pos = rendicion?.pos ?? 0;
+    rendicion = null;
+    const n = await encolarPendiente([
+      {
+        clave,
+        season,
+        episode,
+        title,
+        etiqueta: season != null && episode != null ? `T${season} E${episode}` : "",
+        imdbId,
+        kind,
+        originalTitle,
+        kitsuId,
+      },
+    ]);
+    notify(
+      "info",
+      n ? "En la cola" : "Ya estaba pedida",
+      `${title} — te avisamos cuando esté lista${pos > 60 ? " (retoma donde ibas)" : ""}.`,
+    );
+    onClose();
+  }
+
+  /** "Seguir igual": retoma donde iba, con la espera en el tope y sin más avisos. */
+  async function rendicionSeguir() {
+    const m = rendicion;
+    const r = rendicionSrc;
+    rendicion = null;
+    if (!r) return;
+    sinRendirse = true;
+    resolving = true;
+    resolvingMsg = "Volviendo al video…";
+    try {
+      await launch(r.url, r.s, m?.pos ?? 0);
+    } catch (e) {
+      error = `No se pudo retomar: ${String(e)}`;
+      resolving = false;
     }
   }
 
@@ -836,6 +924,7 @@
 
   async function stopMpv() {
     stopMpvPoll();
+    detenerVigilancia();
     try {
       await invoke("mpv_stop");
     } catch {
@@ -844,7 +933,10 @@
     onClose();
   }
 
-  $effect(() => () => stopMpvPoll());
+  $effect(() => () => {
+    stopMpvPoll();
+    detenerVigilancia();
+  });
 
   // Con libmpv embebido el video se cierra desde DENTRO (Esc en el reproductor
   // → backend hace stop() y emite "mpv:state"=false). El webview estuvo oculto
@@ -907,6 +999,9 @@
   });
 
   function volverALista() {
+    detenerVigilancia();
+    // Otra fuente es otra red y otro peso: la decisión anterior no la ata.
+    sinRendirse = false;
     if (playing && playingTitle && !descartadas.includes(playingTitle)) {
       descartadas = [...descartadas, playingTitle];
     }
@@ -966,6 +1061,17 @@
     // Encolando: addTorrent está esperando la metadata del magnet y no se puede
     // cortar a mitad. Se ignora el teclado hasta que responda.
     if (encolando) return;
+    if (rendicion) {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        void rendicionBajar();
+      } else if (e.key === "Escape" || e.key === "Backspace") {
+        e.preventDefault();
+        rendicion = null;
+        volverALista();
+      }
+      return;
+    }
     if (resolving) {
       if (e.key === "Escape" || e.key === "Backspace") {
         e.preventDefault();
@@ -1047,6 +1153,36 @@
       <div class="sp-center">
         <span class="sp-spinner"></span>
         <p>Buscando fuentes…</p>
+      </div>
+    {:else if rendicion}
+      {@const m = rendicion}
+      <div class="sp-center">
+        <p class="sp-tor-head">🐢 La red no da para verla en vivo</p>
+        <p class="sp-tor-why">
+          {#if m.tipo === "caudal"}
+            Este archivo pide {fmtBps(m.necesario)} y la conexión está dando
+            {fmtBps(m.medido)}. Con esa diferencia ningún buffer alcanza: se
+            cortaría igual, solo que más espaciado.
+          {:else}
+            Ya subimos el buffer al máximo ({config.cacheWaitMax} s) y sigue
+            cortándose.
+          {/if}
+          {#if desdeTorrent}
+            Puede ser que este torrent tenga poca gente compartiéndolo.
+          {/if}
+        </p>
+        <button class="sp-foot-btn focused" onclick={() => void rendicionBajar()}>
+          📥 Bajarla y verla después
+        </button>
+        <button class="sp-foot-btn" onclick={() => void rendicionSeguir()}>
+          ▶ Seguir igual, con cortes
+        </button>
+        <button class="sp-foot-btn" onclick={volverALista}>
+          🔄 Probar otra fuente
+        </button>
+        <span class="sp-hint">
+          Bajarla la deja lista para verse sin internet, retomando donde ibas.
+        </span>
       </div>
     {:else if encolando}
       <div class="sp-center">

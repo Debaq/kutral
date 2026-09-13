@@ -97,6 +97,49 @@ export const TORRENT_QUALITY_OPTIONS: {
 ];
 
 // Peso máximo del archivo aceptado para bajar en local, en GB.
+// Cacheo de red durante la reproducción. Los tres valores van juntos porque
+// mueven la misma palanca desde ángulos distintos: `wait` es cuántos segundos
+// junta mpv antes de reanudar tras un corte (su default de 1s es el que hace
+// que con red mala corte cada dos por tres), `readahead` cuánto video adelanta
+// y `maxMb` el techo en bytes de ese adelanto.
+export type CachePreset = {
+	id: string;
+	label: string;
+	hint: string;
+	wait: number;
+	readahead: number;
+	maxMb: number;
+};
+export const CACHE_PRESETS: CachePreset[] = [
+	{
+		id: "normal",
+		label: "Normal",
+		hint: "Red estable. Arranca rápido.",
+		wait: 2,
+		readahead: 20,
+		maxMb: 150,
+	},
+	{
+		id: "lenta",
+		label: "Red lenta",
+		hint: "Corta de a ratos. Junta más antes de seguir.",
+		wait: 15,
+		readahead: 60,
+		maxMb: 400,
+	},
+	{
+		id: "mala",
+		label: "Red muy mala",
+		hint: "Pausas largas pero pocas. Tarda más en arrancar.",
+		wait: 40,
+		readahead: 120,
+		maxMb: 800,
+	},
+];
+export const CACHE_WAIT_MAX_DEFAULT = 60;
+export const CACHE_WAIT_MIN = 1;
+export const CACHE_WAIT_MAX = 180;
+
 export const TORRENT_MAX_GB_DEFAULT = 6;
 // Descargas que corren a la vez. Más no es más rápido: el cliente reparte la
 // conexión y los seeds entre todas, así que 12 capítulos en paralelo tardan lo
@@ -197,6 +240,12 @@ export const config = $state({
 	torrentMaxGb: TORRENT_MAX_GB_DEFAULT,
 	// Cuántas descargas de la cola corren a la vez (ver colaDescargas).
 	torrentMaxParalelas: TORRENT_PARALELAS_DEFAULT,
+	// Cacheo de red: preset base, espera efectiva (la que puede subir sola) y
+	// tope de la escalada automática.
+	cachePreset: "normal",
+	cacheWait: 2,
+	cacheAuto: true,
+	cacheWaitMax: CACHE_WAIT_MAX_DEFAULT,
 	// Carpeta de descarga. Vacío = la que propone el sistema (Descargas/Kutral).
 	torrentDir: "",
 	// Regiones de ROM aceptadas en Juegos (ids de GAME_REGIONS).
@@ -260,6 +309,17 @@ export function loadConfig() {
 	config.torrentMaxParalelas = Number.isFinite(tpar)
 		? Math.min(TORRENT_PARALELAS_MAX, Math.max(TORRENT_PARALELAS_MIN, tpar))
 		: TORRENT_PARALELAS_DEFAULT;
+	const cp = localStorage.getItem("cache_preset") || "normal";
+	config.cachePreset = CACHE_PRESETS.some((x) => x.id === cp) ? cp : "normal";
+	const cw = parseFloat(localStorage.getItem("cache_wait") || "");
+	config.cacheWait = Number.isFinite(cw)
+		? Math.min(CACHE_WAIT_MAX, Math.max(CACHE_WAIT_MIN, cw))
+		: cachePresetActual().wait;
+	config.cacheAuto = (localStorage.getItem("cache_auto") ?? "1") === "1";
+	const cwm = parseFloat(localStorage.getItem("cache_wait_max") || "");
+	config.cacheWaitMax = Number.isFinite(cwm)
+		? Math.min(CACHE_WAIT_MAX, Math.max(CACHE_WAIT_MIN, cwm))
+		: CACHE_WAIT_MAX_DEFAULT;
 	config.torrentDir = localStorage.getItem("torrent_dir") || "";
 	const gr = localStorage.getItem("game_regions");
 	if (gr !== null) {
@@ -320,6 +380,10 @@ export function saveConfig() {
 	localStorage.setItem("torrent_buffer_mb", String(config.torrentBufferMb));
 	localStorage.setItem("torrent_max_quality", config.torrentMaxQuality);
 	localStorage.setItem("torrent_max_gb", String(config.torrentMaxGb));
+	localStorage.setItem("cache_preset", config.cachePreset);
+	localStorage.setItem("cache_wait", String(config.cacheWait));
+	localStorage.setItem("cache_auto", config.cacheAuto ? "1" : "0");
+	localStorage.setItem("cache_wait_max", String(config.cacheWaitMax));
 	localStorage.setItem("torrent_paralelas", String(config.torrentMaxParalelas));
 	localStorage.setItem("torrent_dir", config.torrentDir.trim());
 	localStorage.setItem("game_regions", config.gameRegions.join(","));
@@ -391,4 +455,9 @@ export function isKioskActive(): boolean {
 	if (config.modeOverride === "kiosk") return true;
 	if (config.modeOverride === "desktop") return false;
 	return config.detectedKutral;
+}
+
+/** Preset de cacheo elegido (o el normal si el guardado ya no existe). */
+export function cachePresetActual(): CachePreset {
+	return CACHE_PRESETS.find((p) => p.id === config.cachePreset) ?? CACHE_PRESETS[0];
 }
