@@ -11,6 +11,7 @@
   import { setPlaying } from "$lib/playerState.svelte";
   import { config } from "$lib/config.svelte";
   import SourcePicker from "$lib/SourcePicker.svelte";
+  import { tieneDescarga, estadoDescarga } from "$lib/descargas.svelte";
   import PlayMenu from "$lib/PlayMenu.svelte";
   import QRCode from "qrcode";
   import EpisodePicker from "$lib/EpisodePicker.svelte";
@@ -615,6 +616,16 @@
   // capítulo a medias si es una serie.
   const enCursoSel = $derived(claveSel ? filaEnCurso(claveSel) : null);
   const favSel = $derived(claveSel ? esFavorito(claveSel) : false);
+  // ¿Este título ya está bajado en el equipo? La ficha lo dice antes de que el
+  // usuario pulse nada: bajarla dos veces es el error que esto evita.
+  const localSel = $derived(claveSel ? tieneDescarga(claveSel) : false);
+  // Solo para películas: en series la descarga es por capítulo y el título no
+  // tiene un estado único que mostrar.
+  const bajandoSel = $derived(
+    claveSel && selected?.media_type === "movie"
+      ? estadoDescarga(claveSel) === "bajando"
+      : false,
+  );
 
   // Metadatos que el historial necesita para escribir una fila. `season`/
   // `episode` en -1 = película (o el título entero, cuando el marcado es del
@@ -1901,6 +1912,9 @@
   // Si la lista de fuentes debe auto-reproducir la mejor (⚡ Ver con debrid)
   // o mostrar la lista para elegir (🔄 Rebuscar fuentes).
   let sourcesAutoplay = $state(false);
+  // La lista de fuentes abierta para BAJAR, no para ver (ver SourcePicker:
+  // misma búsqueda, distinto final).
+  let sourcesDescargar = $state(false);
   // Temporada/episodio elegidos (series/anime). null en películas.
   let sourcesSeason = $state<number | null>(null);
   let sourcesEpisode = $state<number | null>(null);
@@ -2165,6 +2179,7 @@
   // Abre la ruta debrid. Películas → lista directa. Series/anime → elegir
   // temporada/episodio primero.
   function openDebrid(autoplay: boolean, desdeCero = false) {
+    sourcesDescargar = false;
     sourcesAutoplay = autoplay;
     empezarDeCero = desdeCero;
     if (selected?.media_type === "movie") {
@@ -2183,6 +2198,16 @@
   }
   function menuRealDebrid() { openDebrid(true); }  // auto mejor
   function menuResearch() { openDebrid(false); }   // elegir
+  // "Bajar para después": la misma lista de fuentes, pero al elegir encola en
+  // vez de reproducir. Con sourceSelect en automático ni se muestra: agarra la
+  // mejor que quepa en el tope y vuelve.
+  function menuBajar() {
+    sourcesDescargar = true;
+    sourcesSeason = null;
+    sourcesEpisode = null;
+    setContexto(metaDe());
+    mode = "sources";
+  }
 
   // "Cambiar fuente" desde el bar del reproductor. Con la lista montada la
   // maneja el propio SourcePicker (vuelve a ella marcando la ya probada); acá
@@ -2457,6 +2482,7 @@
   // Cierra menú/lista y vuelve al catálogo.
   function closeSources() {
     mode = "browse";
+    sourcesDescargar = false;
     setFs(false);
     void unregisterBackShortcuts();
     if (volverDesde) {
@@ -2842,11 +2868,15 @@
     backdropUrl={selected.backdrop_path ? art(selected.backdrop_path, "w1280", 1280) : null}
     hasTrailer={!!(menuTrailerPick.ytKey || menuTrailerPick.apple)}
     hasRd={config.rdLinked}
+    hasLocal={localSel && selected.media_type !== "tv"}
+    bajando={bajandoSel}
+    puedeBajar={config.torrentLocal && selected.media_type === "movie"}
     onContinue={menuContinue}
     onRestart={menuRestart}
     onRealDebrid={menuRealDebrid}
     onResearch={menuResearch}
     onTrailer={menuTrailer}
+    onDownload={menuBajar}
     onClose={closeSources}
   />
 {:else if mode === "episodes" && (selected?.imdb_id || selected?.kitsu_id)}
@@ -2882,6 +2912,7 @@
   <SourcePicker
     imdbId={selected.imdb_id ?? ""}
     kind={currentKind()}
+    clave={claveSel}
     season={sourcesSeason}
     episode={sourcesEpisode}
     title={selected.title}
@@ -2890,6 +2921,7 @@
     kitsuId={selected.kitsu_id ?? null}
     rdLinked={config.rdLinked}
     autoplay={sourcesAutoplay}
+    descargarSolo={sourcesDescargar}
     retomarSegundos={reanudarDesde}
     onClose={closeSources}
     onWeb={menuWeb}
@@ -3025,6 +3057,9 @@
             {#if selected.media_type === "tv"}
               <!-- Series: la reproducción es por capítulo (lista de Temporadas
                    abajo). No hay "Descubrir" de título; solo Trailer. -->
+              {#if localSel}
+                <div class="local-note">📁 Tienes capítulos bajados en este equipo</div>
+              {/if}
               <div class="action-row">
                 <button data-nav class="trailer-btn trailer-btn-row" onclick={watchTrailer}>🎬 Trailer</button>
               </div>
@@ -3039,6 +3074,11 @@
                 <div class="watched-note">✓ Ya la viste</div>
               {:else if prog && prog.watched_seconds > 5 && pct != null}
                 <div class="progress-bar"><div class="progress-fill" style:width="{pct}%"></div></div>
+              {/if}
+              {#if localSel}
+                <div class="local-note">📁 Ya está en tu equipo — arranca al instante, sin internet</div>
+              {:else if bajandoSel}
+                <div class="local-note bajando">📥 Bajándola ahora — te avisamos cuando esté lista</div>
               {/if}
               <div class="action-row">
                 {#if prog && prog.completed}
@@ -4028,6 +4068,24 @@
     overflow: hidden; margin: 4px 0 8px;
   }
   .progress-fill { height: 100%; background: linear-gradient(90deg, #f5c518, #ff9b00); transition: width 0.3s; }
+  /* Mismo lenguaje visual que "ya la viste", en verde más frío: las dos son
+     cosas que la app YA sabe del título, no acciones. */
+  .local-note {
+    position: relative; z-index: 1;
+    background: rgba(64, 160, 120, 0.15);
+    border: 1px solid rgba(64, 160, 120, 0.4);
+    color: #8fe3a8;
+    padding: 6px 10px; border-radius: 6px;
+    font-size: 12px; text-align: center;
+    margin: 8px 0;
+  }
+
+  .local-note.bajando {
+    background: rgba(243, 169, 81, 0.13);
+    border-color: rgba(243, 169, 81, 0.4);
+    color: #f3c489;
+  }
+
   .watched-note {
     position: relative; z-index: 1;
     background: rgba(82, 181, 96, 0.15);

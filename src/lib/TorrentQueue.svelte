@@ -15,6 +15,7 @@
     type TorrentStatus,
   } from "$lib/torrents.svelte";
   import { config } from "$lib/config.svelte";
+  import { olvidarPorHash } from "$lib/descargas.svelte";
 
   let { open = $bindable(false) } = $props<{ open?: boolean }>();
 
@@ -70,6 +71,10 @@
     } catch {
       /* ya no existía */
     }
+    // A medias se borra el archivo: ya no hay copia local que ofrecer. Si
+    // terminó, el archivo se queda y la ficha lo sigue conociendo — que es
+    // justo el caso de "la bajé y me olvidé".
+    if (!t.finished) void olvidarPorHash(t.info_hash);
     confirmId = null;
     await refreshQueue();
   }

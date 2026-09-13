@@ -15,6 +15,7 @@
   import { initTorrentSession, startQueuePoll, stopQueuePoll } from "$lib/torrents.svelte";
   import { setConcurrenciaScreening } from "$lib/screening.svelte";
   import { cargarHistorial } from "$lib/historial.svelte";
+  import { cargarDescargas } from "$lib/descargas.svelte";
   import { ACCIONES, loadGamepadMap, gamepadCaptured, type GamepadMap } from "$lib/controls";
   import { ayuda } from "$lib/atajos/store.svelte";
   let { children } = $props();
@@ -164,6 +165,9 @@
     initDetection();
     // Historial + favoritos a memoria: el grid pinta ticks sin query por card.
     void cargarHistorial();
+    // Qué películas ya están bajadas en este equipo: la ficha lo muestra y
+    // Descubrir las reproduce sin salir a la red.
+    void cargarDescargas();
     // Migra/lee credenciales RD del store seguro del backend.
     void initRd().then(abrirAsistenteSiHaceFalta);
     // Propagar concurrencia configurada al worker Rust.

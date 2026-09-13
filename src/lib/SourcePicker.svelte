@@ -20,6 +20,12 @@
     fmtEta,
     type TorrentStatus,
   } from "$lib/torrents.svelte";
+  import {
+    descargaUsable,
+    registrarDescarga,
+    olvidarDescarga,
+    estadoDescarga,
+  } from "$lib/descargas.svelte";
 
   // Pista real del contenedor leída de mpv (verdad del archivo).
   type MpvTrack = {
@@ -48,6 +54,9 @@
     // Veredicto de la verificación REAL de pistas (ffprobe sobre la URL
     // resuelta): qué español embebido trae el archivo de verdad.
     _es?: "audio" | "subs" | "none" | "unknown";
+    // El archivo ya está en el disco (descarga terminada): `url` es una ruta
+    // local. No pasa por debrid ni por el swarm — se abre y ya.
+    local?: boolean;
   };
 
   // Pista reportada por ffprobe (header del contenedor, sin descargar).
@@ -56,6 +65,7 @@
   let {
     imdbId,
     kind,
+    clave = "",
     season = null,
     episode = null,
     title,
@@ -64,12 +74,16 @@
     kitsuId = null,
     rdLinked,
     autoplay = false,
+    descargarSolo = false,
     retomarSegundos = 0,
     onClose,
     onWeb,
   }: {
     imdbId: string;
     kind: "movie" | "series" | "anime";
+    // Clave del título en el historial/descargas (imdb, o `anilist:<id>` en
+    // anime). Sin ella no se puede saber si la copia local es de esta película.
+    clave?: string;
     season?: number | null;
     episode?: number | null;
     title: string;
@@ -82,6 +96,12 @@
     kitsuId?: number | null;
     rdLinked: boolean;
     autoplay?: boolean;
+    /**
+     * Modo "bajar para después": la lista no reproduce nada, encola la fuente
+     * elegida y vuelve. Misma búsqueda y mismo orden que al reproducir — lo
+     * único que cambia es qué pasa al elegir.
+     */
+    descargarSolo?: boolean;
     /** Segundo desde el que arranca mpv (historial). 0 = desde el principio. */
     retomarSegundos?: number;
     onClose: () => void;
@@ -123,6 +143,11 @@
   // y en el centro de notificaciones: el usuario tiene que saber que ahí está
   // bajando (y compartiendo) el archivo él mismo.
   let desdeTorrent = $state(false);
+  // Está sonando la copia que ya estaba en el disco: ni debrid ni swarm. Se
+  // avisa en pantalla porque explica por qué arrancó al instante.
+  let desdeLocal = $state(false);
+  // Modo descarga: mensaje de la pantalla de "encolando".
+  let encolando = $state(false);
   // Fuentes que ya se vieron y se descartaron desde el reproductor (por título:
   // es lo que identifica al release en la lista). Se marcan como "ya probada".
   // (array y no Set: $state no rastrea mutaciones de Set sin svelte/reactivity)
@@ -341,6 +366,30 @@
     setFam(next.id);
   }
 
+  // La copia que ya está en el disco, como una fuente más de la lista. Es la
+  // mejor de todas: sin red, sin debrid, sin swarm y arranca al instante.
+  function srcDeDescarga(f: {
+    release_title: string;
+    ruta: string;
+    info_hash: string;
+    quality: string;
+    size_bytes: number;
+  }): Src {
+    return {
+      source: "En tu equipo",
+      title: f.release_title,
+      magnet: null,
+      url: f.ruta, // mpv abre rutas locales igual que URLs
+      info_hash: f.info_hash,
+      size_bytes: f.size_bytes || null,
+      seeders: null,
+      quality: f.quality || "unknown",
+      rd_cached: null,
+      hardsub: null,
+      local: true,
+    };
+  }
+
   async function load() {
     loading = true;
     error = "";
@@ -351,15 +400,71 @@
         error = "Falta temporada/episodio.";
         return;
       }
-      const srcs = await invoke<Src[]>("kodios_search", {
-        imdbId,
-        kind,
-        title,
-        originalTitle: originalTitle ?? undefined,
-        season: season ?? undefined,
-        episode: episode ?? undefined,
-        kitsuId: kitsuId ?? undefined,
-      });
+
+      if (descargarSolo) {
+        // Bajar dos veces lo mismo es exactamente lo que esto viene a evitar.
+        const est = estadoDescarga(clave, season ?? -1, episode ?? -1);
+        if (est) {
+          notify(
+            "info",
+            est === "completa" ? "Ya está en tu equipo" : "Ya se está bajando",
+            title,
+          );
+          onClose();
+          return;
+        }
+        if (!config.torrentLocal) {
+          error =
+            'Para bajar títulos activa "Descarga local" en Configuración.';
+          return;
+        }
+      }
+
+      // ¿Ya la bajaste antes? La copia en disco gana a cualquier fuente de la
+      // red, así que se busca ANTES de scrapear: en modo automático ni
+      // siquiera hace falta salir a buscar nada.
+      let local: Src | null = null;
+      const fila = await descargaUsable(clave, season ?? -1, episode ?? -1);
+      if (fila) {
+        local = srcDeDescarga(fila);
+        dbg(`copia local: ${fila.ruta}`);
+        if (autoplay && config.sourceSelect === "auto") {
+          sources = [local];
+          loading = false;
+          await playFrom(0);
+          if (playing) return;
+          // No abrió (archivo corrupto, códec imposible): se olvida y se sigue
+          // por el camino normal. Un archivo que no se puede ver no es una
+          // copia local.
+          dbg("la copia local no abrió → a buscar fuentes");
+          await olvidarDescarga(fila.clave, fila.season, fila.episode);
+          local = null;
+          loading = true;
+          error = "";
+        }
+      }
+
+      let srcs: Src[];
+      try {
+        srcs = await invoke<Src[]>("kodios_search", {
+          imdbId,
+          kind,
+          title,
+          originalTitle: originalTitle ?? undefined,
+          season: season ?? undefined,
+          episode: episode ?? undefined,
+          kitsuId: kitsuId ?? undefined,
+        });
+      } catch (e) {
+        // Sin internet no hay scrapers, pero la copia del disco sí se puede
+        // ver: sería absurdo mostrar "no hay fuentes" teniéndola acá al lado.
+        if (!local) throw e;
+        dbg(`búsqueda falló pero hay copia local: ${String(e).slice(0, 60)}`);
+        sources = [local];
+        loading = false;
+        if (autoplay && config.sourceSelect === "auto") void playFrom(0);
+        return;
+      }
       if (rdLinked) {
         const hashes = srcs.map((s) => s.info_hash).filter(Boolean) as string[];
         try {
@@ -393,8 +498,32 @@
         if (q) return q;
         return (b.seeders || 0) - (a.seeders || 0);
       });
-      sources = stack(srcs);
-      if (!srcs.length) {
+      if (descargarSolo) {
+        // Solo se puede bajar lo que es torrent: un enlace directo de web no
+        // tiene magnet que darle al cliente.
+        sources = stack(srcs).filter((x) => x.magnet);
+        if (!sources.length) {
+          error = "No hay ningún torrent para bajar de este título.";
+        } else if (config.sourceSelect === "auto") {
+          // Mismo criterio que el plan B al reproducir: la mejor que quepa
+          // dentro del techo que el usuario puso en Configuración.
+          const mejor = sources.find(cabeEnLocal);
+          if (mejor) {
+            loading = false;
+            void encolar(mejor);
+          } else {
+            error =
+              `Todas las fuentes superan tu tope de descarga ` +
+              `(${QLABEL[config.torrentMaxQuality]} y ${config.torrentMaxGb} GB). ` +
+              `Súbelo en Configuración, o elige una a mano.`;
+          }
+        }
+        return;
+      }
+
+      // La copia local va SIEMPRE primera: ninguna fuente de la red le gana.
+      sources = local ? [local, ...stack(srcs)] : stack(srcs);
+      if (!sources.length) {
         error = "No encontramos fuentes para esta película.";
       } else if (autoplay && config.sourceSelect === "auto") {
         // ⚡ Ver con RealDebrid en modo automático: reproduce directo la mejor
@@ -456,6 +585,7 @@
   // Lanza mpv con una URL ya resuelta y deja el picker en estado "playing".
   async function launch(url: string, s: Src) {
     resolvingMsg = "Abriendo reproductor…";
+    desdeLocal = !!s.local;
     // Contexto para el buscador de subtítulos global (SubsService).
     setNowPlaying(imdbId, title);
     // Retomar donde quedó. 5 s de colchón: caer justo en el corte desorienta,
@@ -634,6 +764,48 @@
     return true;
   }
 
+  // ---- Bajar para después --------------------------------------------------
+
+  // Encola la descarga y vuelve: acá NO se reproduce nada. El aviso de que
+  // terminó lo da el poll de la cola (torrents.svelte.ts) y a partir de ahí la
+  // ficha muestra "ya está en tu equipo".
+  async function encolar(s: Src) {
+    if (!s.magnet) {
+      error = "Esa fuente es un enlace directo, no un torrent: no se puede bajar.";
+      return;
+    }
+    encolando = true;
+    error = "";
+    try {
+      // Sin buffer de arranque: nadie está esperando para ver. El cliente baja
+      // igual de forma secuencial, así que si después la abres a mitad de
+      // descarga el inicio ya va a estar.
+      const added = await addTorrent(s.magnet, title, config.torrentBufferMb);
+      await registrarDescarga({
+        clave,
+        season,
+        episode,
+        infoHash: added.info_hash,
+        ruta: added.path,
+        releaseTitle: s.title || added.name,
+        quality: s.quality,
+        sizeBytes: added.size_bytes,
+      });
+      startQueuePoll();
+      notify(
+        "info",
+        "Bajando para después",
+        `${title} · ${QLABEL[s.quality] || ""} · ${fmtBytes(added.size_bytes)}`,
+      );
+      dbg(`encolada ${added.name} (${added.size_bytes} B)`);
+      onClose();
+    } catch (e) {
+      encolando = false;
+      dbg(`encolar falló: ${String(e).slice(0, 100)}`);
+      error = `No se pudo encolar: ${String(e)}`;
+    }
+  }
+
   // ---- Plan B: torrent local ---------------------------------------------
 
   // Baja el torrent con el cliente local y arranca mpv apenas hay buffer. Lo
@@ -656,6 +828,19 @@
       const added = await addTorrent(s.magnet, title, config.torrentBufferMb);
       if (torrentCancel) return false;
       torrentId = added.id;
+      // Queda anotado a QUÉ título pertenece este archivo. Se registra ya (con
+      // completa=0), no al terminar: si la app se cierra a mitad, la fila
+      // existe y el poll de la cola la marca completa cuando llegue al final.
+      void registrarDescarga({
+        clave,
+        season,
+        episode,
+        infoHash: added.info_hash,
+        ruta: added.path,
+        releaseTitle: s.title || added.name,
+        quality: s.quality,
+        sizeBytes: added.size_bytes,
+      });
       dbg(`torrent local id=${added.id} ${added.name} (${added.size_bytes} B)`);
       torrentMsg = "Descargando el inicio…";
       for (;;) {
@@ -702,6 +887,8 @@
           /* ya no estaba */
         }
       }
+      // Se borró el archivo: no hay copia local de este título que ofrecer.
+      void olvidarDescarga(clave, season ?? -1, episode ?? -1);
       return false;
     }
   }
@@ -732,6 +919,7 @@
       } catch {
         /* si ya no existe, da igual */
       }
+      void olvidarDescarga(clave, season ?? -1, episode ?? -1);
     }
   }
 
@@ -931,6 +1119,7 @@
     playing = false;
     playingTitle = "";
     desdeTorrent = false;
+    desdeLocal = false;
     resolving = false;
     resolvingMsg = "";
     setTimeout(() => scrollFocused(), 50);
@@ -949,7 +1138,9 @@
     dbg(`activate focusIdx=${focusIdx} back=${backIdx} web=${webIdx}`);
     if (focusIdx === backIdx) return onClose();
     if (focusIdx === webIdx) return onWeb();
-    if (view[focusIdx]) void playFrom(focusIdx);
+    if (!view[focusIdx]) return;
+    if (descargarSolo) return void encolar(view[focusIdx]);
+    void playFrom(focusIdx);
   }
 
   function scrollFocused() {
@@ -978,6 +1169,9 @@
       }
       return;
     }
+    // Encolando: addTorrent está esperando la metadata del magnet y no se puede
+    // cortar a mitad. Se ignora el teclado hasta que responda.
+    if (encolando) return;
     if (resolving) {
       if (e.key === "Escape" || e.key === "Backspace") {
         e.preventDefault();
@@ -1031,7 +1225,8 @@
     <header class="sp-head">
       <h2 class="sp-title-h">{title}</h2>
       <span class="sp-sub">
-        {#if famFilter === "hardsub"}Enlace directo
+        {#if descargarSolo}Elige qué versión bajar
+        {:else if famFilter === "hardsub"}Enlace directo
         {:else if famFilter === "torrent"}Torrents vía debrid
         {:else}Elige una fuente{/if}
       </span>
@@ -1041,7 +1236,11 @@
       <div class="sp-center">
         <p class="sp-playing">▶ Reproduciendo</p>
         <p class="sp-playing-title">{playingTitle}</p>
-        {#if desdeTorrent}
+        {#if desdeLocal}
+          <p class="sp-desde-disco">
+            📁 Desde tu equipo — ya la tenías bajada. No se usó internet.
+          </p>
+        {:else if desdeTorrent}
           <p class="sp-desde-local">
             📥 Desde descarga local — el debrid bloqueó esta fuente por DMCA.
             Sigue bajando mientras la ves.
@@ -1054,6 +1253,15 @@
       <div class="sp-center">
         <span class="sp-spinner"></span>
         <p>Buscando fuentes…</p>
+      </div>
+    {:else if encolando}
+      <div class="sp-center">
+        <span class="sp-spinner"></span>
+        <p class="sp-tor-head">📥 Preparando la descarga</p>
+        <p class="sp-tor-why">
+          Buscando peers del torrent. Cuando termine te avisamos y queda lista
+          para verla sin internet.
+        </p>
       </div>
     {:else if torrenting}
       <div class="sp-center">
@@ -1111,6 +1319,13 @@
         </div>
       {/if}
 
+      {#if descargarSolo}
+        <p class="sp-baja-hint">
+          📥 Se baja de fondo: puedes seguir usando la app. Tope actual:
+          {QLABEL[config.torrentMaxQuality]} y {config.torrentMaxGb} GB.
+        </p>
+      {/if}
+
       <div class="sp-list">
         {#each view as s, i (s.info_hash || s.url || i)}
           <button
@@ -1118,7 +1333,11 @@
             class="sp-row"
             class:focused={focusIdx === i}
             class:probada={descartadas.includes(s.title)}
-            onclick={() => { focusIdx = i; void playFrom(i); }}
+            onclick={() => {
+              focusIdx = i;
+              if (descargarSolo) void encolar(s);
+              else void playFrom(i);
+            }}
             onmouseenter={() => (focusIdx = i)}
           >
             <span class="sp-q sp-q-{s.quality}">{QLABEL[s.quality] || "—"}</span>
@@ -1126,6 +1345,7 @@
               <span class="sp-title">{s.title}</span>
               <div class="sp-chips">
                 {#if descartadas.includes(s.title)}<span class="sp-probada">↩ Ya probada</span>{/if}
+                {#if s.local}<span class="sp-en-disco">📁 En tu equipo</span>{/if}
                 {#if prefScore(s)}<span class="sp-pref">★ Preferida</span>{/if}
                 {#if s.rd_cached}<span class="sp-cached">⚡ Instantáneo</span>{/if}
                 {#if s.hardsub}<span class="sp-hardsub">{HARDSUB_LABEL[s.hardsub] || "🔗 Enlace directo"}</span>{/if}
@@ -1254,6 +1474,13 @@
     margin: 0; max-width: 460px; text-align: center;
     color: #cbb489; font-size: 12.5px; line-height: 1.45;
   }
+  .sp-baja-hint {
+    margin: 0 0 8px; color: #9a9aa6; font-size: 12px;
+  }
+  .sp-desde-disco {
+    margin: 0; max-width: 460px; text-align: center;
+    color: #8fe3a8; font-size: 12.5px; line-height: 1.45;
+  }
   .sp-bar {
     width: min(420px, 70vw); height: 6px;
     background: #2a2a36; border-radius: 3px; overflow: hidden;
@@ -1353,6 +1580,16 @@
     color: #c0c0c8;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.12);
+    padding: 2px 7px;
+    border-radius: 5px;
+  }
+  /* Copia ya bajada: verde, el único chip que promete cero espera. */
+  .sp-en-disco {
+    font-size: 10.5px;
+    font-weight: 700;
+    color: #8fe3a8;
+    background: #102417;
+    border: 1px solid #27512f;
     padding: 2px 7px;
     border-radius: 5px;
   }

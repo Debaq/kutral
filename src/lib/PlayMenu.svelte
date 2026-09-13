@@ -72,11 +72,15 @@
     backdropUrl = null,
     hasTrailer = false,
     hasRd,
+    hasLocal = false,
+    bajando = false,
+    puedeBajar = false,
     onContinue,
     onRestart,
     onRealDebrid,
     onResearch,
     onTrailer,
+    onDownload,
     onClose,
   }: {
     detail: DetailExt;
@@ -87,11 +91,18 @@
     /** Hay trailer que mostrar (se reproduce en mpv o se ofrece por QR). */
     hasTrailer?: boolean;
     hasRd: boolean;
+    /** La copia ya está bajada en este equipo: se abre sin red ni debrid. */
+    hasLocal?: boolean;
+    /** Ya está en la cola, bajando ahora mismo. */
+    bajando?: boolean;
+    /** Se puede ofrecer "bajar para después" (descarga local activada). */
+    puedeBajar?: boolean;
     onContinue: () => void;
     onRestart: () => void;
     onRealDebrid: () => void;
     onResearch: () => void;
     onTrailer: () => void;
+    onDownload: () => void;
     onClose: () => void;
   } = $props();
 
@@ -111,6 +122,9 @@
         break;
       case "research":
         onResearch();
+        break;
+      case "bajar":
+        onDownload();
         break;
       case "trailer":
         onTrailer();
@@ -143,19 +157,31 @@
       // Sin debrid la misma entrada sirve igual: SourcePicker busca fuentes y
       // las baja en local si el usuario activó esa opción. Por eso el nombre
       // cambia — "Ver con debrid" mentiría cuando no hay debrid.
+      // Con la copia en disco el debrid sobra: el archivo ya está acá. El
+      // botón lo dice para que no parezca que va a bajarla otra vez.
       a.push({
         id: "rd",
         label: progressLabel
-          ? `⚡  Continuar (${progressLabel})`
-          : hasRd
-            ? "⚡  Ver con debrid"
-            : "▶  Descubrir",
+          ? `${hasLocal ? "📁" : "⚡"}  Continuar (${progressLabel})`
+          : hasLocal
+            ? "📁  Descubrir desde tu equipo"
+            : hasRd
+              ? "⚡  Ver con debrid"
+              : "▶  Descubrir",
         primary: true,
       });
       // El historial guarda el minuto: si hay algo empezado, hace falta la
       // salida para verlo desde el principio otra vez.
       if (progressLabel) a.push({ id: "restart", label: "↻  Empezar de nuevo" });
       a.push({ id: "research", label: "🔄  Rebuscar fuentes" });
+      // Bajarla ahora para verla después. No aparece si ya está en el disco ni
+      // si ya se está bajando: en esos dos casos no hay nada que pedir.
+      if (puedeBajar && !hasLocal) {
+        a.push({
+          id: "bajar",
+          label: bajando ? "📥  Se está bajando…" : "📥  Bajar para después",
+        });
+      }
       a.push(...web);
     } else {
       web[0].primary = true;

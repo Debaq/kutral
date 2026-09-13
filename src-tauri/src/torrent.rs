@@ -422,6 +422,12 @@ pub struct TorrentAdded {
     pub name: String,
     pub size_bytes: u64,
     pub stream_url: String,
+    /// Ruta absoluta del archivo elegido en disco. Es lo que permite volver a
+    /// verlo sin red una vez terminada la descarga (tabla `descargas`).
+    pub path: String,
+    /// Infohash en hex: identifica la descarga entre reinicios, cuando los ids
+    /// de sesión ya no valen.
+    pub info_hash: String,
 }
 
 #[derive(Serialize)]
@@ -448,6 +454,10 @@ pub struct TorrentStatus {
     pub buffer_target: u64,
     pub buffer_ready: bool,
     pub added_at: i64,
+    /// Ruta absoluta del archivo en disco (sirve igual para los torrents
+    /// restaurados de la sesión persistida, que no tienen Entry nuestro).
+    pub path: String,
+    pub info_hash: String,
 }
 
 fn status_of(tor: &Tor, id: usize, handle: &Arc<ManagedTorrent>) -> TorrentStatus {
@@ -509,6 +519,12 @@ fn status_of(tor: &Tor, id: usize, handle: &Arc<ManagedTorrent>) -> TorrentStatu
         0.0
     };
 
+    let path = handle
+        .output_folder()
+        .join(&name)
+        .to_string_lossy()
+        .to_string();
+
     TorrentStatus {
         id,
         title,
@@ -530,6 +546,8 @@ fn status_of(tor: &Tor, id: usize, handle: &Arc<ManagedTorrent>) -> TorrentStatu
         // Con el archivo ya terminado el buffer sobra.
         buffer_ready: stats.finished || (target > 0 && buffered >= target),
         added_at,
+        path,
+        info_hash: handle.info_hash().as_string(),
     }
 }
 
@@ -615,12 +633,16 @@ pub async fn torrent_add(
     );
     start_prebuffer(handle.clone(), file_id, target, buffered);
 
+    let path = destino.join(&name).to_string_lossy().to_string();
+
     Ok(TorrentAdded {
         id,
         file_id,
         stream_url: stream_url(tor.port, id, file_id, &name),
         name,
         size_bytes,
+        path,
+        info_hash: handle.info_hash().as_string(),
     })
 }
 
@@ -719,9 +741,20 @@ pub async fn torrent_check_dir(app: tauri::AppHandle, dir: Option<String>) -> Re
     Ok(d.to_string_lossy().to_string())
 }
 
+/// ¿Sigue ahí el archivo de una descarga vieja? Devuelve su tamaño, o null si
+/// no existe (el usuario lo borró a mano, cambió la carpeta, montó otro disco).
+/// Sin esto la app ofrecería "ya lo tienes" apuntando a un archivo fantasma.
+#[tauri::command]
+pub fn local_file_size(path: String) -> Option<u64> {
+    std::fs::metadata(&path)
+        .ok()
+        .filter(|m| m.is_file())
+        .map(|m| m.len())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{is_video, mime_for, parse_range, stream_url};
+    use super::{is_video, local_file_size, mime_for, parse_range, stream_url};
 
     #[test]
     fn range_abierto_llega_al_final() {
@@ -863,6 +896,24 @@ mod tests {
             assert_eq!(body2.len(), 32768, "el seek debe devolver el rango pedido");
             println!("seek a {medio}: {} bytes ok", body2.len());
         });
+    }
+
+    #[test]
+    fn tamano_solo_de_archivos_que_existen() {
+        let dir = std::env::temp_dir().join("kutral-test-local-file");
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("peli.mkv");
+        std::fs::write(&f, b"1234567890").unwrap();
+
+        assert_eq!(local_file_size(f.to_string_lossy().to_string()), Some(10));
+        // Una carpeta NO es una copia local, aunque exista.
+        assert_eq!(local_file_size(dir.to_string_lossy().to_string()), None);
+        assert_eq!(
+            local_file_size(dir.join("no-existe.mkv").to_string_lossy().to_string()),
+            None
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

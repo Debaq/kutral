@@ -8,6 +8,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { notify } from "$lib/notifStore.svelte";
 import { config } from "$lib/config.svelte";
+import { marcarCompleta } from "$lib/descargas.svelte";
 
 /** Carpeta elegida por el usuario, o null para que el backend use la suya. */
 function dirElegida(): string | null {
@@ -34,6 +35,9 @@ export type TorrentStatus = {
 	buffer_target: number;
 	buffer_ready: boolean;
 	added_at: number;
+	/** Ruta absoluta del archivo en disco. */
+	path: string;
+	info_hash: string;
 };
 
 export type TorrentAdded = {
@@ -42,6 +46,9 @@ export type TorrentAdded = {
 	name: string;
 	size_bytes: number;
 	stream_url: string;
+	/** Ruta absoluta del archivo elegido: lo que se guarda en `descargas`. */
+	path: string;
+	info_hash: string;
 };
 
 export const torrents = $state({
@@ -117,6 +124,12 @@ export async function refreshQueue(): Promise<void> {
 				avisados.add(t.id);
 				notify("success", "Descarga lista", t.title || t.name);
 			}
+			// Recién terminada la descarga el archivo sirve para verlo sin red.
+			// Va fuera del `avisados` a propósito: un torrent restaurado de la
+			// sesión persistida ya viene terminado y nunca pasa por el aviso,
+			// pero su fila igual tiene que quedar marcada. marcarCompleta()
+			// corta solo si no hay nada pendiente con ese hash.
+			if (t.finished) void marcarCompleta(t.info_hash);
 			if (t.state === "error" && !avisados.has(t.id)) {
 				avisados.add(t.id);
 				notify("error", "Descarga con error", t.error || t.title || t.name);

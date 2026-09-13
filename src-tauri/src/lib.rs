@@ -3005,6 +3005,36 @@ pub fn run() {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 8,
+            description: "descargas locales",
+            // Puente entre un título del catálogo y el archivo que quedó en
+            // disco. Sin esta tabla la cola de torrents solo conoce nombres de
+            // release: al volver a la ficha nadie sabe que ya la tienes bajada.
+            //
+            // Misma clave que watch_history (imdb, o `anilist:<id>` en anime) y
+            // el mismo -1/-1 para películas: así una fila se busca con lo que
+            // la ficha ya tiene a mano.
+            sql: "CREATE TABLE IF NOT EXISTS descargas (
+                    clave TEXT NOT NULL,
+                    season INTEGER NOT NULL DEFAULT -1,
+                    episode INTEGER NOT NULL DEFAULT -1,
+                    info_hash TEXT NOT NULL,
+                    ruta TEXT NOT NULL,
+                    release_title TEXT NOT NULL,
+                    quality TEXT NOT NULL DEFAULT 'unknown',
+                    size_bytes INTEGER NOT NULL DEFAULT 0,
+                    -- 0 mientras baja: un archivo a medias no se puede ofrecer
+                    -- como copia local (mpv abriría un video cortado).
+                    completa INTEGER NOT NULL DEFAULT 0,
+                    added_at INTEGER NOT NULL,
+                    PRIMARY KEY (clave, season, episode)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_desc_hash ON descargas(info_hash);
+            ",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -3112,6 +3142,7 @@ pub fn run() {
             torrent::torrent_init,
             torrent::torrent_default_dir,
             torrent::torrent_check_dir,
+            torrent::local_file_size,
             player::imp::mpv_play,
             player::imp::mpv_play_trailer,
             player::imp::mpv_play_iptv,
