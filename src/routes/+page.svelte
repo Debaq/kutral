@@ -675,7 +675,15 @@
     ratings: OmdbRating[];
   };
   let menuOmdb = $state<OmdbDetail | null>(null);
-  let menuTrailerPick = $state<TrailerPick>({ ytKey: "", apple: "", playable: false, err: "" });
+  let menuTrailerPick = $state<TrailerPick>({
+    ytKey: "",
+    apple: "",
+    playable: false,
+    err: "",
+    video: "",
+    audio: "",
+    at: 0,
+  });
   const omdbCache = new Map<string, OmdbDetail>();
   const trailerCache = new Map<string, TrailerPick>();
   let unavailable = $state<{ open: boolean; reason: "404" | "no_imdb"; checking: boolean }>({
@@ -1141,7 +1149,28 @@
   //  - `ytKey`: video de YouTube que existe (verificado contra oEmbed).
   //  - `playable`: yt-dlp lo puede resolver → mpv lo reproduce.
   //  - `apple`: mp4 de iTunes, alternativa cuando YouTube no se puede.
-  type TrailerPick = { ytKey: string; apple: string; playable: boolean; err: string };
+  // `video`/`audio`: URLs directas que devolvió yt-dlp (audio va aparte porque
+  // YouTube entrega DASH). `at` es cuándo se resolvieron: caducan en unas horas,
+  // así que un pick viejo se vuelve a resolver antes de reproducir.
+  type TrailerPick = {
+    ytKey: string;
+    apple: string;
+    playable: boolean;
+    err: string;
+    video: string;
+    audio: string;
+    at: number;
+  };
+
+  const EMPTY_PICK: TrailerPick = {
+    ytKey: "",
+    apple: "",
+    playable: false,
+    err: "",
+    video: "",
+    audio: "",
+    at: 0,
+  };
 
   // Los trailers se reproducen SIEMPRE en mpv, nunca en el webview:
   //  1. El iframe de YouTube da "error 153" en Tauri (el origen es
@@ -1164,7 +1193,7 @@
     original_title?: string | null;
     year?: string;
   }): Promise<TrailerPick> {
-    const out: TrailerPick = { ytKey: "", apple: "", playable: false, err: "" };
+    const out: TrailerPick = { ...EMPTY_PICK };
     try {
       const tk = await invoke<{ key: string; embeddable: boolean } | null>("tmdb_trailer_key", {
         mediaType: d.media_type,
@@ -1176,9 +1205,12 @@
       console.warn("[tmdb_trailer_key]", e);
     }
     if (out.ytKey) {
-      const chk = await ytPlayable(out.ytKey);
-      out.playable = chk.ok;
-      out.err = chk.err;
+      const src = await ytTrailerSrc(out.ytKey);
+      out.playable = src.ok;
+      out.err = src.err;
+      out.video = src.video;
+      out.audio = src.audio;
+      out.at = Date.now();
       if (out.playable) return out;
     }
     try {
@@ -1195,38 +1227,46 @@
     return out;
   }
 
-  // ¿yt-dlp puede resolver el video? `err` casi siempre es que falta el binario
-  // en vendor/ (lo baja vendor/fetch.sh) o que YouTube pide verificación.
-  async function ytPlayable(key: string): Promise<{ ok: boolean; err: string }> {
+  // Resuelve el trailer con yt-dlp: la misma llamada dice si se puede
+  // reproducir y devuelve las URLs para mpv (una sola ejecución de yt-dlp por
+  // trailer). `video` vacío con ok=true significa reproducible pero por
+  // ytdl_hook. `err` casi siempre es que falta el binario en vendor/ (lo baja
+  // vendor/fetch.sh) o que YouTube pide verificación.
+  async function ytTrailerSrc(
+    key: string,
+  ): Promise<{ ok: boolean; err: string; video: string; audio: string }> {
     try {
-      const ok = await invoke<boolean>("yt_playable", { key });
-      return { ok, err: ok ? "" : "yt-dlp no resolvió el video" };
+      const src = await invoke<{ video: string; audio: string }>("yt_trailer_src", { key });
+      return { ok: true, err: "", video: src?.video || "", audio: src?.audio || "" };
     } catch (e) {
-      console.warn("[yt_playable]", e);
-      return { ok: false, err: String(e) };
+      console.warn("[yt_trailer_src]", e);
+      return { ok: false, err: String(e), video: "", audio: "" };
     }
   }
 
   // Trailer de anime: la key viene de AniList; TMDb/Apple no aplican porque el
   // id no es de TMDb.
   async function resolveAnimeTrailer(key: string): Promise<TrailerPick> {
-    const out: TrailerPick = { ytKey: key, apple: "", playable: false, err: "" };
+    const out: TrailerPick = { ...EMPTY_PICK, ytKey: key };
     if (!key) return out;
-    const chk = await ytPlayable(key);
-    out.playable = chk.ok;
-    out.err = chk.err;
+    const src = await ytTrailerSrc(key);
+    out.playable = src.ok;
+    out.err = src.err;
+    out.video = src.video;
+    out.audio = src.audio;
+    out.at = Date.now();
     return out;
   }
 
   // Reproduce el trailer en mpv. Devuelve false si mpv no lo aceptó.
-  async function playTrailerInMpv(url: string, title: string): Promise<boolean> {
+  async function playTrailerInMpv(url: string, title: string, audioUrl = ""): Promise<boolean> {
     // Un trailer no es "haber visto la película": sin limpiar el contexto, dos
     // minutos de avance marcarían el título como empezado.
     limpiarContexto();
     try {
       // mpv_play_trailer, no mpv_play: un trailer no reemplaza la película que
       // estuviera esperando ni se queda él mismo en la pill al salir.
-      await invoke("mpv_play_trailer", { url, title: `Trailer — ${title}` });
+      await invoke("mpv_play_trailer", { url, title: `Trailer — ${title}`, audioUrl });
       setPlaying(true);
       return true;
     } catch (e) {
@@ -2084,7 +2124,6 @@
         : !!selected.kitsu_id),
   );
 
-  const EMPTY_PICK: TrailerPick = { ytKey: "", apple: "", playable: false, err: "" };
 
   // Bajamos OMDb (premios/ratings/plot largo) + trailer en paralelo cuando se
   // abre el PlayMenu. No bloquea: la UI ya mostró todo lo que tiene de TMDb.
@@ -2152,10 +2191,23 @@
     await playPick(pick, selected.title);
   }
 
+  // Las URLs directas de YouTube caducan: pasado este rato se vuelven a pedir.
+  const TRAILER_URL_TTL_MS = 20 * 60 * 1000;
+
   // Reproduce lo mejor disponible del pick; QR si no hay forma de verlo dentro.
   async function playPick(pick: TrailerPick, title: string): Promise<void> {
     if (pick.playable && pick.ytKey) {
-      if (await playTrailerInMpv(`https://www.youtube.com/watch?v=${pick.ytKey}`, title)) return;
+      let { video, audio } = pick;
+      // Prefetch viejo: las URLs ya no sirven, se resuelve de nuevo (una sola
+      // llamada, igual que la primera vez).
+      if (video && Date.now() - pick.at > TRAILER_URL_TTL_MS) {
+        const fresh = await ytTrailerSrc(pick.ytKey);
+        video = fresh.ok ? fresh.video : "";
+        audio = fresh.ok ? fresh.audio : "";
+      }
+      // Sin URL directa la reproduce ytdl_hook desde la URL de YouTube.
+      const url = video || `https://www.youtube.com/watch?v=${pick.ytKey}`;
+      if (await playTrailerInMpv(url, title, audio)) return;
     }
     if (pick.apple) {
       if (await playTrailerInMpv(pick.apple, title)) return;

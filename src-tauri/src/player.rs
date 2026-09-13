@@ -144,11 +144,13 @@ pub mod imp {
         _state: tauri::State<'_, PlayerState>,
         url: String,
         title: Option<String>,
+        audio_url: Option<String>,
     ) -> Result<(), String> {
         if url.is_empty() {
             return Err("url vacía".into());
         }
-        mpv_embed::play_trailer(&url, title.as_deref())
+        let audio = audio_url.filter(|a| !a.is_empty());
+        mpv_embed::play_trailer(&url, title.as_deref(), audio.as_deref())
     }
 
     #[tauri::command]
@@ -533,8 +535,23 @@ pub mod imp {
         state: tauri::State<'_, PlayerState>,
         url: String,
         title: Option<String>,
+        audio_url: Option<String>,
     ) -> Result<(), String> {
-        mpv_play(app, state, url, title, None)
+        if url.is_empty() {
+            return Err("url vacía".into());
+        }
+        // URL directa de yt-dlp: el audio viene en su propio stream DASH y mpv
+        // lo junta con --audio-file. Sin audio_url la URL es la de YouTube y de
+        // juntarlos se encarga ytdl_hook.
+        let mut extra: Vec<String> = Vec::new();
+        if let Some(t) = &title {
+            extra.push(format!("--force-media-title={t}"));
+        }
+        if let Some(a) = audio_url.filter(|a| !a.is_empty()) {
+            extra.push(format!("--audio-file={a}"));
+        }
+        extra.push(url);
+        spawn_mpv(&app, &state, extra)
     }
 
     #[tauri::command]

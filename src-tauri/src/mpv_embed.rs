@@ -1964,6 +1964,8 @@ pub fn play(url: &str, title: Option<&str>, start_secs: Option<u64>) -> Result<(
     // Empezar algo nuevo descarta cualquier trailer y su sesión guardada.
     TRAILER.store(false, Ordering::SeqCst);
     clear_pending();
+    // Una película no hereda la pista de audio externa de un trailer previo.
+    let _ = mpv.set_property("audio-files", "");
     if let Some(t) = title {
         let _ = mpv.set_property("force-media-title", t);
     }
@@ -2033,7 +2035,7 @@ pub fn play_iptv(playlist_path: &str, start: usize) -> Result<(), String> {
 /// pill, y no puede llevarse por delante la película que sí estaba esperando.
 /// Como mpv es una sola instancia, guardamos qué había cargado (ruta + posición)
 /// y lo recargamos al terminar el trailer, otra vez en pausa y fuera de pantalla.
-pub fn play_trailer(url: &str, title: Option<&str>) -> Result<(), String> {
+pub fn play_trailer(url: &str, title: Option<&str>, audio: Option<&str>) -> Result<(), String> {
     let mpv = MPV.get().ok_or("mpv no inicializado")?;
     // Un trailer sobre otro trailer no pisa la sesión guardada.
     if !TRAILER.load(Ordering::SeqCst) {
@@ -2054,6 +2056,10 @@ pub fn play_trailer(url: &str, title: Option<&str>) -> Result<(), String> {
     if let Some(t) = title {
         let _ = mpv.set_property("force-media-title", t);
     }
+    // El trailer llega como URL directa de yt-dlp: el audio va en su propio
+    // stream DASH y se carga como pista externa. Si no viene audio, la URL es
+    // la de YouTube y de juntar los streams se encarga ytdl_hook.
+    let _ = mpv.set_property("audio-files", audio.unwrap_or(""));
     let _ = mpv.set_property("start", "none");
     let _ = mpv.set_property("pause", false);
     begin_loading(title);
@@ -2163,6 +2169,9 @@ fn watch_trailer_end() {
 fn end_trailer() -> Result<(), String> {
     let mpv = MPV.get().ok_or("mpv no inicializado")?;
     TRAILER.store(false, Ordering::SeqCst);
+    // La pista de audio externa del trailer muere con él: lo que vuelva a la
+    // pill no la puede heredar.
+    let _ = mpv.set_property("audio-files", "");
     end_loading();
     // Overlays del bar/menú fuera antes de ocultar (viven en el hilo GTK).
     if let Some(app) = APP.get() {

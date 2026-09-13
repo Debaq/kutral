@@ -829,19 +829,34 @@ fn ytdlp_bin(app: &tauri::AppHandle) -> String {
     exe.to_string()
 }
 
-/// ¿yt-dlp puede resolver este video? (existe, no tiene bloqueo de edad/DRM)
+/// URLs directas del trailer de YouTube, resueltas con yt-dlp.
 ///
-/// No devolvemos la URL: los trailers de YouTube ya casi nunca traen formato
-/// progresivo (video y audio van por streams DASH separados), así que un
-/// `<video>` del webview no puede reproducirlos aunque le demos la URL. Quien
-/// los junta es mpv vía ytdl_hook, y para eso le pasamos la URL de YouTube tal
-/// cual. Esta comprobación solo sirve para saber si vale la pena abrir mpv o
-/// hay que mostrar el QR.
+/// Una sola ejecución de yt-dlp por trailer: la misma llamada dice si el video
+/// es reproducible (antes `yt_playable`) y entrega las URLs que se le pasan a
+/// mpv. Correrlo dos veces —una para preguntar, otra dentro de mpv vía
+/// ytdl_hook— duplicaba la espera y las chances de topar el rate-limit de
+/// YouTube, que es lo que dejaba el QR en pantalla con trailers que sí
+/// funcionaban.
+///
+/// YouTube ya casi no entrega formatos progresivos: video y audio vienen en
+/// streams DASH separados, así que `-g` devuelve dos líneas y mpv las junta con
+/// `--audio-file` (proceso) o `audio-files` (embed).
+///
+/// `video` vacío = reproducible pero hay que dejárselo a ytdl_hook: las listas
+/// de mpv se separan por comas y una URL con coma literal las rompería.
+/// Err = no reproducible (bloqueo de edad, región, DRM, o yt-dlp caído); el
+/// front cae a Apple y si no, al QR.
+#[derive(Serialize)]
+pub struct TrailerSrc {
+    pub video: String,
+    pub audio: String,
+}
+
 #[tauri::command]
-async fn yt_playable(app: tauri::AppHandle, key: String) -> Result<bool, String> {
+async fn yt_trailer_src(app: tauri::AppHandle, key: String) -> Result<TrailerSrc, String> {
     let k = key.trim().to_string();
     if k.is_empty() || !k.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-        return Ok(false);
+        return Err("key inválida".into());
     }
     let bin = ytdlp_bin(&app);
     let url = format!("https://www.youtube.com/watch?v={}", k);
@@ -868,9 +883,23 @@ async fn yt_playable(app: tauri::AppHandle, key: String) -> Result<bool, String>
         let err = String::from_utf8_lossy(&out.stderr);
         return Err(format!("yt-dlp: {}", err.lines().next().unwrap_or("").trim()));
     }
-    Ok(String::from_utf8_lossy(&out.stdout)
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let urls: Vec<&str> = stdout
         .lines()
-        .any(|l| l.trim().starts_with("http")))
+        .map(|l| l.trim())
+        .filter(|l| l.starts_with("http"))
+        .collect();
+    let video = match urls.first() {
+        Some(v) => v.to_string(),
+        None => return Err("yt-dlp: sin URL".into()),
+    };
+    let audio = urls.get(1).map(|a| a.to_string()).unwrap_or_default();
+    // Coma literal: no se puede meter en una lista de mpv. Reproducible igual,
+    // pero por el camino de ytdl_hook.
+    if video.contains(',') || audio.contains(',') {
+        return Ok(TrailerSrc { video: String::new(), audio: String::new() });
+    }
+    Ok(TrailerSrc { video, audio })
 }
 
 #[derive(Serialize)]
@@ -3129,7 +3158,7 @@ pub fn run() {
             tmdb_genres,
             tmdb_videos,
             tmdb_trailer_key,
-            yt_playable,
+            yt_trailer_src,
             apple_trailer,
             item_status,
             tmdb_person,
