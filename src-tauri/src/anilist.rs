@@ -569,6 +569,54 @@ pub(crate) async fn overview_es_or(
         .unwrap_or(original)
 }
 
+/// Formatos que cuentan como temporada real de la historia principal: un
+/// PREQUEL en OVA/ONA/special/movie es una historia lateral, no "temporada
+/// anterior", así que no debe sumar al número.
+fn is_season_format(fmt: &str) -> bool {
+    matches!(fmt, "TV" | "TV_SHORT")
+}
+
+/// El PREQUEL (TV) más cercano en `relations.edges`, si hay uno.
+fn tv_prequel_id(m: &serde_json::Value) -> Option<u64> {
+    m["relations"]["edges"].as_array()?.iter().find_map(|e| {
+        if e["relationType"].as_str() != Some("PREQUEL") {
+            return None;
+        }
+        let node = &e["node"];
+        if !is_season_format(node["format"].as_str().unwrap_or("")) {
+            return None;
+        }
+        node["id"].as_u64()
+    })
+}
+
+/// AniList no tiene "número de temporada": cada entrega (ej. "... Season 2")
+/// es un Media aparte, sin relación con el 1 salvo por `relations`. Subimos
+/// la cadena de PREQUELs de formato TV contando saltos para saber si esto es
+/// la temporada 1, 2, 3… Si un salto falla (AniList cae a medio camino) nos
+/// quedamos con lo ya contado — el conteo es un detalle cosmético, nunca
+/// motivo para romper la ficha completa.
+async fn climb_season_number(first: &serde_json::Value) -> u32 {
+    let mut n: u32 = 1;
+    let mut next = tv_prequel_id(first);
+    for _ in 0..12 {
+        let Some(id) = next else { break };
+        let query = "query ($id: Int) {
+          Media(id: $id, type: ANIME) {
+            relations { edges { relationType(version: 2) node { id format } } }
+          }
+        }";
+        let Ok(data) = gql(query, serde_json::json!({ "id": id })).await else { break };
+        let m = &data["Media"];
+        if m.is_null() {
+            break;
+        }
+        n += 1;
+        next = tv_prequel_id(m);
+    }
+    n
+}
+
 async fn detail_anilist(id: u64, api_key: &str) -> Result<AnimeDetail, String> {
     let query = "query ($id: Int) {
       Media(id: $id, type: ANIME) {
@@ -586,6 +634,7 @@ async fn detail_anilist(id: u64, api_key: &str) -> Result<AnimeDetail, String> {
         startDate { year }
         trailer { id site }
         studios(isMain: true) { nodes { name } }
+        relations { edges { relationType(version: 2) node { id format } } }
         characters(sort: ROLE, perPage: 12) {
           edges {
             node { name { full } image { large } }
@@ -674,6 +723,10 @@ async fn detail_anilist(id: u64, api_key: &str) -> Result<AnimeDetail, String> {
     )
     .await;
 
+    // Solo vale la pena subir la cadena de PREQUELs para series: una
+    // película no tiene "temporada".
+    let season_num = if is_movie { 1 } else { climb_season_number(m).await };
+
     Ok(AnimeDetail {
         id: m["id"].as_u64().unwrap_or(id),
         media_type: if is_movie { "movie" } else { "tv" }.into(),
@@ -697,7 +750,7 @@ async fn detail_anilist(id: u64, api_key: &str) -> Result<AnimeDetail, String> {
             Vec::new()
         } else {
             vec![SeasonMini {
-                season_number: 1,
+                season_number: season_num,
                 episode_count: episode_count.unwrap_or(0),
                 name: "Episodios".into(),
                 air_date: (!year.is_empty()).then(|| format!("{year}-01-01")),
@@ -815,5 +868,21 @@ mod tests {
         assert!(!d.title.is_empty());
 
         eprintln!("OK  fuente={fuente} | {} | {} | kitsu_id={:?}", d.title, d.year, d.kitsu_id);
+    }
+
+    /// El caso que motivó `climb_season_number`: AniList trata cada temporada
+    /// como un Media aparte, así que "Skeleton Knight... Season 2" (185542)
+    /// venía marcado como "Temporada 1" a secas. 185542 → PREQUEL TV 132474
+    /// (temporada 1, sin PREQUEL propio) → la cadena tiene que dar 2.
+    #[tokio::test]
+    #[ignore]
+    async fn temporada_2_de_una_saga_no_se_muestra_como_1() {
+        let d = detail_anilist(185542, "").await.expect("detalle");
+        assert_eq!(d.title, "Skeleton Knight in Another World Season 2");
+        assert_eq!(
+            d.seasons.first().map(|s| s.season_number),
+            Some(2),
+            "no subió la cadena de PREQUEL TV"
+        );
     }
 }
