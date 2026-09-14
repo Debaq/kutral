@@ -353,11 +353,38 @@ pub mod imp {
         }
         #[cfg(not(windows))]
         {
-            std::env::temp_dir()
+            unix_ipc_path().clone()
+        }
+    }
+
+    /// Ruta del socket de control, con el límite de los sockets Unix respetado.
+    ///
+    /// `sun_path` son 108 bytes contados: si la ruta se pasa, mpv **no crea el
+    /// socket y no dice nada** — arranca, reproduce, y la app se queda sin
+    /// forma de hablarle ni de enterarse de nada (ni `mpv:fin`, ni pausa, ni
+    /// cambiar pistas). Un `TMPDIR` largo bastaría para eso, así que si el
+    /// candidato no entra se cae a `/tmp`, que siempre entra.
+    #[cfg(not(windows))]
+    fn unix_ipc_path() -> &'static String {
+        static RUTA: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        RUTA.get_or_init(|| {
+            // Margen sobre los 108 de sun_path: el margen cubre el NUL final y
+            // cualquier sufijo que se le agregue a futuro.
+            const TOPE: usize = 100;
+            let cand = std::env::temp_dir()
                 .join("kutral-mpv.sock")
                 .to_string_lossy()
-                .into_owned()
-        }
+                .into_owned();
+            if cand.len() <= TOPE {
+                return cand;
+            }
+            let corta = "/tmp/kutral-mpv.sock".to_string();
+            eprintln!(
+                "[mpv] la ruta del socket no entra en sun_path ({} bytes): uso {corta}",
+                cand.len()
+            );
+            corta
+        })
     }
 
     fn connect_ipc() -> Result<Box<dyn Write>, String> {
