@@ -318,7 +318,7 @@ struct Genre {
     name: String,
 }
 
-async fn fetch_json<T: for<'de> Deserialize<'de>>(url: &str) -> Result<T, String> {
+pub(crate) async fn fetch_json<T: for<'de> Deserialize<'de>>(url: &str) -> Result<T, String> {
     let resp = client()?
         .get(url)
         .send()
@@ -560,6 +560,18 @@ async fn tmdb_search(
     page: u64,
     api_key: String,
 ) -> Result<TmdbListResp, String> {
+    tmdb_buscar(media_type, query, page, api_key).await
+}
+
+/// El cuerpo de `tmdb_search`, sin el `#[tauri::command]` encima: el macro de
+/// Tauri no admite que el comando sea `pub(crate)`, y el servidor web (que no
+/// pasa por `invoke`) necesita llamar esto igual.
+pub(crate) async fn tmdb_buscar(
+    media_type: String,
+    query: String,
+    page: u64,
+    api_key: String,
+) -> Result<TmdbListResp, String> {
     if api_key.is_empty() {
         return Err("falta api key".into());
     }
@@ -570,6 +582,27 @@ async fn tmdb_search(
     let url = format!(
         "{}/search/{}?api_key={}&language={}&page={}&query={}",
         TMDB_BASE, media_type, api_key, LANG, page, q
+    );
+    fetch_json(&url).await
+}
+
+/// Tendencias de la semana. Es el listado que ve el control web al entrar al
+/// catálogo: sin filtros, sin paginado fino, lo que la gente busca de verdad
+/// cuando toma el celular para poner algo.
+pub(crate) async fn tmdb_trending(
+    media_type: String,
+    page: u64,
+    api_key: String,
+) -> Result<TmdbListResp, String> {
+    if api_key.is_empty() {
+        return Err("falta api key".into());
+    }
+    if media_type != "movie" && media_type != "tv" {
+        return Err("media_type inválido".into());
+    }
+    let url = format!(
+        "{}/trending/{}/week?api_key={}&language={}&page={}",
+        TMDB_BASE, media_type, api_key, LANG, page
     );
     fetch_json(&url).await
 }
@@ -3184,6 +3217,7 @@ pub fn run() {
             brightness_get,
             brightness_set,
             webserver::web_server_start,
+            webserver::web_set_tmdb_key,
             webserver::web_server_stop,
             webserver::web_server_status,
             ui_log,

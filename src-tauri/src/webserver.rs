@@ -367,6 +367,89 @@ fn local_ip() -> String {
         .unwrap_or_else(|_| "127.0.0.1".into())
 }
 
+/// Key de TMDb que usa el control web para buscar y listar. El backend no la
+/// guarda en ningún lado (vive en localStorage del front), así que el front la
+/// empuja con `web_set_tmdb_key` al arrancar y cada vez que cambia.
+fn tmdb_key() -> &'static Mutex<String> {
+    static K: OnceLock<Mutex<String>> = OnceLock::new();
+    K.get_or_init(|| Mutex::new(String::new()))
+}
+
+#[tauri::command]
+pub fn web_set_tmdb_key(key: String) {
+    let mut g = tmdb_key().lock().unwrap_or_else(|e| e.into_inner());
+    *g = key;
+}
+
+fn key_actual() -> String {
+    tmdb_key()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
+/// Valor de un parámetro de la query string, ya decodificado.
+fn query_param(url: &str, name: &str) -> Option<String> {
+    let qs = url.split_once('?')?.1;
+    for par in qs.split('&') {
+        let (k, v) = par.split_once('=').unwrap_or((par, ""));
+        if k == name {
+            return Some(urlencoding::decode(&v.replace('+', " ")).ok()?.into_owned());
+        }
+    }
+    None
+}
+
+/// Listado de TMDb → lo mínimo que el control necesita para pintar una card.
+/// El control corre en un celular por la red local: mandarle el objeto entero
+/// de TMDb sería mandar diez veces más de lo que muestra.
+fn items_json(resp: &crate::TmdbListResp, tipo: &str) -> String {
+    #[derive(Serialize)]
+    struct Card<'a> {
+        id: u64,
+        tipo: &'a str,
+        titulo: String,
+        anio: String,
+        poster: Option<&'a str>,
+        voto: f32,
+    }
+    let cards: Vec<Card> = resp
+        .results
+        .iter()
+        .map(|it| {
+            let fecha = it
+                .release_date
+                .as_deref()
+                .or(it.first_air_date.as_deref())
+                .unwrap_or("");
+            Card {
+                id: it.id,
+                tipo,
+                titulo: it
+                    .title
+                    .clone()
+                    .or_else(|| it.name.clone())
+                    .unwrap_or_default(),
+                anio: fecha.chars().take(4).collect(),
+                poster: it.poster_path.as_deref(),
+                voto: it.vote_average,
+            }
+        })
+        .collect();
+    serde_json::json!({ "items": cards }).to_string()
+}
+
+fn json_resp(body: String) -> Response<std::io::Cursor<Vec<u8>>> {
+    let mut r = Response::from_string(body);
+    if let Some(h) = header(b"Content-Type", b"application/json; charset=utf-8") {
+        r = r.with_header(h);
+    }
+    if let Some(h) = header(b"Cache-Control", b"no-store") {
+        r = r.with_header(h);
+    }
+    r
+}
+
 fn build_url(ip: &str, port: u16) -> String {
     format!("http://{}:{}", ip, port)
 }
@@ -595,6 +678,106 @@ pub fn web_server_start(
                                 }
                             }
                         }
+                    }
+                }
+            }
+            (Method::Get, "/buscar") => {
+                // Buscar desde el celular, con el teclado del celular. Es la
+                // razón principal por la que alguien toma el teléfono en vez
+                // de deletrear con la cruceta.
+                let q = query_param(&url, "q").unwrap_or_default();
+                let tipo = query_param(&url, "tipo").unwrap_or_else(|| "movie".into());
+                let key = key_actual();
+                if key.is_empty() {
+                    req.respond(json_resp(
+                        serde_json::json!({ "error": "sin key de TMDb" }).to_string(),
+                    ))
+                } else if q.trim().is_empty() {
+                    req.respond(json_resp(serde_json::json!({ "items": [] }).to_string()))
+                } else {
+                    let r = tauri::async_runtime::block_on(crate::tmdb_buscar(
+                        tipo.clone(),
+                        q,
+                        1,
+                        key,
+                    ));
+                    match r {
+                        Ok(lista) => req.respond(json_resp(items_json(&lista, &tipo))),
+                        Err(e) => req.respond(json_resp(
+                            serde_json::json!({ "error": e }).to_string(),
+                        )),
+                    }
+                }
+            }
+            (Method::Get, "/catalogo") => {
+                let tipo = query_param(&url, "tipo").unwrap_or_else(|| "movie".into());
+                let key = key_actual();
+                if key.is_empty() {
+                    req.respond(json_resp(
+                        serde_json::json!({ "error": "sin key de TMDb" }).to_string(),
+                    ))
+                } else {
+                    let r = tauri::async_runtime::block_on(crate::tmdb_trending(
+                        tipo.clone(),
+                        1,
+                        key,
+                    ));
+                    match r {
+                        Ok(lista) => req.respond(json_resp(items_json(&lista, &tipo))),
+                        Err(e) => req.respond(json_resp(
+                            serde_json::json!({ "error": e }).to_string(),
+                        )),
+                    }
+                }
+            }
+            (Method::Post, "/abrir") => {
+                // Mandar un título a la tele. Reusa el handoff que ya existe
+                // para Vera (`/?play=<id>&type=<tipo>`): el front resuelve el
+                // detalle y entra a Descubrir como si se hubiera clickeado la
+                // card en la tele.
+                let mut body = String::new();
+                if req.as_reader().read_to_string(&mut body).is_err() {
+                    req.respond(Response::from_string("bad body").with_status_code(StatusCode(400)))
+                } else {
+                    let v: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+                    let id = v.get("id").and_then(|x| x.as_u64());
+                    let tipo = v.get("tipo").and_then(|x| x.as_str()).unwrap_or("");
+                    match (id, tipo) {
+                        (Some(id), t) if t == "movie" || t == "tv" || t == "anime" => {
+                            match app_th.emit("remote_open", serde_json::json!({ "id": id, "tipo": t }))
+                            {
+                                Ok(_) => req.respond(Response::from_string("ok")),
+                                Err(e) => req.respond(
+                                    Response::from_string(format!("err: {}", e))
+                                        .with_status_code(StatusCode(500)),
+                                ),
+                            }
+                        }
+                        _ => req.respond(
+                            Response::from_string("bad json").with_status_code(StatusCode(400)),
+                        ),
+                    }
+                }
+            }
+            (Method::Post, "/accion") => {
+                // Acciones que no son una tecla. Hoy: cambiar de fuente, que
+                // en la tele es un botón de la barra del reproductor y acá no
+                // tenía equivalente.
+                let mut body = String::new();
+                if req.as_reader().read_to_string(&mut body).is_err() {
+                    req.respond(Response::from_string("bad body").with_status_code(StatusCode(400)))
+                } else {
+                    match parse_str_field(&body, "accion").as_deref() {
+                        Some("fuente") => match app_th.emit("player:cambiar-fuente", ()) {
+                            Ok(_) => req.respond(Response::from_string("ok")),
+                            Err(e) => req.respond(
+                                Response::from_string(format!("err: {}", e))
+                                    .with_status_code(StatusCode(500)),
+                            ),
+                        },
+                        _ => req.respond(
+                            Response::from_string("bad json").with_status_code(StatusCode(400)),
+                        ),
                     }
                 }
             }

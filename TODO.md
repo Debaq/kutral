@@ -21,25 +21,32 @@ Trabajo:
 
 ---
 
-## 2. Control web nuevo — *parcial*
+## 2. Control web nuevo — *hecho*
 
-**Hecho**: control vertical en `GET /` (`src-tauri/src/control.html`), predeterminado.
-Cruceta + OK, Atrás, Menú, Ayuda, Teclado, y una sección de reproducción que
-aparece sola cuando `/mpv` dice que hay algo corriendo (−60s/+60s, subtítulos,
-título y barra de progreso). Los rótulos de la cruceta cambian según el modo
-porque el backend ya manda las flechas a mpv (±10s y volumen) cuando reproduce.
-Auto-repeat al mantener una flecha, solo cuando la tecla va a la interfaz —
-en un juego el hold ya es real (down/up).
+Control vertical en `GET /` (`src-tauri/src/control.html`), predeterminado. El
+gamepad de RetroArch quedó en `GET /mando`, con un conmutador Control/Mando en
+la barra superior de las dos páginas.
 
-El gamepad de RetroArch quedó en `GET /mando`, con un conmutador Control/Mando
-en la barra superior de las dos páginas.
+**Pestaña Botones**: cruceta + OK, Atrás, Menú, Ayuda, Teclado. Auto-repeat al
+mantener una flecha, solo cuando la tecla va a la interfaz (`/key` responde
+`ok`) — en un juego el hold ya es real por down/up y repetir sería pulsar dos
+veces.
 
-**Falta**:
-- Navegar el catálogo desde el celular (lista propia, no espejo de la tele).
-- Buscar por texto sin pasar por `/api` (hoy es una página aparte).
-- Cambiar fuente / pistas de audio desde el control.
-- El conmutador es un link: recarga la página. Si molesta, fusionar en una sola
-  página con dos vistas.
+**Pestaña Catálogo**: buscador y tendencias. El celular no tiene la key de
+TMDb, así que busca el backend: `GET /buscar?tipo=&q=` y `GET /catalogo?tipo=`
+usan `tmdb_buscar` / `tmdb_trending` (`lib.rs`) con la key que el front empuja
+por `web_set_tmdb_key` al cargar y cada vez que cambia. Tocar una card manda
+`POST /abrir`, el backend emite `remote_open` y `+layout.svelte` corta mpv y
+navega a `/?play=<id>&type=<tipo>`: el mismo handoff que usa Vera.
+
+**Sección Reproduciendo** (aparece sola cuando `/mpv` reporta algo corriendo):
+título y progreso, ±60s, ver/ocultar subs, pista de audio (`a` → `cycle audio`),
+pista de subtítulos (`j` → `cycle sub`) y cambiar fuente (`POST /accion` →
+evento `player:cambiar-fuente`). Los rótulos de la cruceta cambian a ±10s y
+volumen porque el backend ya manda las flechas a mpv cuando reproduce.
+
+Pendiente menor, si alguna vez molesta: el conmutador Control/Mando es un link
+y recarga la página; se fusionaría en una sola página con dos vistas.
 
 ---
 

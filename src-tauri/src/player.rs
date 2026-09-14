@@ -329,6 +329,10 @@ pub mod imp {
             "]" => serde_json::json!(["seek", 60, "relative"]),
             "m" | "M" => serde_json::json!(["cycle", "mute"]),
             "s" | "S" => serde_json::json!(["cycle", "sub-visibility"]),
+            // Pistas: el control web es la única vía para cambiarlas en
+            // Windows (allá el menú de pistas es el de uosc, solo mouse).
+            "a" | "A" => serde_json::json!(["cycle", "audio"]),
+            "j" | "J" => serde_json::json!(["cycle", "sub"]),
             _ => return false,
         };
         if let Some(arr) = args.as_array() {
@@ -946,6 +950,10 @@ pub mod imp {
             "]" => serde_json::json!(["seek", 60, "relative"]),
             "m" | "M" => serde_json::json!(["cycle", "mute"]),
             "s" | "S" => serde_json::json!(["cycle", "sub-visibility"]),
+            // Pistas: el control web es la única vía para cambiarlas en
+            // Windows (allá el menú de pistas es el de uosc, solo mouse).
+            "a" | "A" => serde_json::json!(["cycle", "audio"]),
+            "j" | "J" => serde_json::json!(["cycle", "sub"]),
             _ => return false,
         };
         if let Some(arr) = args.as_array() {

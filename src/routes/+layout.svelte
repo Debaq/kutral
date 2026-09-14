@@ -64,6 +64,7 @@
 
   let unlistenRemoteKey: UnlistenFn | null = null;
   let unlistenRemoteText: UnlistenFn | null = null;
+  let unlistenRemoteOpen: UnlistenFn | null = null;
 
   // Último input/textarea enfocado: si al llegar el texto del celular el foco ya
   // se movió (p.ej. el webview perdió foco al escanear), igual sabemos a qué
@@ -202,6 +203,16 @@
     void listen<string>("remote_text", (e) => {
       injectRemoteText(e.payload);
     }).then((un) => { unlistenRemoteText = un; });
+    // Título elegido en el catálogo del control web. Va por el mismo handoff
+    // que usa Vera: la home resuelve el detalle y entra a Descubrir.
+    void listen<{ id: number; tipo: string }>("remote_open", (e) => {
+      const { id, tipo } = e.payload;
+      // Si venía algo reproduciéndose, se corta: el handoff abre otro título y
+      // dejar mpv vivo encima taparía la pantalla a la que estamos yendo.
+      void invoke("mpv_stop")
+        .catch(() => {})
+        .finally(() => goto(`/?play=${id}&type=${tipo}`));
+    }).then((un) => { unlistenRemoteOpen = un; });
     window.addEventListener("focusin", trackFocus);
     // El listener del menú va acá (y no en <svelte:window>) para quedar
     // REGISTRADO ÚLTIMO: así ve el defaultPrevented de la ruta y no pisa la
@@ -252,11 +263,26 @@
     unlistenRemoteKey = null;
     unlistenRemoteText?.();
     unlistenRemoteText = null;
+    unlistenRemoteOpen?.();
+    unlistenRemoteOpen = null;
     cancelAnimationFrame(padRaf);
     window.removeEventListener("focusin", trackFocus);
     window.removeEventListener("keydown", onMenuKey);
     window.removeEventListener("gamepad-map-changed", onGamepadMapChanged);
     stopQueuePoll();
+  });
+
+  // El servidor web busca en TMDb por su cuenta (el celular no tiene la key),
+  // así que se la empujamos: al cargar la config y cada vez que cambie.
+  let ultimaKeyWeb: string | null = null;
+  $effect(() => {
+    if (!config.loaded) return;
+    const k = config.tmdbKey ?? "";
+    if (k === ultimaKeyWeb) return;
+    ultimaKeyWeb = k;
+    void invoke("web_set_tmdb_key", { key: k }).catch((e) => {
+      console.warn("[web key]", e);
+    });
   });
 
   let lastApplied: boolean | null = null;
