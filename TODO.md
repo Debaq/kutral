@@ -216,7 +216,7 @@ hay — el de uosc, que es **mouse-first**. Lo que no hay es lo nuestro.
 | Barra de control | nuestra, ASS, navegable con d-pad/mando | uosc, solo mouse |
 | Menú de pistas/subs | nuestro (`mpv_embed.rs:1149` `open_menu`) | el de uosc |
 | Picker de subs del front | `mpv_open_picker` | **stub no-op** (`player.rs:519`) |
-| `mpv:fin` → PostCreditos, próximo capítulo | sí (`mpv_embed.rs:2137`) | **no se emite** |
+| `mpv:fin` → PostCreditos, próximo capítulo | sí (`mpv_embed.rs:2137`) | sí, por el vigía de IPC (`player.rs:watch_events`) |
 | `player:cambiar-fuente` | botón en la barra (`mpv_embed.rs:1045`) | **no existe** |
 | Portada de carga | tapa el frame viejo | no |
 | Brillo, pill, gamepad | sí | parcial |
@@ -238,7 +238,7 @@ ese HWND. Hay que reescribir la capa de input (Win32/Tauri en vez de señales
 GTK) y los timers. Da ventana única y paridad total. El más caro y el de más
 riesgo: foco, z-order y DPI conviviendo con WebView2.
 
-**B. Misma UI, por IPC, sin embeber.** mpv sigue siendo proceso aparte, pero:
+**B. Misma UI, por IPC, sin embeber.** *(en curso: B1 hecho)* mpv sigue siendo proceso aparte, pero:
 un hilo lector del pipe que parsee eventos (`end-file`, `observe_property`) —
 de ahí salen `mpv:fin`, el picker y `cambiar-fuente` — y nuestra barra ASS
 mandada con `osd-overlay` por el mismo pipe. Los constructores de ASS
@@ -250,6 +250,26 @@ tabla. Bastante menos trabajo que A y no toca el camino de Linux.
 **C. libmpv en proceso, con ventana propia de mpv.** Mismo acceso directo a
 propiedades y eventos que en Linux, sin pelear con el HWND. Ahorra el IPC pero
 tampoco da ventana única.
+
+## Estado de B, por etapas
+
+Cada etapa sirve sola; se hacen en este orden porque la última es la cara.
+
+- **B1 — eventos (hecho, commit `6558374`).** Hilo lector del pipe: observa
+  `time-pos`/`duration` y traduce `end-file` a `mpv:fin`, más `mpv:state` al
+  cerrarse mpv. Con esto Windows ya tiene PostCréditos y próximo capítulo.
+- **B2 — la barra y los menús por `osd-overlay`.** Extraer de `mpv_embed.rs` los
+  constructores de ASS (`build_bar_ass`, `build_seek_ass`, `build_menu_ass`,
+  `build_loading_ass`, `bar_geom`, `menu_geom`, los hit-tests) a un módulo
+  compartido. No son tan puros como parecen: hoy leen estado por globales y por
+  `get_f64`/`get_string` contra mpv, así que hay que pasarles el estado en vez
+  de que lo busquen solas. Es refactor sobre el Linux que funciona → reprobar
+  Linux entero. ~800-1.000 líneas movidas.
+- **B3 — el input (lo caro).** En Windows mpv tiene su propia ventana fullscreen
+  **con el foco**: las teclas y el mando los recibe mpv, no la app. La barra
+  navegable con d-pad no se porta tal cual; hay que mapear cada tecla en
+  `input.conf` a un `script-message` y leerlo del lado del vigía. Es diseño
+  nuevo, no traducción. Mientras no esté, uosc sigue puesto y cubre el mouse.
 
 **Recomendación: B primero.** Recupera el OSD y los controles navegables con
 mando sin el riesgo de A, y deja A como paso posterior si se quiere la ventana
