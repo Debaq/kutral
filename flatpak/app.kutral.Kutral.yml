@@ -123,7 +123,10 @@ modules:
         LIBRARY_PATH: /app/lib
         RUSTFLAGS: -L native=/app/lib
     build-commands:
-      - npm ci
+      # El lock del repo es de pnpm. Dentro del SDK de node22 no hay pnpm en el
+      # PATH, pero sí corepack, que lo baja y lo corre según "packageManager"
+      # de package.json (por eso el build necesita red, ya declarada arriba).
+      - corepack pnpm install --frozen-lockfile
       # OJO: tiene que ser la CLI de Tauri, no `cargo build --release`.
       # Con cargo a secas el binario queda en modo dev: no embebe el frontend
       # y el webview intenta cargar devUrl (http://localhost:1420), que dentro
