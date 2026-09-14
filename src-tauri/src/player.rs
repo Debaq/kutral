@@ -379,6 +379,144 @@ pub mod imp {
         }
     }
 
+    /// Conexión de ida y vuelta al IPC, para el vigía de eventos: una punta
+    /// lee el flujo (bloqueante) y la otra manda comandos. mpv acepta varios
+    /// clientes a la vez, así que esto convive con el `read_props` puntual.
+    #[cfg(windows)]
+    fn connect_duplex() -> Result<(std::fs::File, std::fs::File), String> {
+        use std::fs::OpenOptions;
+        let r = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(ipc_path())
+            .map_err(|e| format!("pipe: {e}"))?;
+        let w = r.try_clone().map_err(|e| format!("pipe clone: {e}"))?;
+        Ok((r, w))
+    }
+
+    #[cfg(not(windows))]
+    fn connect_duplex() -> Result<(std::os::unix::net::UnixStream, std::os::unix::net::UnixStream), String>
+    {
+        use std::os::unix::net::UnixStream;
+        let r = UnixStream::connect(ipc_path()).map_err(|e| format!("socket: {e}"))?;
+        let w = r.try_clone().map_err(|e| format!("socket clone: {e}"))?;
+        Ok((r, w))
+    }
+
+    /// Generación de sesión: cada `spawn_mpv` (y cada `kill_existing`) invalida
+    /// al vigía anterior, que puede estar viendo morir al mpv que reemplazamos.
+    static EVENT_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    /// ¿Esta sesión merece `mpv:fin` al terminar? Solo las películas y los
+    /// capítulos: un trailer que se acaba, o un canal en vivo que se corta, no
+    /// son "se terminó lo que estabas viendo" y no deben disparar PostCréditos
+    /// ni el próximo capítulo.
+    static AVISA_FIN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    /// Vigía de eventos del IPC — el equivalente en Windows de lo que en Linux
+    /// hace el sondeo de propiedades del embed (`mpv_embed::watch_media_end`).
+    ///
+    /// Sin esto la app no se entera de NADA de lo que pasa dentro de mpv: que
+    /// la película terminó sola (`mpv:fin`, de donde salen PostCréditos y el
+    /// próximo capítulo) o que el usuario cerró el reproductor. Hasta ahora eso
+    /// solo existía en Linux.
+    ///
+    /// `time-pos` y `duration` se observan para tener la última posición
+    /// conocida ANTES del final: cuando llega `end-file` mpv ya soltó el
+    /// archivo y esas propiedades no se pueden leer.
+    fn watch_events(app: tauri::AppHandle) {
+        use std::sync::atomic::Ordering;
+        let gen = EVENT_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+        std::thread::spawn(move || {
+            // El pipe no existe hasta que mpv arranca del todo.
+            let mut conn = None;
+            for _ in 0..40 {
+                if EVENT_GEN.load(Ordering::SeqCst) != gen {
+                    return;
+                }
+                match connect_duplex() {
+                    Ok(c) => {
+                        conn = Some(c);
+                        break;
+                    }
+                    Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
+                }
+            }
+            let Some((r, mut w)) = conn else {
+                eprintln!("[mpv-ipc] no pude conectar al IPC: sin eventos de fin");
+                return;
+            };
+            for (id, prop) in [(1u8, "time-pos"), (2, "duration")] {
+                let line =
+                    format!("{{\"command\":[\"observe_property\",{id},\"{prop}\"]}}\n");
+                if w.write_all(line.as_bytes()).is_err() {
+                    return;
+                }
+            }
+            let _ = w.flush();
+
+            let mut pos = 0.0f64;
+            let mut dur = 0.0f64;
+            let mut reader = BufReader::new(r);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                match reader.read_line(&mut line) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                }
+                if EVENT_GEN.load(Ordering::SeqCst) != gen {
+                    return;
+                }
+                let Ok(v) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+                    continue;
+                };
+                match v.get("event").and_then(|e| e.as_str()) {
+                    Some("property-change") => {
+                        let val = v.get("data").and_then(|d| d.as_f64());
+                        match v.get("name").and_then(|n| n.as_str()) {
+                            // time-pos vuelve a null al soltar el archivo: solo
+                            // se guarda lo que sirve.
+                            Some("time-pos") => {
+                                if let Some(t) = val {
+                                    if t > 0.0 {
+                                        pos = t;
+                                    }
+                                }
+                            }
+                            Some("duration") => {
+                                if let Some(d) = val {
+                                    dur = d;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    Some("end-file") => {
+                        // eof = llegó al final solo. error = el stream se murió
+                        // a mitad; el front lo distingue por la posición y
+                        // vuelve a la lista de fuentes en vez de ofrecer "qué
+                        // ver después". quit/stop = lo cerró el usuario, y eso
+                        // no es haber terminado nada.
+                        let reason = v.get("reason").and_then(|r| r.as_str()).unwrap_or("");
+                        if matches!(reason, "eof" | "error") && AVISA_FIN.load(Ordering::SeqCst) {
+                            eprintln!("[mpv-ipc] fin de archivo en {pos:.0}s/{dur:.0}s → mpv:fin");
+                            let _ = app
+                                .emit("mpv:fin", serde_json::json!({ "pos": pos, "duration": dur }));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if EVENT_GEN.load(Ordering::SeqCst) != gen {
+                return;
+            }
+            // mpv se fue: lo cerró el usuario con ESC, o murió el proceso.
+            eprintln!("[mpv-ipc] mpv cerrado → mpv:state false");
+            let _ = app.emit("mpv:state", false);
+        });
+    }
+
     fn mpv_bin(app: &tauri::AppHandle) -> String {
         use tauri::Manager;
         #[cfg(windows)]
@@ -497,6 +635,7 @@ pub mod imp {
 
         eprintln!("[mpv] pid={:?} lanzado", child.id());
         *state.child.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
+        watch_events(app.clone());
         let _ = app.emit("mpv:state", true);
         Ok(())
     }
@@ -512,6 +651,7 @@ pub mod imp {
         if url.is_empty() {
             return Err("url vacía".into());
         }
+        AVISA_FIN.store(true, std::sync::atomic::Ordering::SeqCst);
         let mut extra: Vec<String> = Vec::new();
         if let Some(t) = &title {
             extra.push(format!("--force-media-title={t}"));
@@ -540,6 +680,7 @@ pub mod imp {
         if url.is_empty() {
             return Err("url vacía".into());
         }
+        AVISA_FIN.store(false, std::sync::atomic::Ordering::SeqCst);
         // URL directa de yt-dlp: el audio viene en su propio stream DASH y mpv
         // lo junta con --audio-file. Sin audio_url la URL es la de YouTube y de
         // juntarlos se encarga ytdl_hook.
@@ -567,6 +708,9 @@ pub mod imp {
         let start = start.unwrap_or(0).min(items.len() - 1);
         let pl = write_iptv_playlist(&items)?;
 
+        // Un canal en vivo no "termina": si el stream se corta no corresponde
+        // ofrecer próximo capítulo ni PostCréditos.
+        AVISA_FIN.store(false, std::sync::atomic::Ordering::SeqCst);
         let mut extra: Vec<String> = Vec::new();
         if let Some(cfg) = mpv_config_dir(&app) {
             extra.push(format!("--input-conf={}", cfg.join("iptv-input.conf").display()));
@@ -918,6 +1062,9 @@ pub mod imp {
     }
 
     fn kill_existing(state: &tauri::State<'_, PlayerState>) {
+        // Primero el vigía: si no, ve morir a ESTE mpv y lo reporta como si se
+        // hubiera cerrado el que estamos por lanzar.
+        EVENT_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if let Some(mut child) = state.child.lock().unwrap_or_else(|e| e.into_inner()).take() {
             let _ = child.kill();
             let _ = child.wait();
