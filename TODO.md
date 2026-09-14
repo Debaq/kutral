@@ -21,21 +21,25 @@ Trabajo:
 
 ---
 
-## 2. Control web nuevo — *medio/alto*
+## 2. Control web nuevo — *parcial*
 
-El control actual (`src-tauri/src/remote.html`, 654 líneas) es un gamepad de retroarch: D-pad, A/B/X/Y, L/R, Select/Start, skins de color. Sirve para emulación, no para manejar Kütral.
+**Hecho**: control vertical en `GET /` (`src-tauri/src/control.html`), predeterminado.
+Cruceta + OK, Atrás, Menú, Ayuda, Teclado, y una sección de reproducción que
+aparece sola cuando `/mpv` dice que hay algo corriendo (−60s/+60s, subtítulos,
+título y barra de progreso). Los rótulos de la cruceta cambian según el modo
+porque el backend ya manda las flechas a mpv (±10s y volumen) cuando reproduce.
+Auto-repeat al mantener una flecha, solo cuando la tecla va a la interfaz —
+en un juego el hold ya es real (down/up).
 
-- Servidor: `src-tauri/src/webserver.rs` (695 líneas) — sirve el HTML y recibe las teclas.
-- UI de arranque: `src/lib/WebServerControl.svelte`, QR en `src/lib/RemoteQr.svelte`.
-- Mapeo tecla → retropad: `src-tauri/src/emu.rs:789-799`.
+El gamepad de RetroArch quedó en `GET /mando`, con un conmutador Control/Mando
+en la barra superior de las dos páginas.
 
-Definir primero **qué tiene que hacer** el control nuevo antes de codear. Candidatos:
-- Navegar el catálogo y mandar a reproducir desde el celu.
-- Controles de reproducción reales: pausa, ±10s, volumen, subtítulos, cambiar fuente.
-- Buscar por texto (teclado del celu en vez de deletrear con el D-pad).
-- Ver qué se está reproduciendo (ya existe el bloque `#np` en `remote.html:420-428`).
-
-El gamepad se conserva pero como modo aparte, activo solo cuando hay un juego corriendo.
+**Falta**:
+- Navegar el catálogo desde el celular (lista propia, no espejo de la tele).
+- Buscar por texto sin pasar por `/api` (hoy es una página aparte).
+- Cambiar fuente / pistas de audio desde el control.
+- El conmutador es un link: recarga la página. Si molesta, fusionar en una sola
+  página con dos vistas.
 
 ---
 

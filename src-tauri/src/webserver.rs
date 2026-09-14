@@ -9,6 +9,12 @@ use std::time::Duration;
 use tauri::{Emitter, Manager};
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 
+/// Control remoto vertical (GET /): navegar el catálogo y manejar la
+/// reproducción. Es el predeterminado.
+const CONTROL_HTML: &str = include_str!("control.html");
+
+/// Mando de juegos horizontal (GET /mando): el gamepad de RetroArch. Se llega
+/// desde el conmutador de la barra superior del control.
 const REMOTE_HTML: &str = include_str!("remote.html");
 
 /// jsQR (UMD) servido en GET /jsqr.js: lector de QR en JS puro, fallback de
@@ -472,6 +478,16 @@ pub fn web_server_start(
 
         let resp_result = match (method, path.as_str()) {
             (Method::Get, "/") | (Method::Get, "/index.html") => {
+                let mut r = Response::from_string(CONTROL_HTML);
+                if let Some(h) = header(b"Content-Type", b"text/html; charset=utf-8") {
+                    r = r.with_header(h);
+                }
+                if let Some(h) = header(b"Cache-Control", b"no-store") {
+                    r = r.with_header(h);
+                }
+                req.respond(r)
+            }
+            (Method::Get, "/mando") => {
                 let mut r = Response::from_string(REMOTE_HTML);
                 if let Some(h) = header(b"Content-Type", b"text/html; charset=utf-8") {
                     r = r.with_header(h);

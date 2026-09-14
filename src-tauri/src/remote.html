@@ -87,10 +87,21 @@
   .topbar .logo { color: var(--accent); font-size: 16px; }
   .topbar .name { font-size: 13px; letter-spacing: 0.04em; color: var(--text); }
   .topbar .badge {
-    margin-left: auto;
     font-size: 10px; color: var(--muted);
     text-transform: uppercase; letter-spacing: 0.08em;
   }
+
+  /* Conmutador Control / Mando */
+  .switch {
+    display: inline-flex; padding: 2px; margin-left: auto;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 999px;
+  }
+  .switch a {
+    text-decoration: none; color: var(--muted);
+    font-size: 11px; letter-spacing: 0.04em;
+    padding: 5px 11px; border-radius: 999px;
+  }
+  .switch a.on { background: var(--accent); color: var(--bg); font-weight: 700; }
 
   /* Selector piel */
   .skin-wrap { position: relative; display: inline-flex; align-items: center; }
@@ -396,12 +407,17 @@
     <div class="ico">📱</div>
     <h2>Gira el teléfono</h2>
     <p>El mando va en horizontal. Es lo que hay.</p>
+    <a href="/" style="margin-top:14px;color:var(--accent);font-size:13px;">← Volver al control</a>
   </div>
 
   <div class="topbar">
     <span class="logo">✦</span>
     <span class="name">Kütral · Mando</span>
     <span class="badge" id="badge">conectado</span>
+    <nav class="switch">
+      <a href="/">Control</a>
+      <a href="/mando" class="on">Mando</a>
+    </nav>
     <div class="skin-wrap">
       <button class="skin-btn" id="skinBtn" aria-label="Cambiar piel" aria-haspopup="true" aria-expanded="false"></button>
       <div class="skin-menu" id="skinMenu" role="menu">
