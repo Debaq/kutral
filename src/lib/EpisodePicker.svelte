@@ -344,6 +344,10 @@
               <div class="ep-still-wrap">
                 {#if ep.still_path}
                   <img class="ep-still" src={ep.still_path.startsWith("http") ? ep.still_path : `${stillBase}${ep.still_path}`} alt="" loading="lazy" />
+                  <!-- Captura propia del capítulo: no dice en qué número vas,
+                       así que el número va en la esquina en vez de centrado
+                       (ahí se pisaría con la imagen). -->
+                  <span class="ep-still-badge">{ep.episode_number}</span>
                 {:else if poster}
                   <!-- Sin captura del capítulo: la portada, apagada y con el
                        número encima, en vez de un recuadro vacío. -->
@@ -588,6 +592,20 @@
     font-weight: 800;
     color: #fff;
     text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
+    pointer-events: none;
+  }
+  /* Esquina libre: arriba-izq es el estado de descarga, abajo lo ocupan el
+     tick de visto y la barra de progreso. */
+  .ep-still-badge {
+    position: absolute;
+    right: 4px;
+    top: 4px;
+    padding: 1px 6px;
+    border-radius: 5px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #fff;
+    background: rgba(8, 8, 12, 0.72);
     pointer-events: none;
   }
   .ep-still-empty {
