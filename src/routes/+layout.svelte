@@ -65,6 +65,7 @@
   let unlistenRemoteKey: UnlistenFn | null = null;
   let unlistenRemoteText: UnlistenFn | null = null;
   let unlistenRemoteOpen: UnlistenFn | null = null;
+  let unlistenMpvState: UnlistenFn | null = null;
 
   // Último input/textarea enfocado: si al llegar el texto del celular el foco ya
   // se movió (p.ej. el webview perdió foco al escanear), igual sabemos a qué
@@ -199,6 +200,15 @@
     void listen<string>("remote_key", (e) => {
       dispatchRemoteKey(e.payload);
     }).then((un) => { unlistenRemoteKey = un; });
+    // mpv corre como proceso externo fullscreen aparte. Al cerrarse, KWin
+    // (visto en Wayland) a veces no recalcula bien el strut del panel y
+    // este queda montado sobre la ventana aunque siga en fullscreen state.
+    // Reafirmar el fullscreen fuerza a KWin a recomputar geometría.
+    void listen<boolean>("mpv:state", (e) => {
+      if (e.payload) return;
+      if (!kiosk) return;
+      getCurrentWindow().setFullscreen(true).catch(() => {});
+    }).then((un) => { unlistenMpvState = un; });
     // Texto largo (API key) tecleado/pegado/escaneado en el celular → campo activo.
     void listen<string>("remote_text", (e) => {
       injectRemoteText(e.payload);
@@ -265,6 +275,8 @@
     unlistenRemoteText = null;
     unlistenRemoteOpen?.();
     unlistenRemoteOpen = null;
+    unlistenMpvState?.();
+    unlistenMpvState = null;
     cancelAnimationFrame(padRaf);
     window.removeEventListener("focusin", trackFocus);
     window.removeEventListener("keydown", onMenuKey);
