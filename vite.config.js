@@ -25,7 +25,8 @@ export default defineConfig(async () => ({
       : undefined,
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // flatpak/.build monta /var/run/udev con symlinks circulares -> ELOOP
+      ignored: ["**/src-tauri/**", "**/flatpak/**"],
     },
   },
 }));
