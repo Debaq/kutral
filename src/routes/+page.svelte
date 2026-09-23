@@ -535,6 +535,9 @@
   // auto-start, start manual o stop sin refrescar la página.
   let webRemoteUrl = $state<string | null>(null);
   let webStatusTimer: ReturnType<typeof setInterval> | null = null;
+  // onMount es async: lo que registra después de un await tiene que saber si
+  // el componente ya se desmontó en el medio.
+  let desmontado = false;
   async function refreshWebStatus() {
     try {
       const s = await invoke<{ running: boolean; url: string | null }>("web_server_status");
@@ -794,6 +797,10 @@
     } catch (e) {
       console.error("[db] FALLO al abrir:", e);
     }
+    // Si el user salió del home mientras se abría la base, onDestroy ya corrió:
+    // lo que se registre de acá en adelante no lo limpiaría nadie (y cada
+    // vuelta al home sumaría otro intervalo de 4 s).
+    if (desmontado) return;
 
     // Listener postMessage por si playimdb coopera
     window.addEventListener("message", onIframeMessage);
@@ -843,6 +850,7 @@
   // de cleanup en ese caso. El listener postMessage del iframe player
   // tiene que limpiarse cuando home desmonta.
   onDestroy(() => {
+    desmontado = true;
     guardarSnapshotCatalogo();
     // Volcar ya el cache de imágenes: si el debounce estaba pendiente, los
     // pósters bajados en esta pantalla se perderían.
