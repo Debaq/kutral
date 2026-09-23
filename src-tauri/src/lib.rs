@@ -19,6 +19,8 @@ mod player;
 mod mpv_embed;
 #[cfg(target_os = "linux")]
 mod reposo;
+#[cfg(windows)]
+mod reposo_win;
 mod screening;
 mod sistema;
 mod tmdb;
@@ -41,7 +43,9 @@ pub(crate) use tmdb::{
 fn reposo_inhibir(fuente: String, on: bool) {
     #[cfg(target_os = "linux")]
     reposo::set(&fuente, on);
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    reposo_win::set(&fuente, on);
+    #[cfg(not(any(target_os = "linux", windows)))]
     let _ = (fuente, on);
 }
 
