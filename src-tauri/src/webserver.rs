@@ -354,6 +354,15 @@ fn build_url(ip: &str, port: u16, token: &str) -> String {
     format!("http://{}:{}/{}", ip, port, token)
 }
 
+/// Cuerpo de un POST, con tope: nadie manda más de unos KB desde el control
+/// (una API key, una tecla) y sin límite un pedido podía llenar la memoria.
+fn leer_cuerpo(req: &mut tiny_http::Request, body: &mut String) -> bool {
+    use std::io::Read;
+    const MAX: u64 = 64 * 1024;
+    let mut lector = req.as_reader().take(MAX + 1);
+    lector.read_to_string(body).is_ok() && (body.len() as u64) <= MAX
+}
+
 fn header(name: &[u8], value: &[u8]) -> Option<Header> {
     Header::from_bytes(name, value).ok()
 }
@@ -530,7 +539,7 @@ fn atender(mut req: tiny_http::Request, app_th: &tauri::AppHandle, prefijo: &str
             // detalle y entra a Descubrir como si se hubiera clickeado la
             // card en la tele.
             let mut body = String::new();
-            if req.as_reader().read_to_string(&mut body).is_err() {
+            if !leer_cuerpo(&mut req, &mut body) {
                 req.respond(Response::from_string("bad body").with_status_code(StatusCode(400)))
             } else {
                 let v: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
@@ -558,7 +567,7 @@ fn atender(mut req: tiny_http::Request, app_th: &tauri::AppHandle, prefijo: &str
             // en la tele es un botón de la barra del reproductor y acá no
             // tenía equivalente.
             let mut body = String::new();
-            if req.as_reader().read_to_string(&mut body).is_err() {
+            if !leer_cuerpo(&mut req, &mut body) {
                 req.respond(Response::from_string("bad body").with_status_code(StatusCode(400)))
             } else {
                 match parse_str_field(&body, "accion").as_deref() {
@@ -577,7 +586,7 @@ fn atender(mut req: tiny_http::Request, app_th: &tauri::AppHandle, prefijo: &str
         }
         (Method::Post, "/key") => {
             let mut body = String::new();
-            if req.as_reader().read_to_string(&mut body).is_err() {
+            if !leer_cuerpo(&mut req, &mut body) {
                 let r = Response::from_string("bad body")
                     .with_status_code(StatusCode(400));
                 req.respond(r)
@@ -621,7 +630,7 @@ fn atender(mut req: tiny_http::Request, app_th: &tauri::AppHandle, prefijo: &str
             // Texto largo (API key) tecleado/pegado/escaneado en el celular.
             // Se emite al frontend, que lo escribe en el input enfocado.
             let mut body = String::new();
-            if req.as_reader().read_to_string(&mut body).is_err() {
+            if !leer_cuerpo(&mut req, &mut body) {
                 let r = Response::from_string("bad body")
                     .with_status_code(StatusCode(400));
                 req.respond(r)
