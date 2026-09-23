@@ -61,6 +61,9 @@ libloading = "0.8"
 # setlocale(LC_NUMERIC, "C"): libmpv lo exige y GTK fija el locale del usuario
 # (decimal con coma) → sin esto mpv_create() devuelve NULL.
 libc = "0.2"
+# D-Bus (portal Inhibit) para que el escritorio no se duerma mientras se
+# reproduce. Misma versión que arrastra gtk 0.18.
+gio = "0.18"
 
 [dev-dependencies]
 # Cliente HTTP bloqueante para el test e2e del servidor de streaming local.

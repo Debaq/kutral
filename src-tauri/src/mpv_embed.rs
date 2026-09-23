@@ -1942,6 +1942,7 @@ fn hide_surface() {
 
 fn notify_state(on: bool) {
     RUNNING.store(on, Ordering::SeqCst);
+    crate::reposo::set("mpv", on);
     if let Some(app) = APP.get() {
         use tauri::Emitter;
         let _ = app.emit("mpv:state", on);

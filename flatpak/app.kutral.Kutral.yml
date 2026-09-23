@@ -26,6 +26,10 @@ finish-args:
   - --filesystem=xdg-run/pipewire-0:ro
   # Scrapers, debrid, TMDb/AniList, y el servidor web del mando (webserver.rs).
   - --share=network
+  # reposo.rs: que el escritorio no se bloquee ni suspenda mientras se
+  # reproduce. No el portal Inhibit: en KDE 6.7 deja la inhibición colgada.
+  - --talk-name=org.freedesktop.ScreenSaver
+  - --talk-name=org.freedesktop.PowerManagement
   # dri para el GtkGLArea de mpv_embed y para RetroArch; input para el mando
   # USB (padmap.rs lee /dev/input). Nada de --device=all.
   # Pide flatpak >= 1.15: hasta 1.14 responde "Unknown device type input"

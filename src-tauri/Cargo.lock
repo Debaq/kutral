@@ -2848,6 +2848,7 @@ version = "26.9.1"
 dependencies = [
  "enigo",
  "gdk",
+ "gio",
  "glib",
  "gtk",
  "hex",

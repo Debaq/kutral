@@ -31,6 +31,7 @@
     leerPrimeraPagina,
   } from "$lib/catalogo";
   import { leerImgCache, guardarImgCache } from "$lib/imgcache";
+  import { inhibirReposo } from "$lib/reposo";
   import {
     cargarNoDisponiblesIniciales,
     pausarScreening,
@@ -828,6 +829,14 @@
     // El handoff de Vera (B5) NO va acá: onMount solo corre una vez en la
     // SPA, y Vera navega cliente-side con goto(). Movido a afterNavigate
     // abajo, que sí corre en cada navegación.
+  });
+
+  // El reproductor web (iframe) no le avisa al escritorio que hay video en
+  // pantalla; sin esto KDE bloquea o suspende a mitad de la película.
+  $effect(() => {
+    if (mode !== "discover") return;
+    inhibirReposo("web", true);
+    return () => inhibirReposo("web", false);
   });
 
   // Cleanup separado en onDestroy: onMount es async y no acepta return

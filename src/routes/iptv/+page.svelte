@@ -16,6 +16,7 @@
   import Hls from "hls.js";
   import { config, loadConfig, IPTV_DEFAULT_LISTS } from "$lib/config.svelte";
   import { ayuda } from "$lib/atajos/store.svelte";
+  import { inhibirReposo } from "$lib/reposo";
 
   type Canal = { name: string; logo: string; groups: string[]; url: string; source: string };
 
@@ -395,6 +396,16 @@
 
   onDestroy(() => {
     destroyHls();
+  });
+
+  // hls.js en un <video> del webview: el escritorio no se entera solo de que
+  // hay algo en pantalla. Derivado a booleano para no soltar y volver a pedir
+  // la inhibición en cada cambio de canal.
+  const viendo = $derived(playing !== null);
+  $effect(() => {
+    if (!viendo) return;
+    inhibirReposo("iptv", true);
+    return () => inhibirReposo("iptv", false);
   });
 </script>
 

@@ -16,10 +16,22 @@ mod rd;
 mod player;
 #[cfg(target_os = "linux")]
 mod mpv_embed;
+#[cfg(target_os = "linux")]
+mod reposo;
 mod screening;
 mod torrent;
 mod webserver;
 mod winproc;
+
+/// El front avisa cuando reproduce fuera de mpv (iframe web, IPTV con hls.js)
+/// para que el escritorio no se duerma. mpv avisa por su cuenta.
+#[tauri::command]
+fn reposo_inhibir(fuente: String, on: bool) {
+    #[cfg(target_os = "linux")]
+    reposo::set(&fuente, on);
+    #[cfg(not(target_os = "linux"))]
+    let _ = (fuente, on);
+}
 
 const TMDB_BASE: &str = "https://api.themoviedb.org/3";
 const LANG: &str = "es-ES";
@@ -3182,6 +3194,7 @@ pub fn run() {
                 .build(),
         )
         .invoke_handler(tauri::generate_handler![
+            reposo_inhibir,
             tmdb_discover,
             tmdb_search,
             tmdb_detail,
