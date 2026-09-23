@@ -10,6 +10,8 @@
   import ResumePill from "$lib/ResumePill.svelte";
   import SubsService from "$lib/SubsService.svelte";
   import HistorialTracker from "$lib/HistorialTracker.svelte";
+  import CastPill from "$lib/CastPill.svelte";
+  import { cargarCast } from "$lib/cast.svelte";
   import { config, loadConfig, initDetection, initRd, refreshRdLinked } from "$lib/config.svelte";
   import { onboardingHecho, faltaLoMinimo } from "$lib/onboarding";
   import { initTorrentSession, startQueuePoll, stopQueuePoll } from "$lib/torrents.svelte";
@@ -123,6 +125,7 @@
 
   onMount(() => {
     loadConfig();
+    cargarCast();
     initDetection();
     // Historial + favoritos a memoria: el grid pinta ticks sin query por card.
     void cargarHistorial();
@@ -278,6 +281,8 @@
 <SubsService />
 <!-- Escribe el progreso de mpv en watch_history mientras reproduce. -->
 <HistorialTracker />
+<!-- Lo que suena en la TV (Cast/DLNA): pausar o cortar desde cualquier ruta. -->
+<CastPill />
 
 <style>
   :global(html, body) {

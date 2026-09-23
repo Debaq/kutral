@@ -44,6 +44,25 @@
     olvidarDescarga,
     estadoDescarga,
   } from "$lib/descargas.svelte";
+  import {
+    cast,
+    tvLista,
+    rasgosDe,
+    audioQueSuena,
+    evaluar,
+    aprenderFalla,
+    aprenderMudo,
+    rasgosActuales,
+    seguir as seguirEnTv,
+    control as castControl,
+    detener as castDetener,
+    saltar as castSaltar,
+    nombreAudio,
+    fmtTiempo,
+    type CastStatus,
+    type ProbeTrack,
+  } from "$lib/cast.svelte";
+  import { contextoActual } from "$lib/historial.svelte";
 
   // Pista real del contenedor leída de mpv (verdad del archivo).
   type MpvTrack = {
@@ -54,8 +73,6 @@
     selected: boolean;
   };
 
-  // Pista reportada por ffprobe (header del contenedor, sin descargar).
-  type ProbeTrack = { kind: string; codec: string; lang: string; title: string };
 
   let {
     imdbId,
@@ -138,6 +155,24 @@
   // y en el centro de notificaciones: el usuario tiene que saber que ahí está
   // bajando (y compartiendo) el archivo él mismo.
   let desdeTorrent = $state(false);
+
+  // ---- Descubrir en la TV (ver cast.svelte.ts) ----
+  // Destino de ESTA reproducción: arranca con la preferencia de Configuración
+  // y se cambia con T desde la lista.
+  let destinoTv = $state(cast.usarTv && !!cast.tv);
+  // Transmitiendo: el picker muestra los controles de la TV en vez de mpv.
+  let casting = $state(false);
+  let castFoco = $state(0);
+  let castTvNombre = $state("");
+  // Fuente que está en la TV: "No se oye" sigue con la de abajo.
+  let castSrc: Src | null = null;
+  // Esc mientras la TV carga: cortar y no seguir probando.
+  let castCancel = false;
+  // Segundo desde el que retomar al cambiar de versión ("No se oye").
+  let desdeForzado: number | null = null;
+  // Nombre del archivo del torrent local: su stream (127.0.0.1) no dice la
+  // extensión y la TV necesita saber si es MKV o MP4.
+  let archivoTorrent = "";
   // Está sonando la copia que ya estaba en el disco: ni debrid ni swarm. Se
   // avisa en pantalla porque explica por qué arrancó al instante.
   let desdeLocal = $state(false);
@@ -269,13 +304,16 @@
           sources = [local];
           loading = false;
           await playFrom(0);
-          if (playing) return;
+          if (playing || casting) return;
           // No abrió (archivo corrupto, códec imposible): se olvida y se sigue
           // por el camino normal. Un archivo que no se puede ver no es una
-          // copia local.
+          // copia local. Salvo en la TV: ahí puede ser solo que ESA TV no la
+          // reproduce, y en el equipo sí se ve.
           dbg("la copia local no abrió → a buscar fuentes");
-          await olvidarDescarga(fila.clave, fila.season, fila.episode);
-          local = null;
+          if (!destinoTv) {
+            await olvidarDescarga(fila.clave, fila.season, fila.episode);
+            local = null;
+          }
           loading = true;
           error = "";
         }
@@ -381,12 +419,23 @@
     return /espa|spanish|latino|castellano|\blat\b/i.test(t.title || "");
   }
 
+  // ffprobe una vez por URL: el filtro de español y la TV preguntan lo mismo.
+  const probeCache = new Map<string, Promise<ProbeTrack[]>>();
+  function probeTracks(url: string): Promise<ProbeTrack[]> {
+    let p = probeCache.get(url);
+    if (!p) {
+      p = invoke<ProbeTrack[]>("ffprobe_tracks", { url });
+      probeCache.set(url, p);
+    }
+    return p;
+  }
+
   // NIVEL 2: verdad del archivo ANTES de reproducir. ffprobe lee el header de
   // la URL resuelta (sin descargar) y dice qué pistas trae de verdad.
   // "unknown" = no se pudo inspeccionar (sin ffprobe, timeout) → no bloquear.
   async function probeEs(url: string): Promise<"audio" | "subs" | "none" | "unknown"> {
     try {
-      const tracks = await invoke<ProbeTrack[]>("ffprobe_tracks", { url });
+      const tracks = await probeTracks(url);
       if (!tracks.length) return "unknown";
       const audio = tracks.some((t) => t.kind === "audio" && isEsProbe(t));
       const subs = tracks.some((t) => t.kind === "subtitle" && isEsProbe(t));
@@ -408,9 +457,13 @@
     setNowPlaying(imdbId, title);
     // Retomar donde quedó. 5 s de colchón: caer justo en el corte desorienta,
     // un poco de contexto previo hace que se retome la escena, no el frame.
-    const base = desdeSegundos ?? retomarSegundos;
+    const base = desdeSegundos ?? desdeForzado ?? retomarSegundos;
     const desde = base > 5 ? Math.floor(base) - 5 : 0;
     if (desde > 0) dbg(`retomando en ${desde}s`);
+    if (destinoTv) {
+      await lanzarEnTv(url, s, desde);
+      return;
+    }
     await invoke("mpv_play", { url, title, startSecs: desde > 0 ? desde : null });
     // El archivo del disco no pasa por la red: no hay cache que vigilar.
     if (!s.local) {
@@ -435,6 +488,218 @@
     // Niveles 2-3: confirmar audio/subs REALES del archivo y elegir la
     // pista ES; si no existe, bajar subtítulos externos. No bloquea el play.
     void applyPreferredTracks();
+  }
+
+  // Manda la fuente a la TV en vez de a mpv. Tira un error "TV_…" cuando esta
+  // versión no le sirve a la TV, para que playFrom pruebe la siguiente:
+  //   TV_INCOMPATIBLE  ya se sabe (aprendido) que la TV no puede con esto
+  //   TV_FALLA         la TV lo rechazó ahora (y se aprende)
+  //   TV_RED           la TV no está o no alcanza a Kütral: cortar la búsqueda
+  //   TV_CORTADO       el usuario canceló o alguien tomó la TV
+  async function lanzarEnTv(url: string, s: Src, desde: number) {
+    castCancel = false;
+    const tv = await tvLista().catch((e) => {
+      throw new Error(`TV_RED: ${e instanceof Error ? e.message : e}`);
+    });
+    castTvNombre = tv.nombre;
+    resolvingMsg = `Revisando si ${tv.nombre} puede con esta versión… 🔎`;
+    const tracks = await probeTracks(url).catch(() => [] as ProbeTrack[]);
+    const r = rasgosDe(tracks);
+    if (r) {
+      const ev = evaluar(tv.id, r);
+      if (!ev.apto) {
+        s._tv = ev.motivo; // badge en la lista
+        throw new Error(`TV_INCOMPATIBLE: ${ev.motivo}`);
+      }
+    }
+    // La TV no deja elegir pista: suena la de audio principal y los subs
+    // embebidos no se pueden prender. Subtítulos externos si hacen falta.
+    const audio = audioQueSuena(tracks);
+    const conSubs =
+      !s.hardsub &&
+      config.subsLang !== "off" &&
+      (config.subMode === "sub" || !(audio && isEsProbe(audio)));
+    let subs: string | null = null;
+    if (conSubs) {
+      resolvingMsg = "Buscando subtítulos… 💬";
+      subs = await buscarSubUrl();
+    }
+    if (castCancel) throw new Error("TV_CORTADO: cancelado");
+    resolvingMsg = `Enviando a ${tv.nombre}… 📺`;
+    try {
+      await invoke("cast_play", {
+        tv,
+        url,
+        titulo: title,
+        subtitulo: s.title || null,
+        imagen: backdrop,
+        desde,
+        subs,
+        subsIdioma: config.subsLang || "es",
+        archivo: archivoTorrent || null,
+      });
+    } catch (e) {
+      const m = String(e);
+      if (m.includes("LOAD_FAILED") && r) {
+        const culpa = aprenderFalla(tv.id, r);
+        dbg(`TV rechazó el LOAD → aprendido: ${culpa}`);
+        throw new Error(`TV_FALLA: ${culpa}`);
+      }
+      throw new Error(`TV_RED: ${m}`);
+    }
+    const res = await vigilarArranque(desde);
+    dbg(`TV arranque: ${res} (${r ? `${r.video} + ${r.audio}` : "sin probe"})`);
+    if (res === "ok") {
+      castSrc = s;
+      seguirEnTv({ tvId: tv.id, rasgos: r, ctx: contextoActual(), desde });
+      resolving = false;
+      casting = true;
+      castFoco = 0;
+      playingTitle = s.title;
+      return;
+    }
+    if (res === "error") {
+      await invoke("cast_soltar").catch(() => {});
+      if (r) {
+        const culpa = aprenderFalla(tv.id, r);
+        s._tv = `tu TV no pudo con ${culpa}`;
+        notify(
+          "info",
+          `${tv.nombre} no pudo con esta versión`,
+          `Aprendido: no reproduce ${culpa}. La próxima vez Kütral la salta sola.`,
+        );
+        throw new Error(`TV_FALLA: ${culpa}`);
+      }
+      throw new Error("TV_FALLA: la TV no pudo abrir el video");
+    }
+    if (res === "tiempo") {
+      // Tardó demasiado: puede ser la red, no el formato. No se aprende nada.
+      await castDetener().catch(() => {});
+      throw new Error("TV_FALLA: la TV no arrancó a tiempo");
+    }
+    await invoke("cast_soltar").catch(() => {});
+    if (res === "red") {
+      throw new Error(
+        `TV_RED: ${tv.nombre} no alcanza a Kütral. Revisa el firewall en Configuración → Transmitir a la TV.`,
+      );
+    }
+    throw new Error("TV_CORTADO: se interrumpió");
+  }
+
+  // Espera a que la TV arranque de verdad (el tiempo avanza) o avise que no
+  // puede. Con 4K en wifi la carga inicial puede tardar bastante.
+  async function vigilarArranque(
+    desde: number,
+  ): Promise<"ok" | "error" | "red" | "tiempo" | "cortado"> {
+    const t0 = Date.now();
+    while (Date.now() - t0 < 45_000) {
+      if (castCancel) {
+        await castDetener().catch(() => {});
+        return "cortado";
+      }
+      await sleep(1000);
+      const st = await invoke<CastStatus>("cast_status").catch(() => null);
+      if (!st) continue;
+      if (st.estado === "LOADING" || st.estado === "BUFFERING") {
+        resolvingMsg = `${castTvNombre} está cargando el video… 📺`;
+      }
+      if (st.estado === "PLAYING" && st.pos >= desde + 2) return "ok";
+      // Alguien la pausó con el control de la TV: ya había arrancado.
+      if (st.estado === "PAUSED" && st.pos > desde) return "ok";
+      if (st.estado === "IDLE" && st.motivo === "ERROR") return "error";
+      if (st.estado === "IDLE" && st.motivo === "SIN_ACCESO") return "red";
+      if (st.estado === "SIN_APP") return "cortado";
+      if (st.estado === "IDLE" && st.motivo && st.motivo !== "ERROR") return "cortado";
+    }
+    return "tiempo";
+  }
+
+  // ---- Controles con la película en la TV ----
+
+  type CastBtn = { id: string; label: string };
+  const castBtns = $derived<CastBtn[]>([
+    { id: "pausa", label: cast.estado?.estado === "PAUSED" ? "▶ Seguir" : "⏸ Pausa" },
+    { id: "atras", label: "⏪ 30 s" },
+    { id: "adelante", label: "⏩ 30 s" },
+    { id: "mudo", label: "🔇 No se oye" },
+    { id: "detener", label: "⏹ Detener" },
+    { id: "navegar", label: "↩ Seguir navegando" },
+  ]);
+
+  async function castAccion(id: string) {
+    try {
+      switch (id) {
+        case "pausa":
+          await castControl(cast.estado?.estado === "PAUSED" ? "seguir" : "pausa");
+          break;
+        case "atras":
+          await castSaltar(-30);
+          break;
+        case "adelante":
+          await castSaltar(30);
+          break;
+        case "mudo":
+          await noSeOye();
+          break;
+        case "detener":
+          await castDetener().catch(() => {});
+          casting = false;
+          onClose();
+          break;
+        case "navegar":
+          // La película sigue en la TV; la pastilla de abajo la controla.
+          onClose();
+          break;
+      }
+    } catch (e) {
+      notify("warn", "La TV no respondió", String(e));
+    }
+  }
+
+  // El video anda pero no hay sonido: la TV no decodifica ESE audio. Se
+  // aprende (sin ambigüedad, a diferencia de un rechazo) y se sigue con la
+  // próxima versión desde el mismo minuto.
+  async function noSeOye() {
+    const act = rasgosActuales();
+    const pos = cast.estado?.pos ?? 0;
+    if (act?.rasgos) {
+      aprenderMudo(act.tvId, act.rasgos);
+      notify(
+        "info",
+        "Aprendido",
+        `${castTvNombre} no reproduce audio ${nombreAudio(act.rasgos.audio)}. Buscando otra versión…`,
+      );
+    }
+    await castDetener().catch(() => {});
+    casting = false;
+    if (castSrc) {
+      castSrc._tv = act?.rasgos ? `tu TV no reproduce audio ${nombreAudio(act.rasgos.audio)}` : "sin sonido en tu TV";
+      if (!descartadas.includes(castSrc.title)) descartadas = [...descartadas, castSrc.title];
+    }
+    const sig = castSrc ? view.indexOf(castSrc) + 1 : focusIdx + 1;
+    castSrc = null;
+    desdeForzado = pos;
+    try {
+      await playFrom(Math.max(0, sig));
+    } finally {
+      desdeForzado = null;
+    }
+  }
+
+  // Con los controles en pantalla la pastilla global sobra.
+  $effect(() => {
+    cast.controlesAbiertos = casting;
+    return () => {
+      cast.controlesAbiertos = false;
+    };
+  });
+
+  function toggleDestino() {
+    if (!cast.tv) {
+      notify("info", "Sin TV elegida", "Busca tu TV en Configuración → Transmitir a la TV.");
+      return;
+    }
+    destinoTv = !destinoTv;
   }
 
   // Intenta reproducir desde `startIdx`, saltando fuentes que fallan
@@ -462,6 +727,10 @@
     let probes = 0;
     let sinEs = 0;
     let lastErr = "";
+    // TV: versiones que ya se sabe que no le sirven, y las que rechazó ahora.
+    let tvIncompatibles = 0;
+    let tvFallas = 0;
+    let tvMotivo = "";
     // Mejor fuente que resolvió pero NO trae español: respaldo si ninguna trae.
     let fallback: { url: string; s: Src } | null = null;
     // Candidatas a bajar en local: las que el debrid rechazó (el 451 es
@@ -513,6 +782,27 @@
         return;
       } catch (e) {
         lastErr = String(e);
+        // La TV no está / no alcanza a Kütral / el usuario canceló: probar
+        // más versiones no cambia nada.
+        if (lastErr.includes("TV_RED") || lastErr.includes("TV_CORTADO")) {
+          resolving = false;
+          error = lastErr.includes("TV_RED")
+            ? lastErr.replace(/^.*TV_RED:\s*/, "")
+            : "";
+          return;
+        }
+        // No le sirve a la TV, pero es una fuente sana: no va a la descarga
+        // local (bajarla no cambia que la TV no la pueda reproducir).
+        if (lastErr.includes("TV_INCOMPATIBLE")) {
+          tvIncompatibles++;
+          tvMotivo ||= lastErr.replace(/^.*TV_INCOMPATIBLE:\s*/, "");
+          resolvingMsg = `Saltando versiones que ${castTvNombre} no reproduce…`;
+          continue;
+        }
+        if (lastErr.includes("TV_FALLA")) {
+          tvFallas++;
+          continue;
+        }
         if (lastErr.includes("BLOQUEADO_DMCA")) blocked++;
         if (s.magnet) rechazadas.push(s);
         // sigue con la próxima fuente
@@ -563,6 +853,16 @@
 
     resolving = false;
     if (error) return; // playViaTorrent ya dejó un mensaje más específico
+    if (destinoTv && (tvIncompatibles || tvFallas)) {
+      const partes = [
+        tvIncompatibles ? `${tvIncompatibles} con formatos que no reproduce (${tvMotivo})` : "",
+        tvFallas ? `${tvFallas} que no arrancaron` : "",
+      ].filter(Boolean);
+      error =
+        `Ninguna versión sirvió para ${castTvNombre}: ${partes.join(" y ")}. ` +
+        "Presiona T para verla en este equipo.";
+      return;
+    }
     if (blocked > 0 && !config.torrentLocal) {
       error = `Sin fuentes reproducibles: ${blocked} bloqueada(s) por el debrid (DMCA). Activa "Descarga local" en Configuración para bajarlas igual, o prueba otra calidad.`;
     } else if (pesadas > 0) {
@@ -724,6 +1024,7 @@
         sizeBytes: added.size_bytes,
       });
       dbg(`torrent local id=${added.id} ${added.name} (${added.size_bytes} B)`);
+      archivoTorrent = added.path || added.name || "";
       torrentMsg = "Descargando el inicio…";
       for (;;) {
         if (torrentCancel) return false;
@@ -870,11 +1171,11 @@
     await loadExternalSub();
   }
 
-  // Subtítulos externos: Wyzie si hay key, si no OpenSubtitles (cuota diaria).
-  // mpv carga la URL directo con sub-add (no hace falta bajar a disco).
-  async function loadExternalSub(): Promise<boolean> {
+  // URL de un subtítulo externo: Wyzie si hay key, si no OpenSubtitles (cuota
+  // diaria). "" = no hay.
+  async function buscarSubUrl(): Promise<string> {
     const lang = config.subsLang || "es";
-    if (lang === "off") return false;
+    if (lang === "off") return "";
     let url = "";
     if (config.wyzieKey) {
       try {
@@ -900,6 +1201,14 @@
         dbg(`opensubtitles fail: ${String(e).slice(0, 80)}`);
       }
     }
+    return url;
+  }
+
+  // Subtítulos externos en mpv. Carga la URL directo con sub-add (no hace
+  // falta bajar a disco).
+  async function loadExternalSub(): Promise<boolean> {
+    const lang = config.subsLang || "es";
+    const url = await buscarSubUrl();
     if (!url) {
       dbg("sin subtítulos ES (embebidos ni externos)");
       return false;
@@ -1041,6 +1350,26 @@
   }
 
   function onKey(e: KeyboardEvent) {
+    if (casting) {
+      const n = castBtns.length;
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        castFoco = (castFoco + 1) % n;
+      } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        castFoco = (castFoco - 1 + n) % n;
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        void castAccion(castBtns[castFoco].id);
+      } else if (e.key === " ") {
+        e.preventDefault();
+        void castAccion("pausa");
+      } else if (e.key === "Escape" || e.key === "Backspace") {
+        e.preventDefault();
+        void castAccion("navegar");
+      }
+      return;
+    }
     if (playing) {
       if (e.key === "Escape" || e.key === "Backspace" || e.key === "Enter") {
         e.preventDefault();
@@ -1076,7 +1405,13 @@
       if (e.key === "Escape" || e.key === "Backspace") {
         e.preventDefault();
         resolving = false; // cancela visualmente; el resolve sigue en backend
+        castCancel = true; // si la TV estaba cargando, se corta
       }
+      return;
+    }
+    if ((e.key === "t" || e.key === "T") && !descargarSolo) {
+      e.preventDefault();
+      toggleDestino();
       return;
     }
     switch (e.key) {
@@ -1130,9 +1465,52 @@
         {:else if famFilter === "torrent"}Torrents vía debrid
         {:else}Elige una fuente{/if}
       </span>
+      {#if cast.tv && !descargarSolo}
+        <button
+          class="sp-dest"
+          class:tv={destinoTv}
+          onclick={toggleDestino}
+          title="Cambiar dónde se ve (tecla T)"
+        >
+          {destinoTv ? `📺 En ${cast.tv.nombre}` : "💻 En este equipo"}
+          <kbd>T</kbd>
+        </button>
+      {/if}
     </header>
 
-    {#if playing}
+    {#if casting}
+      {@const st = cast.estado}
+      {@const pct = st && st.duracion > 0 ? Math.min(100, (st.pos * 100) / st.duracion) : 0}
+      <div class="sp-center">
+        <p class="sp-playing">📺 En {castTvNombre}</p>
+        <p class="sp-playing-title">{playingTitle}</p>
+        <div class="sp-bar sp-cast-bar"><div class="sp-bar-fill" style="width: {pct}%"></div></div>
+        <p class="sp-tor-line">
+          {#if !st || st.estado === "LOADING" || st.estado === "BUFFERING"}Cargando…
+          {:else if st.estado === "PAUSED"}En pausa · {fmtTiempo(st.pos)} de {fmtTiempo(st.duracion)}
+          {:else if st.estado === "SIN_CONEXION"}La TV no responde…
+          {:else}{fmtTiempo(st.pos)} de {fmtTiempo(st.duracion)}{/if}
+        </p>
+        {#if st?.aviso === "SUBS_SIN_ACCESO"}
+          <p class="sp-tor-slow">
+            Los subtítulos no llegan a la TV: revisa el firewall en Configuración → Transmitir a la TV.
+          </p>
+        {/if}
+        <div class="sp-cast-btns">
+          {#each castBtns as b, i (b.id)}
+            <button
+              class="sp-foot-btn"
+              class:focused={castFoco === i}
+              onclick={() => void castAccion(b.id)}
+              onmouseenter={() => (castFoco = i)}
+            >{b.label}</button>
+          {/each}
+        </div>
+        <span class="sp-hint">
+          Espacio pausa · Esc sigue navegando (la película sigue en la TV)
+        </span>
+      </div>
+    {:else if playing}
       <div class="sp-center">
         <p class="sp-playing">▶ Reproduciendo</p>
         <p class="sp-playing-title">{playingTitle}</p>
@@ -1282,6 +1660,7 @@
                 {#if s._es === "audio"}<span class="sp-es-ok">🗣 Audio ES ✓</span>
                 {:else if s._es === "subs"}<span class="sp-es-ok">💬 Subs ES ✓</span>
                 {:else if s._es === "none"}<span class="sp-es-no">Sin español</span>{/if}
+                {#if destinoTv && s._tv}<span class="sp-es-no" title={s._tv}>📺✗ {s._tv}</span>{/if}
                 {#each infoChips(s) as c}<span class="sp-chip">{c}</span>{/each}
                 <span class="sp-prov">{s.source}</span>
               </div>
@@ -1627,6 +2006,40 @@
   }
 
   .sp-foot { display: flex; gap: 10px; margin-top: 16px; }
+  .sp-dest {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(20, 20, 28, 0.62);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: #c8c8d0;
+    border-radius: 999px;
+    padding: 6px 12px;
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  .sp-dest.tv {
+    border-color: #f3a951;
+    color: #fff;
+    background: rgba(243, 169, 81, 0.16);
+  }
+  .sp-dest kbd {
+    font: inherit;
+    font-size: 10.5px;
+    color: #8a8a96;
+    border: 1px solid #3a3a46;
+    border-radius: 4px;
+    padding: 0 5px;
+  }
+  .sp-cast-bar { width: min(460px, 80vw); }
+  .sp-cast-btns {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
+    max-width: 720px;
+  }
   .sp-foot-btn {
     background: rgba(20, 20, 28, 0.62);
     backdrop-filter: blur(8px);

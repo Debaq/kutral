@@ -30,6 +30,9 @@ export type Src = {
   // Veredicto de la verificación REAL de pistas (ffprobe sobre la URL
   // resuelta): qué español embebido trae el archivo de verdad.
   _es?: "audio" | "subs" | "none" | "unknown";
+  // Por qué la TV elegida no puede con esta versión (aprendido). Vacío = sí puede
+  // o no se sabe.
+  _tv?: string;
   // El archivo ya está en el disco (descarga terminada): `url` es una ruta
   // local. No pasa por debrid ni por el swarm — se abre y ya.
   local?: boolean;

@@ -4,6 +4,18 @@
   import { invoke } from "@tauri-apps/api/core";
   import { setNowPlaying } from "$lib/playerState.svelte";
   import { limpiarContexto } from "$lib/historial.svelte";
+  import {
+    cast,
+    buscarTvs,
+    elegirTv,
+    olvidarTv,
+    setUsarTv,
+    leccionesDe,
+    olvidarAprendido,
+    protocolo,
+    redInfo,
+    type RedInfo,
+  } from "$lib/cast.svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { getVersion } from "@tauri-apps/api/app";
   import { check, type Update } from "@tauri-apps/plugin-updater";
@@ -353,6 +365,13 @@
   // Tipos de <input> donde las flechas horizontales son del control (mueven el
   // cursor o el valor) y no de la navegación.
   const TEXTO = ["text", "password", "search", "url", "email", "tel", "number"];
+
+  // Transmitir a la TV: puerto y firewall, para avisar si la TV no va a poder
+  // entrar a este equipo.
+  let redTv = $state<RedInfo | null>(null);
+  onMount(() => {
+    void redInfo().then((r) => (redTv = r));
+  });
 
   function onGlobalKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement | null;
@@ -1218,6 +1237,84 @@
         </section>
 
         <section class="block">
+          <h2>Transmitir a la TV</h2>
+          <p class="hint">
+            Manda la película a una TV de tu casa: Google TV, Chromecast y
+            casi todas las LG por Google Cast; Samsung y otras por DLNA.
+            Kütral recuerda tu TV y aprende qué formatos reproduce. Se guarda
+            al instante.
+          </p>
+          {#if cast.tv}
+            <div class="cast-tv">
+              <span class="cast-nombre">
+                📺 <strong>{cast.tv.nombre}</strong>
+                <span class="cast-proto">{protocolo(cast.tv)} · {cast.tv.ip}</span>
+              </span>
+              <button data-nav class="btn-sec" onclick={olvidarTv}>Olvidar</button>
+            </div>
+            <label class="toggle-row">
+              <input
+                data-nav
+                type="checkbox"
+                checked={cast.usarTv}
+                onchange={(e) => setUsarTv(e.currentTarget.checked)}
+              />
+              <span>Descubrir en la TV por defecto (T en la lista de fuentes lo cambia)</span>
+            </label>
+          {/if}
+          <button data-nav class="btn-sec" onclick={() => void buscarTvs()} disabled={cast.buscando}>
+            {cast.buscando ? "Buscando…" : "🔍 Buscar TVs en la red"}
+          </button>
+          {#if cast.errorBusqueda}<p class="err">{cast.errorBusqueda}</p>{/if}
+          {#if cast.encontradas.length}
+            <div class="cast-lista">
+              {#each cast.encontradas as tv (tv.id)}
+                <button
+                  data-nav
+                  class="cast-opcion"
+                  class:elegida={cast.tv?.id === tv.id}
+                  onclick={() => elegirTv(tv)}
+                >
+                  <span>{cast.tv?.id === tv.id ? "✓ " : ""}{tv.nombre}</span>
+                  <span class="cast-proto">
+                    {protocolo(tv)}{tv.modelo ? ` · ${tv.modelo}` : ""} · {tv.ip}
+                  </span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+          {#if cast.tv}
+            {@const lecciones = leccionesDe(cast.tv.id)}
+            <h3 class="subhead">Lo que aprendió de esta TV</h3>
+            {#if lecciones.length}
+              <ul class="cast-lecciones">
+                {#each lecciones as l (l.rasgo)}
+                  <li class:no={!l.ok}>{l.ok ? "✅" : "❌"} {l.rasgo}</li>
+                {/each}
+              </ul>
+              <button data-nav class="btn-sec" onclick={() => cast.tv && olvidarAprendido(cast.tv.id)}>
+                Olvidar lo aprendido
+              </button>
+            {:else}
+              <p class="hint">
+                Todavía nada: cada transmisión le enseña algo. Si una película
+                se ve pero no se oye, usa "🔇 No se oye" y Kütral buscará otra
+                versión.
+              </p>
+            {/if}
+          {/if}
+          {#if redTv?.firewall}
+            <p class="warn-box cast-fw">
+              <strong>Firewall activo ({redTv.firewall}).</strong> La TV necesita
+              entrar a este equipo por el puerto {redTv.puerto} para los
+              subtítulos, las TVs DLNA (Samsung) y las copias bajadas. Si eso no
+              funciona, ábrelo una vez con:
+              <code>{redTv.comando}</code>
+            </p>
+          {/if}
+        </section>
+
+        <section class="block">
           <h2>Servidor web (mando remoto)</h2>
           <p class="hint">
             Levanta un servidor HTTP en la red local para usar el celular como
@@ -1552,6 +1649,35 @@
     line-height: 1.5;
   }
   .warn-box strong { color: #f3a951; }
+  .cast-tv {
+    display: flex; align-items: center; gap: 12px;
+    margin: 0 0 10px;
+  }
+  .cast-nombre { flex: 1; color: #e6e6ec; font-size: 13.5px; }
+  .cast-proto { color: #888892; font-size: 12px; margin-left: 6px; }
+  .cast-lista { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+  .cast-opcion {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+    background: #1c1c25; color: #d8d8e0;
+    border: 1px solid #2a2a36; border-radius: 8px;
+    padding: 9px 12px; font-size: 13px; cursor: pointer; text-align: left;
+  }
+  .cast-opcion .cast-proto { margin-left: 0; }
+  .cast-opcion:hover, .cast-opcion:focus-visible { border-color: #f3a951; outline: none; }
+  .cast-opcion.elegida { border-color: #f3a951; background: #241c10; }
+  .cast-lecciones {
+    list-style: none; margin: 0 0 10px; padding: 0;
+    display: flex; flex-direction: column; gap: 4px;
+    font-size: 13px; color: #c8c8d0;
+  }
+  .cast-lecciones li.no { color: #ff9a9a; }
+  .cast-fw { margin-top: 14px; }
+  .cast-fw code {
+    display: block; margin-top: 6px;
+    background: #0d0d12; color: #e6e6ec;
+    padding: 6px 8px; border-radius: 4px;
+    font-size: 11.5px; overflow-wrap: anywhere;
+  }
   .dir-row { display: flex; gap: 12px; margin: 0 0 8px; }
   .dir-ok { color: #6cd37a; }
   .hint code {

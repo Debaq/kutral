@@ -4,9 +4,12 @@ mod anilist;
 mod anime_web;
 mod awards;
 mod cache;
+mod cast;
 mod creds;
+mod dlna;
 mod kitsu;
 mod kodios;
+mod lan;
 mod net;
 mod opensubtitles;
 mod probe;
@@ -3237,6 +3240,13 @@ pub fn run() {
             anilist::anilist_relacionados,
             anilist::anizip_episodes,
             probe::ffprobe_tracks,
+            cast::cast_scan,
+            cast::cast_ping,
+            cast::cast_play,
+            cast::cast_status,
+            cast::cast_control,
+            cast::cast_soltar,
+            lan::cast_red_info,
             rd::rd_resolve,
             rd::rd_unrestrict,
             rd::rd_instant_available,
