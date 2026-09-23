@@ -30,15 +30,9 @@ finish-args:
   # reproduce. No el portal Inhibit: en KDE 6.7 deja la inhibición colgada.
   - --talk-name=org.freedesktop.ScreenSaver
   - --talk-name=org.freedesktop.PowerManagement
-  # dri para el GtkGLArea de mpv_embed y para RetroArch; input para el mando
-  # USB (padmap.rs lee /dev/input). Nada de --device=all.
-  # Pide flatpak >= 1.15: hasta 1.14 responde "Unknown device type input"
-  # (medido en debian:11 1.10.8, ubuntu:22.04 1.12.7, debian:12 1.14.10,
-  # ubuntu:24.04 1.14.6). Decisión tomada: quien tenga flatpak viejo que lo
-  # actualice; no vamos a abrir todos los devices por eso.
+  # dri para el GtkGLArea de mpv_embed. Nada de --device=all.
   - --device=dri
-  - --device=input
-  # Descargas de torrent local (torrent.rs) y ROMs (emu.rs).
+  # Descargas de torrent local (torrent.rs).
   - --filesystem=xdg-download
   - --filesystem=xdg-videos
   # libmpv exige decimal con punto; GTK fija el locale del usuario y mpv_create
@@ -139,26 +133,12 @@ modules:
       # --no-bundle: el empaquetado lo hace flatpak-builder, no Tauri.
       - npx tauri build --no-bundle
       - install -Dm755 src-tauri/target/release/kutral /app/bin/kutral
-      # vendor/ va junto al ejecutable: es el 3er candidato de vendor_dir()
-      # (emu.rs:59) y config_dir() (mpv_embed.rs:1497), el único que no depende
-      # de cómo Tauri resuelva resource_dir() dentro del sandbox.
+      # vendor/ va junto al ejecutable: es el 3er candidato de config_dir()
+      # (mpv_embed.rs), el único que no depende de cómo Tauri resuelva
+      # resource_dir() dentro del sandbox.
       - mkdir -p /app/bin/vendor
       - cp -r src-tauri/vendor/mpv-config /app/bin/vendor/
       - install -Dm755 src-tauri/vendor/yt-dlp /app/bin/vendor/yt-dlp
-      # RetroArch: el AppImage del buildbot de libretro no corre dentro del
-      # sandbox (no hay FUSE) y con APPIMAGE_EXTRACT_AND_RUN se descomprime
-      # 30 MB a /tmp en cada arranque. Lo extraemos una vez, acá. El binario
-      # trae RPATH $ORIGIN/../lib, así que resuelve sus libs propias solo; el
-      # resto (SDL2, EGL, gbm, jack) las pone el runtime — verificado con ldd
-      # dentro del sandbox: 0 faltantes.
-      - chmod +x src-tauri/vendor/retroarch
-      - src-tauri/vendor/retroarch --appimage-extract > /dev/null
-      - mkdir -p /app/lib/retroarch
-      - cp -r squashfs-root/. /app/lib/retroarch/
-      # emu.rs busca vendor/retroarch (retroarch_bin(), emu.rs:79). El symlink
-      # deja la ruta donde la espera sin tocar el código.
-      - ln -sf ../../lib/retroarch/usr/bin/retroarch /app/bin/vendor/retroarch
-      - cp -r src-tauri/vendor/cores /app/bin/vendor/cores
       - install -Dm644 flatpak/app.kutral.Kutral.desktop /app/share/applications/app.kutral.Kutral.desktop
       - install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/app.kutral.Kutral.png
       - install -Dm644 flatpak/app.kutral.Kutral.metainfo.xml /app/share/metainfo/app.kutral.Kutral.metainfo.xml

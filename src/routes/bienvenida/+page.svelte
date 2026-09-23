@@ -281,7 +281,7 @@
       navegar(e.key.slice(5).toLowerCase() as "up" | "down" | "left" | "right");
       return;
     }
-    // El botón A del mando manda Enter: sobre radio/checkbox tiene que marcar.
+    // El OK del control web manda Enter: sobre radio/checkbox tiene que marcar.
     if (e.key === "Enter" && tag === "INPUT" && (tipo === "radio" || tipo === "checkbox")) {
       e.preventDefault();
       (t as HTMLInputElement).click();

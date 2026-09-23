@@ -7,33 +7,18 @@ Todo lo de aquí se copia dentro del AppImage / NSIS / MSI vía
 ## Cómo obtenerlos
 
 ```
-./fetch.sh
+./fetch.sh              # Linux
+./fetch-windows.ps1     # Windows
 ```
 
-Baja `retroarch` (AppImage self-contained) + los 5 cores desde el buildbot
-oficial de libretro. **No se versionan en git** (ver `.gitignore`); el script
-los reproduce antes de `npm run tauri build`.
+**No se versionan en git** (ver `.gitignore`); los scripts los reproducen
+antes de `pnpm tauri build`.
 
 ## Qué queda
 
 ```
 vendor/
-  retroarch              ← binario RetroArch (Linux)   | retroarch.exe (Windows)
-  cores/
-    fceumm_libretro.so   ← NES        (.dll en Windows)
-    snes9x_libretro.so   ← SNES
-    mgba_libretro.so     ← GBA
-    gambatte_libretro.so ← GB Color
-    melonds_libretro.so  ← DS
+  mpv            ← reproductor externo (solo el camino no-Linux lo usa) | mpv.exe
+  yt-dlp         ← trailers de YouTube a mp4                            | yt-dlp.exe
+  mpv-config/    ← mpv.conf, input.conf y uosc (scripts/ y fonts/ los baja fetch)
 ```
-
-`emu.rs` busca exactamente estas rutas/nombres. Si falta el binario,
-`emu_play` devuelve "retroarch embebido no encontrado en el bundle".
-
-## Notas de empaquetado
-
-- RetroArch es GPL: se puede redistribuir junto al programa.
-- El binario Linux debe traer sus libs (build estático o AppImage de
-  RetroArch desempacado). Probar `./retroarch -L cores/fceumm_libretro.so rom.nes`.
-- En dev (sin bundle) `emu.rs` cae al PATH y a `~/.config/retroarch/cores`
-  como fallback, así se puede desarrollar sin tener todo embebido aún.

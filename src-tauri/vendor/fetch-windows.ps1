@@ -1,4 +1,4 @@
-# Baja RetroArch + cores libretro + mpv a vendor/ (Windows x86_64).
+# Baja mpv + yt-dlp + uosc a vendor/ (Windows x86_64).
 # Equivalente de fetch.sh para Windows; se corre en la CI antes de tauri build.
 # Los binarios NO se versionan en git (ver vendor/.gitignore).
 $ErrorActionPreference = "Stop"
@@ -6,30 +6,6 @@ Set-Location $PSScriptRoot
 
 function Get-File($url, $out) {
   Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing
-}
-
-New-Item -ItemType Directory -Force -Path cores | Out-Null
-
-# --- cores (.dll) ---
-$coresBase = "https://buildbot.libretro.com/nightly/windows/x86_64/latest"
-foreach ($c in @("fceumm", "snes9x", "mgba", "gambatte", "melonds")) {
-  if (Test-Path "cores/${c}_libretro.dll") { Write-Host "  ya está: $c"; continue }
-  Write-Host "  bajando core: $c"
-  Get-File "$coresBase/${c}_libretro.dll.zip" "cores/$c.zip"
-  Expand-Archive -Force "cores/$c.zip" -DestinationPath cores
-  Remove-Item "cores/$c.zip"
-}
-
-# --- RetroArch (.exe + dlls; sin assets para no inflar el bundle) ---
-if (-not (Test-Path "retroarch.exe")) {
-  Write-Host ">> RetroArch"
-  Get-File "https://buildbot.libretro.com/nightly/windows/x86_64/RetroArch.7z" "ra.7z"
-  7z x -y "ra.7z" -o"ra_tmp" | Out-Null
-  $sub = Get-ChildItem -Directory "ra_tmp" | Select-Object -First 1
-  if (-not $sub) { $sub = Get-Item "ra_tmp" }
-  Copy-Item -Force "$($sub.FullName)\retroarch.exe" .
-  Get-ChildItem "$($sub.FullName)\*.dll" | Copy-Item -Force -Destination .
-  Remove-Item -Recurse -Force "ra_tmp", "ra.7z"
 }
 
 # --- mpv (.exe self-contained) ---
@@ -81,5 +57,4 @@ foreach ($req in @("mpv-config/scripts/uosc", "mpv-config/fonts/uosc_icons.otf")
 }
 
 Write-Host ">> listo"
-Get-ChildItem retroarch.exe, mpv.exe, yt-dlp.exe
-Get-ChildItem cores
+Get-ChildItem mpv.exe, yt-dlp.exe

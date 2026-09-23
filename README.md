@@ -71,18 +71,12 @@ where things stand.
 **You bring your own API keys — Kütral ships with none.**
 
 - Without a [TMDb key](https://www.themoviedb.org/settings/api) the movie and
-  series catalogs do not load at all. Anime (AniList), IPTV and Games work
-  without it.
+  series catalogs do not load at all. Anime (AniList) and IPTV work without it.
 - Without a debrid account (Real-Debrid) almost nothing plays. The scrapers
   return magnet links; turning those into a playable URL is exactly what debrid
   does. The fallback is downloading the torrent locally, which is opt-in
   because it puts your IP in the swarm.
 - OMDb (extra ratings) and Wyzie (extra subtitles) are optional.
-
-**The flatpak needs flatpak ≥ 1.15.** It declares `--device=input` for USB
-gamepad support (`padmap.rs` reads `/dev/input`), and releases up to 1.14 reject
-that permission outright. Debian 12 and Ubuntu 24.04 still ship 1.14 — update
-flatpak first.
 
 **Inside the sandbox, some things are gone:**
 
@@ -97,10 +91,6 @@ which ships them.
 
 **Platforms**: Linux and Windows, x86_64 only. No macOS, no ARM. The embedded
 mpv player is Linux-only; on Windows mpv runs as a separate process.
-
-**Games**: ROMs are fetched from Myrient and the file name has to match the
-No-Intro set exactly — any mismatch is a 404. Gamepad remapping is Linux-only
-and needs your user in the `input` group.
 
 ## Quick start
 

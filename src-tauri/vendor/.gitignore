@@ -1,14 +1,9 @@
 # Binarios pesados: los repueblan fetch.sh / fetch-windows.ps1, no se versionan.
-retroarch
-retroarch.exe
 mpv
 mpv.exe
 yt-dlp
 yt-dlp.exe
-cores/*.so
-cores/*.dll
-# Soporte de RetroArch Windows (dlls + assets extraídos junto al .exe).
-*.dll
+# Descargas intermedias de los scripts.
 *.7z
 *.zip
 # uosc (UI de mpv): reproducido por fetch.sh. Los .conf de mpv-config/ SÍ se versionan.

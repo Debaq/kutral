@@ -50,19 +50,17 @@ jobs:
             p7zip-full \
             unzip
 
-      - name: Cache vendor (retroarch 190 MB + cores + mpv + yt-dlp)
+      - name: Cache vendor (mpv + yt-dlp + uosc)
         uses: actions/cache@v4
         with:
           path: |
-            src-tauri/vendor/retroarch
-            src-tauri/vendor/cores
             src-tauri/vendor/mpv
             src-tauri/vendor/yt-dlp
             src-tauri/vendor/mpv-config/scripts
             src-tauri/vendor/mpv-config/fonts
           key: vendor-${{ hashFiles('src-tauri/vendor/fetch.sh') }}
 
-      - name: Fetch vendored binaries (retroarch + cores + mpv)
+      - name: Fetch vendored binaries (mpv + yt-dlp + uosc)
         run: bash src-tauri/vendor/fetch.sh
 
       - name: Install deps
@@ -111,7 +109,7 @@ jobs:
           ## Limitaciones
 
           - **Necesitas tus propias API keys.** Sin key de TMDb no cargan
-            películas ni series — anime, IPTV y juegos sí funcionan. Sin cuenta
+            películas ni series — anime e IPTV sí funcionan. Sin cuenta
             debrid casi nada se reproduce: los scrapers devuelven magnets y
             resolverlos es justamente lo que hace el debrid. El plan B es bajar el
             torrent localmente, que es opt-in porque expone tu IP en el swarm.
@@ -169,19 +167,17 @@ jobs:
             org.freedesktop.Sdk.Extension.rust-stable//25.08 \
             org.freedesktop.Sdk.Extension.node22//25.08
 
-      - name: Cache vendor (retroarch 190 MB + cores + mpv + yt-dlp)
+      - name: Cache vendor (mpv + yt-dlp + uosc)
         uses: actions/cache@v4
         with:
           path: |
-            src-tauri/vendor/retroarch
-            src-tauri/vendor/cores
             src-tauri/vendor/mpv
             src-tauri/vendor/yt-dlp
             src-tauri/vendor/mpv-config/scripts
             src-tauri/vendor/mpv-config/fonts
           key: vendor-${{ hashFiles('src-tauri/vendor/fetch.sh') }}
 
-      - name: Fetch vendored binaries (retroarch + cores + yt-dlp)
+      - name: Fetch vendored binaries (mpv + yt-dlp + uosc)
         run: bash src-tauri/vendor/fetch.sh
 
       - name: Build flatpak
@@ -243,7 +239,7 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: Fetch vendored binaries (retroarch + cores + mpv)
+      - name: Fetch vendored binaries (mpv + yt-dlp + uosc)
         shell: pwsh
         run: pwsh src-tauri/vendor/fetch-windows.ps1
 

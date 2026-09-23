@@ -733,7 +733,7 @@
       showKey = !k0;
     }
 
-    // Volver de otra ruta (/config, /vera, /juegos, /iptv) remonta esta página.
+    // Volver de otra ruta (/config, /vera, /iptv) remonta esta página.
     // Si hay snapshot, restauramos el catálogo tal cual estaba en vez de
     // recargarlo desde la página 1. Sync y antes de cualquier await: el
     // afterNavigate del handoff de Vera puede correr entremedio.
@@ -953,7 +953,7 @@
   // SvelteKit navigation event), entonces corre una sola vez por descubrir.
   afterNavigate(() => {
     const url = new URL(window.location.href);
-    // Tab inicial vía ?tab= (cards de sección en /juegos → /?tab=tv, etc.).
+    // Tab inicial vía ?tab= (las cards de sección apuntan a /?tab=tv, etc.).
     const tabParam = url.searchParams.get("tab");
     if (tabParam === "movie" || tabParam === "tv" || tabParam === "anime") {
       history.replaceState({}, "", "/");
@@ -2065,8 +2065,8 @@
     }
   }
 
-  // Cambia de temporada sin salir del listado de capítulos (LB/RB del mando,
-  // [ ] o RePág/AvPág en teclado). Con el grid abierto la lista de temporadas
+  // Cambia de temporada sin salir del listado de capítulos ([ ] o RePág/AvPág
+  // en teclado). Con el grid abierto la lista de temporadas
   // queda al fondo del panel de info, casi siempre fuera de pantalla, así que
   // este atajo es la vía corta.
   function cambiarTemporada(d: number) {
@@ -2084,8 +2084,8 @@
     }, 60);
   }
 
-  // Sin capítulos abiertos, LB/RB rotan la pestaña del catálogo. Antes no hacían
-  // nada en la home, aunque el mando los manda igual que en /juegos e /historial.
+  // Sin capítulos abiertos, [ ] rotan la pestaña del catálogo, igual que en
+  // /historial.
   function ciclarTab(d: number) {
     const orden: Tab[] = ["movie", "tv", "anime"];
     const i = orden.indexOf(tab);
@@ -3557,15 +3557,6 @@
                 </div>
               {/if}
 
-              <a class="card juegos-card" data-nav href="/juegos" title="Jugar">
-                <div class="juegos-poster">
-                  <div class="vera-title-poster">
-                    <span class="juegos-marca">Juegos</span>
-                    <em>retro</em>
-                  </div>
-                </div>
-              </a>
-
               <a class="card iptv-card" data-nav href="/iptv" title="TV en vivo">
                 <div class="iptv-poster">
                   <div class="vera-title-poster">
@@ -4548,33 +4539,6 @@
     -webkit-text-fill-color: #9cc8ff !important;
     text-shadow: 0 0 14px rgba(110, 193, 255, 0.45) !important;
   }
-  .juegos-card {
-    text-decoration: none;
-  }
-  .juegos-poster {
-    aspect-ratio: 2 / 1;
-    background:
-      radial-gradient(ellipse at 50% 35%, #1a0f3d 0%, #0a0820 65%, #050310 100%);
-    position: relative; overflow: hidden;
-    display: flex; align-items: center; justify-content: center;
-  }
-  .juegos-poster::before {
-    content: ""; position: absolute; inset: 0;
-    background:
-      radial-gradient(circle at 30% 20%, rgba(125, 79, 255, 0.16), transparent 55%),
-      radial-gradient(circle at 70% 80%, rgba(43, 108, 255, 0.16), transparent 55%);
-    pointer-events: none;
-  }
-  .juegos-marca {
-    font-size: clamp(16px, 2.2vw, 24px);
-    font-weight: 800;
-    background: linear-gradient(90deg, #7d4fff, #9c7bff, #2b6cff, #9c7bff, #7d4fff);
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-    color: transparent;
-  }
-
   /* IPTV — rojo/naranjo señal en vivo. */
   .iptv-card { text-decoration: none; }
   .iptv-poster {

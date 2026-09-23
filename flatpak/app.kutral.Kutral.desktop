@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Kütral
-Comment=Centro multimedia: películas, series, anime, IPTV y juegos
+Comment=Centro multimedia: películas, series, anime e IPTV
 Exec=kutral
 Icon=app.kutral.Kutral
 Terminal=false

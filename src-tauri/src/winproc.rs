@@ -12,7 +12,9 @@
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-/// Sin consola para `std::process::Command`.
+/// Sin consola para `std::process::Command`. Solo lo usa player.rs, que en
+/// Linux no compila (ahí va libmpv embebido).
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 pub fn hide_console(cmd: &mut std::process::Command) -> &mut std::process::Command {
     #[cfg(windows)]
     {

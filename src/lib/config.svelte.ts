@@ -36,16 +36,6 @@ export const RD_CLEANUP_OPTIONS: { h: number; label: string }[] = [
 
 // Regiones de ROM aceptadas en Juegos. El nombre No-Intro trae la región
 // entre paréntesis: "Juego (USA)", "(Europe)", "(Japan)", "(World)"…
-export const GAME_REGIONS: { id: string; label: string; tags: string[] }[] = [
-	{ id: "usa", label: "USA", tags: ["USA"] },
-	{ id: "eu", label: "Europa", tags: ["Europe"] },
-	{ id: "jp", label: "Japón", tags: ["Japan"] },
-	{ id: "en", label: "Inglés / Mundial", tags: ["World", "(En", ",En"] },
-	{ id: "latam", label: "Latinoamérica", tags: ["Latin America", "Brazil", "Spain"] },
-];
-
-const GAME_REGIONS_DEFAULT = ["eu", "usa"];
-
 // Playlist M3U por defecto (iptv-org, libre y mantenida por la comunidad).
 export const IPTV_DEFAULT_URL = "https://iptv-org.github.io/iptv/index.m3u";
 
@@ -65,21 +55,6 @@ export const IPTV_DEFAULT_LISTS: IptvList[] = [
 	{ ...IPTV_ES_LIST },
 	{ ...IPTV_DEFAULT_LIST },
 ];
-
-// Todos los tags conocidos (para detectar si un nombre trae región).
-const ALL_REGION_TAGS = GAME_REGIONS.flatMap((r) => r.tags);
-
-// ¿El nombre del juego cae en alguna región seleccionada? Los sin región
-// reconocible (homebrew, protos) se muestran siempre.
-export function nameInRegions(name: string, regions: string[]): boolean {
-	if (!regions.length) return true;
-	const hasKnown = ALL_REGION_TAGS.some((t) => name.includes(t));
-	if (!hasKnown) return true;
-	return regions.some((id) => {
-		const r = GAME_REGIONS.find((x) => x.id === id);
-		return r ? r.tags.some((t) => name.includes(t)) : false;
-	});
-}
 
 // Tope de calidad para la descarga local. Con debrid da igual el peso (RD sirve
 // a velocidad de fibra), pero bajando del swarm hay que sostener el bitrate del
@@ -252,8 +227,6 @@ export const config = $state({
 	cacheWaitMax: CACHE_WAIT_MAX_DEFAULT,
 	// Carpeta de descarga. Vacío = la que propone el sistema (Descargas/Kutral).
 	torrentDir: "",
-	// Regiones de ROM aceptadas en Juegos (ids de GAME_REGIONS).
-	gameRegions: [...GAME_REGIONS_DEFAULT] as string[],
 	// IPTV: varias playlists M3U que alimentan /iptv. Editables en config.
 	iptvLists: IPTV_DEFAULT_LISTS.map((l) => ({ ...l })) as IptvList[],
 	loaded: false,
@@ -326,13 +299,6 @@ export function loadConfig() {
 		? Math.min(CACHE_WAIT_MAX, Math.max(CACHE_WAIT_MIN, cwm))
 		: CACHE_WAIT_MAX_DEFAULT;
 	config.torrentDir = localStorage.getItem("torrent_dir") || "";
-	const gr = localStorage.getItem("game_regions");
-	if (gr !== null) {
-		const ids = gr.split(",").filter((x) => GAME_REGIONS.some((r) => r.id === x));
-		config.gameRegions = ids;
-	} else {
-		config.gameRegions = [...GAME_REGIONS_DEFAULT];
-	}
 	// IPTV: nuevo formato (lista de listas). Migra desde el viejo iptv_url.
 	const rawLists = localStorage.getItem("iptv_lists");
 	if (rawLists) {
@@ -392,7 +358,6 @@ export function saveConfig() {
 	localStorage.setItem("cache_wait_max", String(config.cacheWaitMax));
 	localStorage.setItem("torrent_paralelas", String(config.torrentMaxParalelas));
 	localStorage.setItem("torrent_dir", config.torrentDir.trim());
-	localStorage.setItem("game_regions", config.gameRegions.join(","));
 	const listas = (config.iptvLists.length ? config.iptvLists : IPTV_DEFAULT_LISTS)
 		.filter((l) => l.url.trim())
 		.map((l) => ({ name: (l.name || "Lista").trim(), url: l.url.trim() }));

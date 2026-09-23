@@ -1,6 +1,6 @@
 // Snapshot del catálogo del home para sobrevivir a salir de la ruta "/".
 //
-// El home es una ruta más: ir a /config, /vera, /juegos o /iptv desmonta
+// El home es una ruta más: ir a /config, /vera o /iptv desmonta
 // +page.svelte. Al volver, onMount llamaba a resetAndLoad() y todo empezaba
 // de cero — página 1, foco en la primera card, scroll arriba y re-chequeo de
 // disponibilidad y premios de cada título. Guardamos el estado al desmontar

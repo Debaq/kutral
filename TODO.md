@@ -4,33 +4,13 @@ Ordenado de más simple a más complejo de implementar.
 
 ---
 
-## 1. Descarga de juegos desde archive.org — *medio*
-
-Hoy las ROMs bajan de Myrient, no de archive.org, y falla seguido.
-
-- `src-tauri/src/emu.rs:491-570` — `emu_download`: arma la URL fija
-  `https://myrient.erista.me/files/No-Intro/{folder}/{name}.zip` con `myrient_folder()` (`emu.rs:143`).
-- Problema real: el nombre tiene que calzar exacto con el del set No-Intro; cualquier diferencia = 404 y el download queda colgado.
-
-Trabajo:
-- Fuente archive.org: resolver ítem por sistema y buscar el archivo dentro (`https://archive.org/metadata/<item>`), en vez de construir la URL a ciegas.
-- Mapa sistema → ítem de archive.org (equivalente a `myrient_folder`).
-- Fallback: si archive.org no tiene el juego, intentar Myrient (o al revés) antes de dar error.
-- Errores visibles: hoy un 404 no se distingue de una caída de red. Emitir motivo por `emu_download_progress` / evento de error y mostrarlo en la card.
-- Reanudar descargas cortadas (`Range`) y limpiar el `.zip` a medias.
-
----
-
 ## 2. Control web nuevo — *hecho*
 
-Control vertical en `GET /` (`src-tauri/src/control.html`), predeterminado. El
-gamepad de RetroArch quedó en `GET /mando`, con un conmutador Control/Mando en
-la barra superior de las dos páginas.
+Control vertical en `GET /` (`src-tauri/src/control.html`).
 
 **Pestaña Botones**: cruceta + OK, Atrás, Menú, Ayuda, Teclado. Auto-repeat al
 mantener una flecha, solo cuando la tecla va a la interfaz (`/key` responde
-`ok`) — en un juego el hold ya es real por down/up y repetir sería pulsar dos
-veces.
+`ok`).
 
 **Pestaña Catálogo**: buscador y tendencias. El celular no tiene la key de
 TMDb, así que busca el backend: `GET /buscar?tipo=&q=` y `GET /catalogo?tipo=`
@@ -44,46 +24,6 @@ título y progreso, ±60s, ver/ocultar subs, pista de audio (`a` → `cycle audi
 pista de subtítulos (`j` → `cycle sub`) y cambiar fuente (`POST /accion` →
 evento `player:cambiar-fuente`). Los rótulos de la cruceta cambian a ±10s y
 volumen porque el backend ya manda las flechas a mpv cuando reproduce.
-
-Pendiente menor, si alguna vez molesta: el conmutador Control/Mando es un link
-y recarga la página; se fusionaría en una sola página con dos vistas.
-
----
-
-## 3. Mando del emulador: lo que hay no alcanza — *medio*
-
-Lo implementado solo asigna botones de un **mando físico USB** leyendo
-/dev/input (`src-tauri/src/padmap.rs`, sección "Mando para juegos" en
-Configuración). Falta lo que la gente realmente usa para jugar:
-
-- **Teclado**: no se puede remapear nada. RetroArch usa sus teclas por defecto
-  (flechas + Z/X/A/S) y Kütral no escribe ninguna línea `input_player1_<accion>`
-  (sin sufijo `_btn`, que es la forma teclado). Sin mando enchufado, la pantalla
-  de configuración no sirve para nada: ni siquiera aparece.
-- **Control remoto web (celular)**: sus botones están fijos en
-  `key_to_retropad` (`src-tauri/src/emu.rs:789-799`) y no pasan por el mapa.
-  Jugar desde el celu con la distribución que uno quiera no se puede. Ojo: ese
-  camino va por el Network Gamepad (UDP), no por la config de RetroArch, así
-  que necesita su propio mapeo (retropad → tecla del control web) y probable
-  reordenar los botones de `remote.html`.
-- **No hay forma de probar** el mapeo sin abrir un juego: la pantalla no muestra
-  qué se está pulsando en vivo (el mapeo de la interfaz sí lo hace, con
-  `Gamepad.svelte` iluminando el botón).
-- **La UI es una lista de 14 filas** con "Asignar" una por una. Debería ser un
-  asistente que recorra los botones solo, sobre el dibujo del mando que ya
-  existe (`src/lib/Gamepad.svelte`).
-- **Sin probar con hardware**: no había ningún mando conectado al escribirlo.
-  Hay que verificar que los índices que calcula `padmap.rs` son los mismos que
-  usa RetroArch, con un pad real.
-- **Solo Linux** y necesita que el usuario esté en el grupo `input`. En la ISO
-  se puede dar por hecho; en un escritorio cualquiera, no.
-- `input_autodetect_enable = "false"` deja fuera todo lo no asignado: si alguien
-  asigna un botón y se olvida del resto, el mando queda medio muerto. Sería
-  mejor escribir el mapa completo partiendo del autoconfig, o no apagar la
-  autodetección y remapear al nivel del retropad (archivos `.rmp`).
-
-Antes de seguir metiendo mano, decidir el alcance: **teclado y control web son
-más importantes que el mando USB** para cómo se usa Kütral hoy.
 
 ---
 
@@ -105,7 +45,7 @@ complejo. **Nada de esto está implementado — es planificación.**
 | Subtítulos OpenSubtitles | **key de app ya embebida** (`opensubtitles.rs:19`) | Funciona sin nada |
 | Anime (AniList + ani.zip + kitsu) | ninguna | Funciona |
 | Scrapers (torrentio, mediafusion, yts, eztv, nyaa, animetosho) | ninguna | Funcionan |
-| Premios (Wikidata), screening, IPTV, Juegos | ninguna | Funcionan |
+| Premios (Wikidata), screening, IPTV | ninguna | Funcionan |
 
 El dato que ordena todo: `+page.svelte:1409` hace
 `if (!apiKey && tab !== "anime") return;`. **El tab Anime ya es un modo sin-key
@@ -148,7 +88,7 @@ Opciones evaluadas:
   TMDb. Solo como fallback silencioso, no como default.
 - **Proxy propio** — cuesta infraestructura. Descartada.
 
-Propuesta: **modo "Sin cuenta" = Cinemeta + AniList + IPTV + Juegos**, y TMDb
+Propuesta: **modo "Sin cuenta" = Cinemeta + AniList + IPTV**, y TMDb
 pasa de requisito a mejora ("catálogo completo, filtros, actores, español de
 Chile"). Vera (`src/lib/vera/tmdb.ts`) queda atada a TMDb: su motor pide
 discover fino y Cinemeta no lo sustituye.

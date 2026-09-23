@@ -56,7 +56,7 @@ if [[ "$LANG_UI" == "es" ]]; then
     T_BUILD_ALL_STEP2="Paso 2/2: Build Web..."
     T_BUILD_ALL_DONE_FMT="Build completo en %s"
     T_BINARY_FMT="Binario: %s"
-    T_VENDOR_FMT="Recursos: %s (mpv.conf, yt-dlp, cores)"
+    T_VENDOR_FMT="Recursos: %s (mpv.conf, yt-dlp)"
     T_VENDOR_MISSING="vendor/ no encontrado: corre src-tauri/vendor/fetch.sh"
     T_WEB_ZIP_FMT="ZIP web: %s"
     T_DIST_NOT_FOUND="dist/ no encontrado, ¿fallo build web?"
@@ -142,7 +142,7 @@ else
     T_BUILD_ALL_STEP2="Step 2/2: Web build..."
     T_BUILD_ALL_DONE_FMT="Full build in %s"
     T_BINARY_FMT="Binary: %s"
-    T_VENDOR_FMT="Resources: %s (mpv.conf, yt-dlp, cores)"
+    T_VENDOR_FMT="Resources: %s (mpv.conf, yt-dlp)"
     T_VENDOR_MISSING="vendor/ not found: run src-tauri/vendor/fetch.sh"
     T_WEB_ZIP_FMT="Web ZIP: %s"
     T_DIST_NOT_FOUND="dist/ not found, web build failed?"
@@ -373,8 +373,8 @@ collect_artifacts_tauri() {
 # El binario SUELTO no es autocontenido: mpv_embed::config_dir() busca
 # vendor/mpv-config junto al ejecutable (su 3er candidato), y ytdlp_path() hace
 # lo mismo. Sin eso mpv arranca sin mpv.conf — y sin network-timeout un link de
-# debrid estancado cuelga la ventana entera —, los trailers mueren sin yt-dlp y
-# la emulación sin los cores. Por eso vendor/ viaja al lado del .bin.
+# debrid estancado cuelga la ventana entera — y los trailers mueren sin yt-dlp.
+# Por eso vendor/ viaja al lado del .bin.
 #
 # Se excluye vendor/mpv (48 MB): ese binario solo lo usa el camino no-Linux
 # (player.rs vive tras #[cfg(not(target_os = "linux"))]); acá va libmpv
@@ -388,7 +388,7 @@ collect_vendor() {
     fi
     mkdir -p "$out/vendor"
     local item
-    for item in mpv-config cores retroarch yt-dlp; do
+    for item in mpv-config yt-dlp; do
         [[ -e "$src/$item" ]] && cp -r "$src/$item" "$out/vendor/"
     done
     success "$(printf "$T_VENDOR_FMT" "$out/vendor")"

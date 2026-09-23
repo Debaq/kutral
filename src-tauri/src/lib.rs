@@ -5,12 +5,10 @@ mod anime_web;
 mod awards;
 mod cache;
 mod creds;
-mod emu;
 mod kitsu;
 mod kodios;
 mod net;
 mod opensubtitles;
-mod padmap;
 mod probe;
 mod rd;
 mod player;
@@ -3182,7 +3180,6 @@ pub fn run() {
             Ok(())
         })
         .manage(screening::ScreeningState::default())
-        .manage(emu::EmuState::default())
         .manage(player::PlayerState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -3283,21 +3280,6 @@ pub fn run() {
             screening::screening_set_paused,
             screening::screening_set_concurrency,
             awards::wikidata_awards,
-            emu::emu_play,
-            emu::emu_cmd,
-            emu::emu_stop,
-            emu::emu_running,
-            emu::emu_input,
-            emu::emu_catalog,
-            emu::emu_metadata,
-            emu::emu_synopsis,
-            emu::emu_owned,
-            emu::emu_download,
-            padmap::pad_devices,
-            padmap::pad_capture,
-            padmap::pad_map_get,
-            padmap::pad_map_set,
-            padmap::pad_map_clear,
             wyzie_search
         ])
         .run(tauri::generate_context!())

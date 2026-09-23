@@ -17,50 +17,8 @@
   import { cargarHistorial } from "$lib/historial.svelte";
   import { cargarDescargas } from "$lib/descargas.svelte";
   import { cola, cargarCola, arrancarMotor } from "$lib/colaDescargas.svelte";
-  import { ACCIONES, loadGamepadMap, gamepadCaptured, type GamepadMap } from "$lib/controls";
   import { ayuda } from "$lib/atajos/store.svelte";
   let { children } = $props();
-
-  // --- Mando físico global: dispatcha las mismas teclas que el web/teclado ---
-  let padMap: GamepadMap = loadGamepadMap();
-  let btnToKey: Record<number, string> = {};
-  function recomputeBtnToKey() {
-    btnToKey = {};
-    for (const a of ACCIONES) {
-      const b = padMap[a.id];
-      if (b !== undefined && b >= 0) btnToKey[b] = a.key;
-    }
-  }
-  recomputeBtnToKey();
-  let padRaf = 0;
-  let padPrev: boolean[] = [];
-  let padCooldown = 0;
-  function onGamepadMapChanged() {
-    padMap = loadGamepadMap();
-    recomputeBtnToKey();
-  }
-  function gamepadBridge() {
-    const pads = navigator.getGamepads?.() ?? [];
-    const gp = pads.find((p) => p) ?? null;
-    // No interferir mientras se escribe en un campo.
-    if (gp && document.activeElement?.tagName !== "INPUT" && !gamepadCaptured()) {
-      const b = gp.buttons.map((x) => x.pressed);
-      for (let i = 0; i < b.length; i++) {
-        if (b[i] && !padPrev[i] && btnToKey[i]) dispatchRemoteKey(btnToKey[i]);
-      }
-      padPrev = b;
-      // Stick izquierdo = flechas (con cooldown anti-repetición).
-      const ax = gp.axes[0] ?? 0;
-      const ay = gp.axes[1] ?? 0;
-      if (padCooldown > 0) padCooldown--;
-      else if (Math.abs(ax) > 0.7 || Math.abs(ay) > 0.7) {
-        if (Math.abs(ax) > Math.abs(ay)) dispatchRemoteKey(ax > 0 ? "ArrowRight" : "ArrowLeft");
-        else dispatchRemoteKey(ay > 0 ? "ArrowDown" : "ArrowUp");
-        padCooldown = 12;
-      }
-    }
-    padRaf = requestAnimationFrame(gamepadBridge);
-  }
 
   let unlistenRemoteKey: UnlistenFn | null = null;
   let unlistenRemoteText: UnlistenFn | null = null;
@@ -147,9 +105,9 @@
     }
   }
 
-  // Botón Menú del mando (Start → "m"). Antes se dispatchaba y no lo escuchaba
-  // nadie: es la única vía de teclado/mando para llegar a Configuración, porque
-  // la única otra puerta es el engranaje de la barra.
+  // Tecla "m" (también el botón Menú del control web). Es la única vía de
+  // teclado para llegar a Configuración; la otra puerta es el engranaje de la
+  // barra.
   function onMenuKey(e: KeyboardEvent) {
     if (e.key !== "m" && e.key !== "M") return;
     if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -195,7 +153,7 @@
         console.warn("[web autostart]", e);
       });
     }
-    // Recibe keys del mando web y los dispatcha como eventos nativos.
+    // Recibe keys del control web y los dispatcha como eventos nativos.
     // Reemplaza enigo (no compatible Wayland).
     void listen<string>("remote_key", (e) => {
       dispatchRemoteKey(e.payload);
@@ -228,9 +186,6 @@
     // REGISTRADO ÚLTIMO: así ve el defaultPrevented de la ruta y no pisa la
     // "m" de mute del reproductor IPTV ni la del panel de volumen.
     window.addEventListener("keydown", onMenuKey);
-    // Mando físico global + recarga de mapeo al cambiarlo en /config.
-    window.addEventListener("gamepad-map-changed", onGamepadMapChanged);
-    padRaf = requestAnimationFrame(gamepadBridge);
     // Apagar el splash de app.html. Mantenemos un piso mínimo de tiempo
     // (1800 ms) para que se aprecie el banner aunque Svelte monte rápido.
     // .ready dispara el fadeout CSS (700 ms); después removemos el nodo.
@@ -277,10 +232,8 @@
     unlistenRemoteOpen = null;
     unlistenMpvState?.();
     unlistenMpvState = null;
-    cancelAnimationFrame(padRaf);
     window.removeEventListener("focusin", trackFocus);
     window.removeEventListener("keydown", onMenuKey);
-    window.removeEventListener("gamepad-map-changed", onGamepadMapChanged);
     stopQueuePoll();
   });
 

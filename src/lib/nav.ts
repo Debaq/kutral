@@ -1,4 +1,4 @@
-// Navegación espacial por teclado/mando.
+// Navegación espacial por teclado (y el control web, que manda las mismas teclas).
 //
 // Misma idea que la del catálogo (routes/+page.svelte): en vez de un orden
 // lineal de tabulación, cada flecha busca el elemento `[data-nav]` visible que

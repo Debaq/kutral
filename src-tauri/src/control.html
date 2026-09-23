@@ -16,7 +16,6 @@
     --accent: #e23b3b;
     --shadow-dark: rgba(0, 0, 0, 0.6);
   }
-  /* Mismas pieles que el mando, misma clave de localStorage. */
   html[data-skin="rojo"] {
     --bg: #000000; --panel: #5e0d12; --panel-2: #7a1018;
     --border: #a8202a; --text: #ffe8ea; --muted: #d8a0a6; --accent: #ff3030;
@@ -70,18 +69,6 @@
   .topbar .logo { color: var(--accent); font-size: 15px; }
   .topbar .name { font-size: 13px; letter-spacing: 0.04em; }
   .topbar .sep { flex: 1; }
-
-  /* Conmutador Control / Mando */
-  .switch {
-    display: inline-flex; padding: 2px;
-    background: var(--bg); border: 1px solid var(--border); border-radius: 999px;
-  }
-  .switch a {
-    text-decoration: none; color: var(--muted);
-    font-size: 11px; letter-spacing: 0.04em;
-    padding: 5px 11px; border-radius: 999px;
-  }
-  .switch a.on { background: var(--accent); color: var(--bg); font-weight: 700; }
 
   .skin-wrap { position: relative; display: inline-flex; align-items: center; }
   .skin-btn {
@@ -239,10 +226,6 @@
       <span class="logo">✦</span>
       <span class="name">Kütral</span>
       <span class="sep"></span>
-      <nav class="switch">
-        <a href="/" class="on">Control</a>
-        <a href="/mando">Mando</a>
-      </nav>
       <div class="skin-wrap">
         <button class="skin-btn" id="skinBtn" aria-label="Cambiar piel" aria-haspopup="true" aria-expanded="false"></button>
         <div class="skin-menu" id="skinMenu" role="menu">
@@ -368,9 +351,8 @@
   });
 
   const status = document.getElementById("status");
-  // A dónde fue la última tecla: "ok" (interfaz), "mpv", "emu". El auto-repeat
-  // solo corre cuando manda la interfaz: en un juego el hold ya es real
-  // (down/up) y repetir el "down" sería pulsar dos veces.
+  // A dónde fue la última tecla: "ok" (interfaz) o "mpv". El auto-repeat
+  // solo corre cuando manda la interfaz.
   let ruta = "ok";
 
   function vibrar() {
@@ -386,7 +368,7 @@
       });
       if (!r.ok) throw new Error("HTTP " + r.status);
       const destino = (await r.text()).trim();
-      if (destino === "emu" || destino === "mpv" || destino === "ok") ruta = destino;
+      if (destino === "mpv" || destino === "ok") ruta = destino;
       if (down) {
         status.textContent = "→ " + (key === " " ? "Pausa" : key);
         status.className = "status";
@@ -421,7 +403,7 @@
       if (REPETIBLES.has(k)) {
         t0 = setTimeout(() => {
           t1 = setInterval(() => {
-            if (ruta !== "ok") return; // en juego manda el hold real
+            if (ruta !== "ok") return;
             send(k, true);
           }, REPEAT_EVERY);
         }, REPEAT_DELAY);

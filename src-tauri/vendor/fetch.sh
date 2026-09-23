@@ -1,52 +1,12 @@
 #!/usr/bin/env bash
-# Baja retroarch + cores libretro + mpv a vendor/ (Linux x86_64).
-# Se ejecuta una vez antes de `npm run tauri build` (y en la CI). Los binarios
+# Baja mpv + yt-dlp + uosc a vendor/ (Linux x86_64).
+# Se ejecuta una vez antes de `pnpm tauri build` (y en la CI). Los binarios
 # NO se versionan en git (ver vendor/.gitignore); este script los reproduce.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-CORES="https://buildbot.libretro.com/nightly/linux/x86_64/latest"
-RA="https://buildbot.libretro.com/nightly/linux/x86_64/RetroArch.7z"
 # mpv self-contained (AppImage); resolvemos el asset del último release.
 MPV_API="https://api.github.com/repos/pkgforge-dev/mpv-AppImage/releases/latest"
-
-echo ">> cores"
-mkdir -p cores
-for c in fceumm snes9x mgba gambatte melonds; do
-  if [ -f "cores/${c}_libretro.so" ]; then echo "  ya está: $c"; continue; fi
-  echo "  bajando: $c"
-  curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o "cores/$c.zip" "$CORES/${c}_libretro.so.zip"
-  unzip -o -q "cores/$c.zip" -d cores
-  rm "cores/$c.zip"
-done
-
-echo ">> retroarch (AppImage)"
-if [ -f retroarch ]; then
-  echo "  ya está"
-else
-  command -v 7z >/dev/null || { echo "falta 7z (p7zip)"; exit 1; }
-  tmp=$(mktemp -d)
-  # El buildbot manda ~190 MB por Cloudflare y a veces corta la transferencia
-  # sin que curl lo note (respuesta sin content-length). El archivo llega con
-  # tamaño creíble pero sin el header, que en un 7z va al FINAL: recién lo
-  # descubre el 7z, con un "Headers Error" que no dice nada. Por eso se valida
-  # con `7z l` -- barato, solo lee el header -- y se reintenta la bajada entera.
-  ok=0
-  for intento in 1 2 3; do
-    curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o "$tmp/RetroArch.7z" "$RA"
-    echo "  intento $intento: $(stat -c%s "$tmp/RetroArch.7z") bytes"
-    if 7z l "$tmp/RetroArch.7z" >/dev/null 2>&1; then ok=1; break; fi
-    echo "  el archivo llegó incompleto, reintentando"
-  done
-  if [ "$ok" != 1 ]; then
-    echo "  no pude bajar RetroArch.7z entero después de 3 intentos"; exit 1
-  fi
-  7z e -y "$tmp/RetroArch.7z" \
-    "RetroArch-Linux-x86_64/RetroArch-Linux-x86_64.AppImage" -o"$tmp" >/dev/null
-  mv "$tmp/RetroArch-Linux-x86_64.AppImage" retroarch
-  chmod +x retroarch
-  rm -rf "$tmp"
-fi
 
 echo ">> mpv (AppImage)"
 if [ -f mpv ]; then
@@ -99,4 +59,4 @@ for req in mpv-config/scripts/uosc mpv-config/fonts/uosc_icons.otf; do
 done
 
 echo ">> listo"
-ls -lh retroarch mpv yt-dlp cores/*.so
+ls -lh mpv yt-dlp
