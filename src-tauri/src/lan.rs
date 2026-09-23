@@ -62,6 +62,14 @@ pub fn lan() -> Result<&'static Lan, String> {
     if let Some(l) = LAN.get() {
         return Ok(l);
     }
+    // Dos transmisiones que arrancan a la vez no pueden levantar dos
+    // servidores: el segundo tomaría un puerto cualquiera y quedaría huérfano
+    // (get_or_init se queda con el primero).
+    static ARRANQUE: Mutex<()> = Mutex::new(());
+    let _g = ARRANQUE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(l) = LAN.get() {
+        return Ok(l);
+    }
     let server = Server::http(("0.0.0.0", PUERTO))
         .or_else(|_| Server::http("0.0.0.0:0"))
         .map_err(|e| format!("servidor LAN: {e}"))?;
@@ -92,7 +100,7 @@ impl Lan {
     /// Publica el subtítulo en los dos formatos. Devuelve (url_vtt, url_srt).
     pub fn publicar_subs(&self, bytes: &[u8], tv_ip: &str, tv_puerto: u16) -> Result<(String, String), String> {
         let texto = texto_de(bytes);
-        let mut e = self.estado.lock().unwrap();
+        let mut e = self.estado.lock().unwrap_or_else(|e| e.into_inner());
         e.vtt = srt_a_vtt(&texto);
         e.srt = vtt_a_srt(&texto);
         e.pedidos_subs = 0;
@@ -119,8 +127,11 @@ impl Lan {
             "video/x-msvideo" => "avi",
             _ => "mp4",
         };
-        let id = format!("{:x}", marca());
-        let mut e = self.estado.lock().unwrap();
+        // Aleatorio, no la hora: el id es lo único que separa a un equipo
+        // cualquiera de la red de ver lo que se transmite (y de usar el enlace
+        // de RealDebrid de la cuenta).
+        let id = id_aleatorio();
+        let mut e = self.estado.lock().unwrap_or_else(|e| e.into_inner());
         // Solo el último video: nada de ir juntando URLs de RD en memoria.
         e.videos.clear();
         e.pedidos_video = 0;
@@ -142,7 +153,7 @@ impl Lan {
 pub fn pedidos() -> (u32, u32) {
     lan_si_existe()
         .map(|l| {
-            let e = l.estado.lock().unwrap();
+            let e = l.estado.lock().unwrap_or_else(|e| e.into_inner());
             (e.pedidos_video, e.pedidos_subs)
         })
         .unwrap_or((0, 0))
@@ -202,6 +213,18 @@ pub fn cast_red_info() -> RedInfo {
     }
 }
 
+fn id_aleatorio() -> String {
+    let mut b = [0u8; 12];
+    if getrandom::getrandom(&mut b).is_err() {
+        // No debería pasar; RandomState también sale sembrado por el sistema.
+        use std::hash::{BuildHasher, Hasher};
+        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+        h.write_u128(marca());
+        b[..8].copy_from_slice(&h.finish().to_le_bytes());
+    }
+    hex::encode(b)
+}
+
 fn marca() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -228,7 +251,7 @@ fn atender(req: Request, est: &Mutex<Estado>) {
         return;
     }
     if ruta.starts_with("/sub-") {
-        let mut e = est.lock().unwrap();
+        let mut e = est.lock().unwrap_or_else(|e| e.into_inner());
         e.pedidos_subs += 1;
         let (cuerpo, tipo) = if ruta.ends_with(".srt") {
             (e.srt.clone(), "application/x-subrip; charset=utf-8")
@@ -242,7 +265,7 @@ fn atender(req: Request, est: &Mutex<Estado>) {
     if let Some(resto) = ruta.strip_prefix("/v/") {
         let id = resto.split('.').next().unwrap_or("");
         let video = {
-            let mut e = est.lock().unwrap();
+            let mut e = est.lock().unwrap_or_else(|e| e.into_inner());
             let v = e.videos.get(id).cloned();
             if v.is_some() {
                 e.pedidos_video += 1;

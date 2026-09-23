@@ -555,7 +555,7 @@ pub async fn cast_play(
             .await?;
     }
     eprintln!("[cast] transmitiendo \"{}\" en {} ({})", titulo, tv.nombre, tv.tipo);
-    *sesion().lock().unwrap() = Some(Sesion {
+    *sesion().lock().unwrap_or_else(|e| e.into_inner()) = Some(Sesion {
         tv,
         titulo,
         uri,
@@ -646,7 +646,7 @@ fn cargar_cast(
 
 #[tauri::command]
 pub async fn cast_status() -> Result<CastStatus, String> {
-    let Some(s) = sesion().lock().unwrap().clone() else {
+    let Some(s) = sesion().lock().unwrap_or_else(|e| e.into_inner()).clone() else {
         return Ok(CastStatus::default());
     };
     let base = CastStatus {
@@ -742,7 +742,7 @@ async fn estado_dlna(s: &Sesion, base: CastStatus) -> CastStatus {
     }
     let vio_play = s.vio_play || e == "PLAYING";
     {
-        let mut g = sesion().lock().unwrap();
+        let mut g = sesion().lock().unwrap_or_else(|e| e.into_inner());
         if let Some(act) = g.as_mut().filter(|a| a.uri == s.uri) {
             act.vio_play = vio_play;
             if dur > 0.0 {
@@ -781,7 +781,7 @@ async fn estado_dlna(s: &Sesion, base: CastStatus) -> CastStatus {
 /// "volumen" (valor 0..1) | "silencio" (valor 1/0) | "detener".
 #[tauri::command]
 pub async fn cast_control(accion: String, valor: Option<f64>) -> Result<(), String> {
-    let Some(s) = sesion().lock().unwrap().clone() else {
+    let Some(s) = sesion().lock().unwrap_or_else(|e| e.into_inner()).clone() else {
         return Err("No hay nada transmitiéndose".into());
     };
     let detener = accion == "detener";
@@ -801,7 +801,7 @@ pub async fn cast_control(accion: String, valor: Option<f64>) -> Result<(), Stri
     };
     if detener {
         // Aunque la TV no conteste, del lado de Kütral la transmisión terminó.
-        *sesion().lock().unwrap() = None;
+        *sesion().lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
     r
 }
@@ -852,7 +852,7 @@ fn control_cast(tv: &CastTv, accion: &str, valor: Option<f64>) -> Result<(), Str
 /// Olvida la sesión sin tocar la TV (terminó sola o alguien cambió de app).
 #[tauri::command]
 pub fn cast_soltar() {
-    *sesion().lock().unwrap() = None;
+    *sesion().lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 #[cfg(test)]
