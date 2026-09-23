@@ -411,10 +411,15 @@
     }
   });
 
-  $effect(() => {
-    const reproduciendo =
+  function modoReproduce(): boolean {
+    return (
       mode === "discover" || mode === "trailer" || mode === "sources" ||
-      mode === "episodes" || mode === "playmenu";
+      mode === "episodes" || mode === "playmenu"
+    );
+  }
+
+  $effect(() => {
+    const reproduciendo = modoReproduce();
     setPlaying(reproduciendo);
     // Pausamos el screening mientras hay video: evita que el worker robe
     // red al stream del iframe y cause cortes/saltitos.
@@ -2072,6 +2077,20 @@
   const finItems = new Map<number, ListItem>();
   // Episodio al que apunta finSiguiente (para el contexto del historial).
   let finSiguienteEp: EpisodeMini | null = null;
+
+  // Un trailer lanzado desde la ficha marca "reproduciendo" sin cambiar de
+  // modo, así que el efecto de arriba no vuelve a correr al terminar: el
+  // encabezado (y con él Configuración) quedaba oculto hasta reiniciar. Al
+  // cerrarse mpv, lo que manda es el modo actual.
+  $effect(() => {
+    let un: UnlistenFn | undefined;
+    void listen<boolean>("mpv:state", (e) => {
+      if (!e.payload) setPlaying(modoReproduce());
+    }).then((u) => (un = u));
+    return () => {
+      if (un) un();
+    };
+  });
 
   $effect(() => {
     let un: UnlistenFn | undefined;
