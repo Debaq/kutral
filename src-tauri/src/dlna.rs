@@ -199,14 +199,28 @@ async fn soap(url: &str, srv: &str, accion: &str, args: &str) -> Result<String, 
     let cuerpo = format!(
         r#"<?xml version="1.0" encoding="utf-8"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:{accion} xmlns:u="{srv}">{args}</u:{accion}></s:Body></s:Envelope>"#
     );
-    let r = cliente()
-        .post(url)
-        .header("Content-Type", r#"text/xml; charset="utf-8""#)
-        .header("SOAPACTION", format!("\"{srv}#{accion}\""))
-        .body(cuerpo)
-        .send()
-        .await
-        .map_err(|e| format!("La TV no respondió: {e}"))?;
+    // Reintento solo ante fallas de conexión (una respuesta de error de la
+    // TV es definitiva): la LG UK6200 cortó las primeras conexiones de una
+    // sesión y a los segundos contestaba normal.
+    let mut intento = 0;
+    let r = loop {
+        let envio = cliente()
+            .post(url)
+            .header("Content-Type", r#"text/xml; charset="utf-8""#)
+            .header("SOAPACTION", format!("\"{srv}#{accion}\""))
+            .body(cuerpo.clone())
+            .send()
+            .await;
+        match envio {
+            Ok(r) => break r,
+            Err(e) if intento < 2 && (e.is_connect() || e.is_request()) => {
+                intento += 1;
+                eprintln!("[dlna] {accion}: la TV no respondió ({e}), reintento {intento}");
+                tokio::time::sleep(Duration::from_millis(1500)).await;
+            }
+            Err(e) => return Err(format!("La TV no respondió: {e}")),
+        }
+    };
     let ok = r.status().is_success();
     let texto = r.text().await.unwrap_or_default();
     if !ok {
@@ -398,3 +412,4 @@ mod tests {
         assert!(!tvs.is_empty(), "no hay renderers DLNA en la red");
     }
 }
+
