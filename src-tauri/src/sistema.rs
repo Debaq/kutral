@@ -250,18 +250,24 @@ pub async fn wifi_connect(ssid: String, password: Option<String>) -> Result<(), 
     { let _ = password; return Err("solo soportado en Linux".into()); }
     #[cfg(target_os = "linux")]
     {
-        use std::process::Command;
-        let mut args: Vec<String> = vec![
-            "device".into(), "wifi".into(), "connect".into(), ssid,
-        ];
-        if let Some(p) = password.filter(|s| !s.is_empty()) {
-            args.push("password".into());
-            args.push(p);
-        }
-        let out = Command::new("nmcli")
-            .args(&args)
-            .output()
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        // La clave va por stdin con --ask (nmcli la pide si la red es
+        // segura): en argv la vería cualquier proceso vía /proc/<pid>/cmdline.
+        // Sin clave se cierra stdin y nmcli recibe EOF en vez de colgarse.
+        let mut child = Command::new("nmcli")
+            .args(["--ask", "device", "wifi", "connect", &ssid])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .map_err(|e| format!("nmcli: {}", e))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            if let Some(p) = password.filter(|s| !s.is_empty()) {
+                let _ = writeln!(stdin, "{}", p);
+            }
+        }
+        let out = child.wait_with_output().map_err(|e| format!("nmcli: {}", e))?;
         if !out.status.success() {
             return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
         }
