@@ -1055,6 +1055,7 @@
 
   function onIframeMessage(e: MessageEvent) {
     if (typeof e.data !== "object" || !e.data) return;
+    if (!vieneDelReproductor(e.source)) return;
 
     // El player (VidAPI) usa parentStorage proxy. Cuando inicia pide al padre
     // STORAGE_GET_ALL. Si respondemos con STORAGE_INIT incluyendo
@@ -1074,7 +1075,9 @@
             type: "STORAGE_INIT",
             data: { playerSubStyle: subStyle },
           },
-          "*",
+          // Solo a quien preguntó. "null" es un frame con sandbox sin origen
+          // propio: ahí no queda otra que "*".
+          e.origin && e.origin !== "null" ? e.origin : "*",
         );
       } catch (err) {
         console.warn("[storage-init] no se pudo responder:", err);
@@ -1902,6 +1905,27 @@
   // RECARGA → player corta y arranca de nuevo en resumeAt actualizado.
   // Solo se setea en startDiscover y se limpia en stopDiscover.
   let discoverSrc = $state<string>("");
+  let discoverFrame: HTMLIFrameElement | null = $state(null);
+
+  // ¿El mensaje viene del iframe del reproductor (o de un frame anidado
+  // dentro de él)? Sin esto cualquier ventana podía inventar progreso y
+  // ensuciar el historial. `parent` se puede leer aunque el frame sea de
+  // otro origen.
+  function vieneDelReproductor(src: MessageEventSource | null): boolean {
+    const propio = discoverFrame?.contentWindow;
+    if (!propio || !src) return false;
+    let w = src as Window | null;
+    try {
+      for (let i = 0; i < 6 && w; i++) {
+        if (w === propio) return true;
+        if (w === window || w.parent === w) return false;
+        w = w.parent;
+      }
+    } catch {
+      // MessagePort / ServiceWorker: no son ventanas.
+    }
+    return false;
+  }
 
   function discoverUrl(
     imdb_id: string,
@@ -3065,6 +3089,7 @@
       ⚠ No funciona
     </button>
     <iframe
+      bind:this={discoverFrame}
       src={discoverSrc}
       title="discover"
       referrerpolicy="no-referrer"
