@@ -281,3 +281,51 @@ Varía por video y por día, así que se ve como "a veces no funciona".
 - El age-gate duro no tiene arreglo sin cookies de una cuenta, y eso no
   corresponde en un equipo de living.
 - Fallback ya existente: trailer de Apple, y si no, QR.
+
+---
+
+# Transmitir a la TV: Miracast como respaldo
+
+Surgió con una LG UK6200 (2018): sin Google Cast, solo DLNA. La TV trae
+Miracast ("Screen Share"). **No está implementado — es una idea anotada.**
+
+## Qué es y en qué se diferencia de lo que hay
+
+DLNA/Cast le pasan a la TV la URL del archivo y la TV lo decodifica. Miracast
+es un espejo: el PC reproduce, captura su pantalla, la vuelve a comprimir
+(H.264, en general hasta 1080p) y la manda por Wi-Fi Direct.
+
+- **A favor**: suena y se ve todo (decodifica el PC: DTS, TrueHD, cualquier
+  códec), los subtítulos son los de mpv con su menú, y no depende del router
+  ni del firewall (Wi-Fi Direct va directo PC ↔ TV; tampoco del multicast).
+- **En contra**: peor imagen (recompresión), posibles saltos y desfase de
+  audio según el wifi, y el PC tiene que mostrar la película todo el rato.
+
+Sirve como **respaldo**: cuando la TV no puede con el formato ("No se oye",
+versiones descartadas por la TV) o cuando se quieren los subtítulos de mpv.
+
+## El mismo estándar con otro nombre según la marca
+
+| Marca | Nombre en la TV |
+|---|---|
+| LG | Screen Share |
+| Samsung | Screen Mirroring / Smart View |
+| Sony (Bravia viejas) | Screen mirroring |
+| Philips | Miracast / Screen mirroring |
+| Hisense | Anyview Cast |
+| TCL | Screen Share / Miracast |
+| Roku TV | Screen mirroring |
+
+Google TV / Android TV modernas en general **no** lo traen (Google lo sacó):
+ahí va Google Cast, que ya está.
+
+## Caminos para integrarlo
+
+- **Windows**: Miracast viene en el sistema (Win + K). Kütral podría abrir ese
+  panel con un botón "Ver en la TV por espejo" y dejar mpv en pantalla
+  completa. Falta confirmar qué URI/atajo abre el panel directo.
+- **Linux**: no hay nada del sistema. `gnome-network-displays` (funciona en KDE,
+  captura por el portal de PipeWire) necesita una tarjeta con Wi-Fi Direct
+  (`nmcli` lista un `p2p-dev-*`). Dependencia externa: detectarla y ofrecerla,
+  no empaquetarla.
+- **Kütral OS / flatpak**: evaluar aparte (portal de captura dentro del sandbox).
