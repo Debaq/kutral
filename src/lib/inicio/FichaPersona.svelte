@@ -81,7 +81,7 @@
           {/each}
         </div>
       {/if}
-      <p class="person-foot">Premios no disponibles en TMDb. Para verlos, abrí el perfil en IMDb.</p>
+      <p class="person-foot">Premios no disponibles en TMDb. Para verlos, abre el perfil en IMDb.</p>
     {/if}
   </div>
 </div>

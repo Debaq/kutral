@@ -2665,7 +2665,7 @@
       {:else}
         <div class="brand-empty">
           <h1 class="brand-name">Kütral</h1>
-          <p class="brand-tag">elegí un título</p>
+          <p class="brand-tag">elige un título</p>
         </div>
       {/if}
       <div class="key-edit">

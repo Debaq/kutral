@@ -26,7 +26,7 @@
     <p>
       <strong>{titulo.title}</strong> aún no se encuentra en nuestra cartelera.
     </p>
-    <p class="unavail-sub">La marcamos así no la sugerimos próximamente. Si volviera a estar disponible, podés desmarcarla.</p>
+    <p class="unavail-sub">La marcamos así no la sugerimos próximamente. Si volviera a estar disponible, puedes desmarcarla.</p>
     <div class="unavail-actions">
       <button data-nav class="unavail-back btn-secondary" onclick={onVolver}>← Volver</button>
       {#if titulo.imdb_id}

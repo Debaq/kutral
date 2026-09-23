@@ -33,7 +33,7 @@
         <strong>{titulo}</strong> no tiene IMDb ID en TMDb, así que no podemos abrirlo.
       {/if}
     </p>
-    <p class="modal-sub">¿Querés ver el trailer mientras tanto?</p>
+    <p class="modal-sub">¿Quieres ver el trailer mientras tanto?</p>
     <div class="modal-actions">
       <button data-nav class="btn-secondary" onclick={onCerrar}>
         Cancelar
