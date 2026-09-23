@@ -17,3 +17,4 @@ vite.config.ts.timestamp-*
 /out
 /dist
 /kutral.zip
+/out.tar.gz
