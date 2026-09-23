@@ -444,6 +444,45 @@ pub mod imp {
     /// ni el próximo capítulo.
     static AVISA_FIN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+    /// Qué se está reproduciendo, para que Esc haga lo mismo que en Linux:
+    /// un trailer se cierra, un canal en vivo sigue sonando de fondo y una
+    /// película se pausa.
+    static ES_TRAILER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    static EN_VIVO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    /// Esc dejó la sesión viva con la ventana minimizada: la pill ofrece volver.
+    static SUSPENDIDO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    fn prop(nombre: &str, valor: serde_json::Value) {
+        let _ = mpv_cmd(vec![
+            serde_json::Value::String("set_property".into()),
+            serde_json::Value::String(nombre.into()),
+            valor,
+        ]);
+    }
+
+    /// Esc/Backspace dentro de mpv (input.conf los manda como
+    /// `script-message kutral-salir`). Antes Esc solo sacaba a mpv de pantalla
+    /// completa: el video seguía abierto y Kütral, creyendo que había algo
+    /// reproduciéndose, dejaba el encabezado (y Configuración) oculto.
+    fn suspender(app: &tauri::AppHandle) {
+        use std::sync::atomic::Ordering;
+        if ES_TRAILER.load(Ordering::SeqCst) {
+            let _ = mpv_cmd(vec![serde_json::Value::String("quit".into())]);
+            return;
+        }
+        if !EN_VIVO.load(Ordering::SeqCst) {
+            prop("pause", serde_json::Value::Bool(true));
+        }
+        prop("window-minimized", serde_json::Value::Bool(true));
+        SUSPENDIDO.store(true, Ordering::SeqCst);
+        let _ = app.emit("mpv:state", false);
+        let _ = app.emit("mpv:suspended", true);
+        // Minimizar no garantiza que Windows le pase el foco a Kütral.
+        if let Some(w) = tauri::Manager::get_webview_window(app, "main") {
+            let _ = w.set_focus();
+        }
+    }
+
     /// Vigía de eventos del IPC — el equivalente en Windows de lo que en Linux
     /// hace el sondeo de propiedades del embed (`mpv_embed::watch_media_end`).
     ///
@@ -523,6 +562,16 @@ pub mod imp {
                             _ => {}
                         }
                     }
+                    Some("client-message") => {
+                        let es_salir = v["args"]
+                            .as_array()
+                            .and_then(|a| a.first())
+                            .and_then(|x| x.as_str())
+                            == Some("kutral-salir");
+                        if es_salir {
+                            suspender(&app);
+                        }
+                    }
                     Some("end-file") => {
                         // eof = llegó al final solo. error = el stream se murió
                         // a mitad; el front lo distingue por la posición y
@@ -542,9 +591,12 @@ pub mod imp {
             if EVENT_GEN.load(Ordering::SeqCst) != gen {
                 return;
             }
-            // mpv se fue: lo cerró el usuario con ESC, o murió el proceso.
+            // mpv se fue: lo cerró el usuario (q, ✕ de la ventana), o murió.
             eprintln!("[mpv-ipc] mpv cerrado → mpv:state false");
             let _ = app.emit("mpv:state", false);
+            if SUSPENDIDO.swap(false, Ordering::SeqCst) {
+                let _ = app.emit("mpv:suspended", false);
+            }
         });
     }
 
@@ -621,6 +673,7 @@ pub mod imp {
         use std::process::Command;
 
         kill_existing(state);
+        SUSPENDIDO.store(false, std::sync::atomic::Ordering::SeqCst);
 
         #[cfg(not(windows))]
         let _ = std::fs::remove_file(ipc_path());
@@ -683,6 +736,8 @@ pub mod imp {
             return Err("url vacía".into());
         }
         AVISA_FIN.store(true, std::sync::atomic::Ordering::SeqCst);
+        ES_TRAILER.store(false, std::sync::atomic::Ordering::SeqCst);
+        EN_VIVO.store(false, std::sync::atomic::Ordering::SeqCst);
         let mut extra: Vec<String> = Vec::new();
         if let Some(t) = &title {
             extra.push(format!("--force-media-title={t}"));
@@ -714,6 +769,8 @@ pub mod imp {
             return Err("url vacía".into());
         }
         AVISA_FIN.store(false, std::sync::atomic::Ordering::SeqCst);
+        ES_TRAILER.store(true, std::sync::atomic::Ordering::SeqCst);
+        EN_VIVO.store(false, std::sync::atomic::Ordering::SeqCst);
         // URL directa de yt-dlp: el audio viene en su propio stream DASH y mpv
         // lo junta con --audio-file. Sin audio_url la URL es la de YouTube y de
         // juntarlos se encarga ytdl_hook.
@@ -745,6 +802,8 @@ pub mod imp {
         // Un canal en vivo no "termina": si el stream se corta no corresponde
         // ofrecer próximo capítulo ni PostCréditos.
         AVISA_FIN.store(false, std::sync::atomic::Ordering::SeqCst);
+        ES_TRAILER.store(false, std::sync::atomic::Ordering::SeqCst);
+        EN_VIVO.store(true, std::sync::atomic::Ordering::SeqCst);
         let mut extra: Vec<String> = Vec::new();
         if let Some(cfg) = mpv_config_dir(&app) {
             extra.push(format!("--input-conf={}", cfg.join("iptv-input.conf").display()));
@@ -816,8 +875,8 @@ pub mod imp {
         }
     }
 
-    /// Sin embed no hay superficie que ocultar: suspender = pausar y avisar a
-    /// la UI, que dibuja la pill para volver.
+    /// Sin embed no hay superficie que ocultar: suspender = pausar, minimizar
+    /// la ventana de mpv y avisar a la UI, que dibuja la pill para volver.
     #[tauri::command]
     pub fn mpv_suspend(
         app: tauri::AppHandle,
@@ -826,12 +885,7 @@ pub mod imp {
         if !alive(&state) {
             return Ok(());
         }
-        let _ = mpv_cmd(vec![
-            serde_json::Value::String("set_property".into()),
-            serde_json::Value::String("pause".into()),
-            serde_json::Value::Bool(true),
-        ]);
-        let _ = app.emit("mpv:suspended", true);
+        suspender(&app);
         Ok(())
     }
 
@@ -843,11 +897,10 @@ pub mod imp {
         if !alive(&state) {
             return Err("no hay reproducción en pausa".into());
         }
-        let _ = mpv_cmd(vec![
-            serde_json::Value::String("set_property".into()),
-            serde_json::Value::String("pause".into()),
-            serde_json::Value::Bool(false),
-        ]);
+        prop("window-minimized", serde_json::Value::Bool(false));
+        prop("pause", serde_json::Value::Bool(false));
+        SUSPENDIDO.store(false, std::sync::atomic::Ordering::SeqCst);
+        let _ = app.emit("mpv:state", true);
         let _ = app.emit("mpv:suspended", false);
         Ok(())
     }
@@ -855,7 +908,9 @@ pub mod imp {
     #[tauri::command]
     pub fn mpv_session(state: tauri::State<'_, PlayerState>) -> MpvSession {
         let st = build_status(&state);
-        if !st.running || !st.pause {
+        // En vivo no se pausa al suspender: sigue sonando minimizado.
+        let suspendido = SUSPENDIDO.load(std::sync::atomic::Ordering::SeqCst);
+        if !st.running || !(st.pause || suspendido) {
             return MpvSession::default();
         }
         MpvSession {
@@ -863,7 +918,7 @@ pub mod imp {
             title: st.title,
             pos: st.pos,
             duration: st.duration,
-            live: st.duration <= 0.0,
+            live: EN_VIVO.load(std::sync::atomic::Ordering::SeqCst) || st.duration <= 0.0,
         }
     }
 
