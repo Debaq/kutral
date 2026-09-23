@@ -59,13 +59,7 @@
   import { navegar, enfocarPrimero } from "$lib/nav";
   import { resetOnboarding } from "$lib/onboarding";
   import RemoteQr from "$lib/RemoteQr.svelte";
-  type RdDeviceStart = {
-    device_code: string;
-    user_code: string;
-    verification_url: string;
-    interval: number;
-    expires_in: number;
-  };
+  import type { RdDeviceStart, WebStatus } from "$lib/tipos";
   let tmdb = $state("");
   // Token pegado a mano (avanzado). NO se persiste en localStorage: se manda al
   // store 0600 del backend vía rd_creds_save. El vínculo se lee de config.rdLinked.
@@ -128,7 +122,6 @@
   }
 
   // --- Teclado por celular: QR a /api para escribir/pegar/escanear claves ---
-  type WebStatus = { running: boolean; ip: string | null; port: number | null; url: string | null };
   let phoneUrl = $state("");
   let phoneBusy = $state(false);
   let phoneErr = $state("");

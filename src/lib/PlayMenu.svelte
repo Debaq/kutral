@@ -5,6 +5,7 @@
 
   import { onMount } from "svelte";
   import { WEB_PLAYER_ENABLED } from "$lib/features";
+  import type { OmdbDetail, OmdbRating, PersonMini } from "$lib/tipos";
 
   type Action = {
     id: string;
@@ -13,31 +14,7 @@
     primary?: boolean;
   };
 
-  type PersonMini = {
-    id: number;
-    name: string;
-    profile_path?: string;
-    character?: string;
-    job?: string;
-  };
 
-  type OmdbRating = { source: string; value: string };
-
-  type OmdbDetail = {
-    plot?: string | null;
-    awards?: string | null;
-    rated?: string | null;
-    writer?: string | null;
-    country?: string | null;
-    language?: string | null;
-    released?: string | null;
-    metascore?: string | null;
-    imdb_rating?: string | null;
-    imdb_votes?: string | null;
-    box_office?: string | null;
-    production?: string | null;
-    ratings: OmdbRating[];
-  };
 
   type DetailExt = {
     title: string;

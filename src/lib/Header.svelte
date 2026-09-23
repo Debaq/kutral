@@ -15,8 +15,7 @@
   import { notify, unreadCount } from "$lib/notifStore.svelte";
   import { torrents, activeCount } from "$lib/torrents.svelte";
   import { cola, enEspera } from "$lib/colaDescargas.svelte";
-
-  type WifiState = { online: boolean; connected_ssid: string | null };
+  import type { WifiState } from "$lib/tipos";
 
   let maximized = $state(true);
   let fullscreen = $state(false);

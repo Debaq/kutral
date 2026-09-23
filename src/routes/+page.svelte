@@ -29,6 +29,7 @@
     leerFiltros,
     guardarPrimeraPagina,
     leerPrimeraPagina,
+    type AwardsSummary,
   } from "$lib/catalogo";
   import { leerImgCache, guardarImgCache } from "$lib/imgcache";
   import { inhibirReposo } from "$lib/reposo";
@@ -57,6 +58,7 @@
     type FilaHistorial,
     type MediaMeta,
   } from "$lib/historial.svelte";
+  import type { OmdbDetail, OmdbRating, PersonMini } from "$lib/tipos";
 
   type WyzieSubtitle = { url: string; label: string; lang: string };
 
@@ -161,13 +163,6 @@
     first_air_date?: string;
   };
   type ListResp = { page: number; total_pages: number; results: ListItem[] };
-  type PersonMini = {
-    id: number;
-    name: string;
-    profile_path?: string;
-    character?: string;
-    job?: string;
-  };
   type Detail = {
     id: number;
     media_type: "movie" | "tv";
@@ -565,7 +560,6 @@
     }
   }
 
-  type AwardsSummary = { wins: number; nominations: number };
   let awardsMap = $state<Map<string, AwardsSummary | "loading">>(new Map());
   let awardsQueue: string[] = [];
   let awardsActive = 0;
@@ -689,22 +683,6 @@
   let trailerQr = $state<string>("");
   let trailerQrUrl = $state<string>("");
   // Datos extra para PlayMenu: OMDb (premios/ratings/plot) + trailer pre-cargado.
-  type OmdbRating = { source: string; value: string };
-  type OmdbDetail = {
-    plot?: string | null;
-    awards?: string | null;
-    rated?: string | null;
-    writer?: string | null;
-    country?: string | null;
-    language?: string | null;
-    released?: string | null;
-    metascore?: string | null;
-    imdb_rating?: string | null;
-    imdb_votes?: string | null;
-    box_office?: string | null;
-    production?: string | null;
-    ratings: OmdbRating[];
-  };
   let menuOmdb = $state<OmdbDetail | null>(null);
   let menuTrailerPick = $state<TrailerPick>({
     ytKey: "",

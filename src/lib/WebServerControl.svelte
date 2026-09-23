@@ -1,13 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-
-  type WebStatus = {
-    running: boolean;
-    ip: string | null;
-    port: number | null;
-    url: string | null;
-  };
+  import type { WebStatus } from "$lib/tipos";
 
   let {
     open = $bindable(false),

@@ -27,16 +27,7 @@
     type ModeOverride,
     type SubMode,
   } from "$lib/config.svelte";
-
-  type RdDeviceStart = {
-    device_code: string;
-    user_code: string;
-    verification_url: string;
-    interval: number;
-    expires_in: number;
-  };
-  type WebStatus = { running: boolean; ip: string | null; port: number | null; url: string | null };
-  type WifiState = { online: boolean; connected_ssid: string | null };
+  import type { RdDeviceStart, WebStatus, WifiState } from "$lib/tipos";
 
   // --- Pasos ---------------------------------------------------------------
   // El de red solo aparece si al arrancar no hay internet: en un escritorio
