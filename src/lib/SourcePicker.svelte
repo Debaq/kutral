@@ -168,6 +168,14 @@
   let castSrc: Src | null = null;
   // Esc mientras la TV carga: cortar y no seguir probando.
   let castCancel = false;
+  // La transmisión terminó desde la TV (su control, otra app, se apagó): el
+  // segundo en que iba, para ofrecer seguir aquí. null = sigue en la TV.
+  let tvTermino = $state<number | null>(null);
+  // Última posición y duración que informó la TV, y si ya respondió alguna vez
+  // (recién lanzada, cast.estado todavía no llegó y no es que haya terminado).
+  let tvPos = 0;
+  let tvDur = 0;
+  let tvVista = false;
   // Segundo desde el que retomar al cambiar de versión ("No se oye").
   let desdeForzado: number | null = null;
   // Nombre del archivo del torrent local: su stream (127.0.0.1) no dice la
@@ -553,6 +561,10 @@
       castSrc = s;
       seguirEnTv({ tvId: tv.id, rasgos: r, ctx: contextoActual(), desde });
       resolving = false;
+      tvTermino = null;
+      tvVista = false;
+      tvPos = desde;
+      tvDur = 0;
       casting = true;
       castFoco = 0;
       playingTitle = s.title;
@@ -617,14 +629,65 @@
   // ---- Controles con la película en la TV ----
 
   type CastBtn = { id: string; label: string };
-  const castBtns = $derived<CastBtn[]>([
-    { id: "pausa", label: cast.estado?.estado === "PAUSED" ? "▶ Seguir" : "⏸ Pausa" },
-    { id: "atras", label: "⏪ 30 s" },
-    { id: "adelante", label: "⏩ 30 s" },
-    { id: "mudo", label: "🔇 No se oye" },
-    { id: "detener", label: "⏹ Detener" },
-    { id: "navegar", label: "↩ Seguir navegando" },
-  ]);
+  const castBtns = $derived<CastBtn[]>(
+    tvTermino != null
+      ? [
+          { id: "aqui", label: `💻 Seguir aquí desde ${fmtTiempo(tvTermino)}` },
+          { id: "volver", label: "↩ Volver" },
+        ]
+      : [
+          { id: "pausa", label: cast.estado?.estado === "PAUSED" ? "▶ Seguir" : "⏸ Pausa" },
+          { id: "atras", label: "⏪ 30 s" },
+          { id: "adelante", label: "⏩ 30 s" },
+          { id: "mudo", label: "🔇 No se oye" },
+          { id: "aqui", label: "💻 Seguir aquí" },
+          { id: "detener", label: "⏹ Detener" },
+          { id: "navegar", label: "↩ Seguir navegando" },
+        ],
+  );
+
+  // Seguimiento de la TV mientras está en pantalla: si deja de reportar (la
+  // cortaron desde la TV) se pasa a "terminó" en vez de quedar en "Cargando…".
+  $effect(() => {
+    if (!casting || tvTermino != null) return;
+    const st = cast.estado;
+    if (st) {
+      tvVista = true;
+      if (st.pos > 0) tvPos = st.pos;
+      if (st.duracion > 0) tvDur = st.duracion;
+      return;
+    }
+    if (!tvVista) return;
+    // Llegó al final: nada que seguir aquí.
+    if (tvDur > 0 && tvPos >= tvDur - 90) {
+      casting = false;
+      onClose();
+      return;
+    }
+    tvTermino = tvPos;
+    castFoco = 0;
+  });
+
+  // Corta la TV y abre la misma versión en este equipo, desde donde iba.
+  async function seguirAqui() {
+    const pos = tvTermino ?? cast.estado?.pos ?? tvPos;
+    const src = castSrc;
+    const seguiaEnTv = tvTermino == null;
+    // casting en false ANTES de detener: si no, el seguimiento de arriba vería
+    // la TV apagarse y lo tomaría por un corte desde la TV.
+    casting = false;
+    tvTermino = null;
+    castSrc = null;
+    if (seguiaEnTv) await castDetener().catch(() => {});
+    destinoTv = false;
+    const idx = src ? view.indexOf(src) : -1;
+    desdeForzado = pos;
+    try {
+      await playFrom(idx >= 0 ? idx : focusIdx);
+    } finally {
+      desdeForzado = null;
+    }
+  }
 
   async function castAccion(id: string) {
     try {
@@ -641,9 +704,17 @@
         case "mudo":
           await noSeOye();
           break;
+        case "aqui":
+          await seguirAqui();
+          break;
         case "detener":
-          await castDetener().catch(() => {});
           casting = false;
+          await castDetener().catch(() => {});
+          onClose();
+          break;
+        case "volver":
+          casting = false;
+          tvTermino = null;
           onClose();
           break;
         case "navegar":
@@ -670,8 +741,8 @@
         `${castTvNombre} no reproduce audio ${nombreAudio(act.rasgos.audio)}. Buscando otra versión…`,
       );
     }
-    await castDetener().catch(() => {});
     casting = false;
+    await castDetener().catch(() => {});
     if (castSrc) {
       castSrc._tv = act?.rasgos ? `tu TV no reproduce audio ${nombreAudio(act.rasgos.audio)}` : "sin sonido en tu TV";
       if (!descartadas.includes(castSrc.title)) descartadas = [...descartadas, castSrc.title];
@@ -1363,7 +1434,7 @@
         void castAccion(castBtns[castFoco].id);
       } else if (e.key === " ") {
         e.preventDefault();
-        void castAccion("pausa");
+        if (tvTermino == null) void castAccion("pausa");
       } else if (e.key === "Escape" || e.key === "Backspace") {
         e.preventDefault();
         void castAccion("navegar");
@@ -1482,6 +1553,11 @@
       {@const st = cast.estado}
       {@const pct = st && st.duracion > 0 ? Math.min(100, (st.pos * 100) / st.duracion) : 0}
       <div class="sp-center">
+        {#if tvTermino != null}
+          <p class="sp-playing">📺 La transmisión en {castTvNombre} terminó</p>
+          <p class="sp-playing-title">{playingTitle}</p>
+          <p class="sp-tor-line">Iba en {fmtTiempo(tvTermino)}</p>
+        {:else}
         <p class="sp-playing">📺 En {castTvNombre}</p>
         <p class="sp-playing-title">{playingTitle}</p>
         <div class="sp-bar sp-cast-bar"><div class="sp-bar-fill" style="width: {pct}%"></div></div>
@@ -1496,6 +1572,7 @@
             Los subtítulos no llegan a la TV: revisa el firewall en Configuración → Transmitir a la TV.
           </p>
         {/if}
+        {/if}
         <div class="sp-cast-btns">
           {#each castBtns as b, i (b.id)}
             <button
@@ -1506,9 +1583,11 @@
             >{b.label}</button>
           {/each}
         </div>
-        <span class="sp-hint">
-          Espacio pausa · Esc sigue navegando (la película sigue en la TV)
-        </span>
+        {#if tvTermino == null}
+          <span class="sp-hint">
+            Espacio pausa · Esc sigue navegando (la película sigue en la TV)
+          </span>
+        {/if}
       </div>
     {:else if playing}
       <div class="sp-center">
