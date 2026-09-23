@@ -58,7 +58,14 @@
     type FilaHistorial,
     type MediaMeta,
   } from "$lib/historial.svelte";
-  import type { OmdbDetail, OmdbRating, PersonMini } from "$lib/tipos";
+  import type {
+    OmdbDetail,
+    ListItem,
+    ListResp,
+    Detail,
+    PersonInfo,
+    EpisodeMini,
+  } from "$lib/tipos";
 
   type WyzieSubtitle = { url: string; label: string; lang: string };
 
@@ -152,71 +159,6 @@
     }
   }
 
-  type ListItem = {
-    id: number;
-    title?: string;
-    name?: string;
-    poster_path?: string;
-    overview: string;
-    vote_average: number;
-    release_date?: string;
-    first_air_date?: string;
-  };
-  type ListResp = { page: number; total_pages: number; results: ListItem[] };
-  type Detail = {
-    id: number;
-    media_type: "movie" | "tv";
-    title: string;
-    overview: string;
-    poster_path?: string;
-    backdrop_path?: string;
-    vote_average: number;
-    year: string;
-    imdb_id?: string;
-    runtime?: number;
-    original_title?: string | null;
-    genres: string[];
-    directors: PersonMini[];
-    cast: PersonMini[];
-    images?: string[];
-    number_of_seasons?: number | null;
-    seasons?: SeasonMini[];
-    // --- extras anime (solo cuando la fuente es AniList) ---
-    is_anime?: boolean;
-    mal_id?: number | null;
-    kitsu_id?: number | null;
-    anidb_id?: number | null;
-    trailer_youtube?: string | null;
-    format?: string | null;
-  };
-  type SeasonMini = {
-    season_number: number;
-    episode_count: number;
-    name: string;
-    air_date: string | null;
-    poster_path: string | null;
-  };
-  type PersonFilm = {
-    id: number;
-    title: string;
-    poster_path?: string;
-    year: string;
-    media_type: string;
-    roles: string[];
-    vote_average: number;
-    popularity: number;
-  };
-  type PersonInfo = {
-    id: number;
-    name: string;
-    biography: string;
-    profile_path?: string;
-    birthday?: string;
-    deathday?: string;
-    place_of_birth?: string;
-    known_for_department?: string;
-    filmography: PersonFilm[];
-  };
 
   // Sepá (trivia) todavía no existe: su tarjeta ocupaba un lugar en la fila de
   // accesos y no lleva a ninguna parte. Escondida hasta que haya algo detrás —
@@ -2026,14 +1968,6 @@
 
   // --- Navegación in-place de series: temporada elegida en el panel derecho →
   // el grid de carátulas muestra los capítulos de esa temporada. ---
-  type EpisodeMini = {
-    episode_number: number;
-    name: string;
-    overview: string;
-    still_path: string | null;
-    air_date: string | null;
-    runtime: number | null;
-  };
   // null = catálogo normal; nº = mostrando capítulos de esa temporada.
   let seriesSeason = $state<number | null>(null);
   let seriesEpisodes = $state<EpisodeMini[]>([]);
