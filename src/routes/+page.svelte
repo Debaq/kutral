@@ -69,9 +69,24 @@
   const BACK_KEYS = ["Escape", "Backspace"];
   const ARROW_KEYS = ["Up", "Down", "Left", "Right"];
 
+  // Fullscreen que tenía la ventana antes de entrar a los menús de
+  // reproducción. Al volver al catálogo se restaura ese estado: forzar modo
+  // ventana dejaba maximizado a quien había puesto fullscreen a mano. Es una
+  // promesa para que dos setFs(true) seguidos lean el estado de antes del
+  // primero y no el que dejó este mismo.
+  let fsPrevio: Promise<boolean> | null = null;
+
   async function setFs(on: boolean) {
     try {
-      await getCurrentWindow().setFullscreen(on);
+      const win = getCurrentWindow();
+      if (on) {
+        fsPrevio ??= win.isFullscreen().catch(() => false);
+        await win.setFullscreen(true);
+      } else {
+        const previo = fsPrevio;
+        fsPrevio = null;
+        await win.setFullscreen(previo ? await previo : false);
+      }
     } catch (e) {
       console.warn("fullscreen falló", e);
     }
@@ -94,7 +109,7 @@
     for (const k of BACK_KEYS) {
       try {
         await register(k, (ev) => {
-          if (ev.state === "Pressed") dispatchBack();
+          if (ev.state === "Pressed") void siEnfocada(dispatchBack);
         });
       } catch (e) {
         console.warn(`shortcut ${k} no registrado`, e);
@@ -107,13 +122,24 @@
       for (const k of ARROW_KEYS) {
         try {
           await register(k, (ev) => {
-            if (ev.state === "Pressed") spatialNav(map[k]);
+            if (ev.state === "Pressed") void siEnfocada(() => spatialNav(map[k]));
           });
         } catch (e) {
           console.warn(`shortcut ${k} no registrado`, e);
         }
       }
     }
+  }
+
+  // Los atajos son globales del SO: sin este filtro, un Backspace tecleado
+  // en otra app cerraba el menú de Kütral (y lo sacaba de fullscreen).
+  async function siEnfocada(fn: () => void) {
+    try {
+      if (!(await getCurrentWindow().isFocused())) return;
+    } catch {
+      return;
+    }
+    fn();
   }
 
   async function unregisterBackShortcuts() {
