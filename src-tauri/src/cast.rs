@@ -457,6 +457,14 @@ pub async fn cast_scan(ms: Option<u64>) -> Result<Vec<CastTv>, String> {
             tvs.push(d);
         }
     }
+    // Nada por multicast: puede ser el router (hay routers que no lo
+    // reenvían por wifi). Se prueba equipo por equipo por TCP.
+    if tvs.is_empty() {
+        eprintln!("[cast] nada por mDNS/SSDP → búsqueda directa");
+        tvs = tokio::time::timeout(Duration::from_secs(60), crate::red_directa::barrer())
+            .await
+            .unwrap_or_default();
+    }
     tvs.sort_by(|a, b| a.nombre.cmp(&b.nombre));
     Ok(tvs)
 }
@@ -498,6 +506,19 @@ async fn buscar_cast(espera: Duration) -> Result<Vec<CastTv>, String> {
         Ok(tvs)
     })
     .await
+}
+
+/// La TV que haya en una IP escrita a mano (Configuración). Para redes donde
+/// ni la búsqueda normal ni la directa llegan.
+#[tauri::command]
+pub async fn cast_tv_por_ip(ip: String) -> Result<CastTv, String> {
+    let ip: std::net::Ipv4Addr = ip
+        .trim()
+        .parse()
+        .map_err(|_| format!("\"{}\" no es una IP (ejemplo: 192.168.1.5)", ip.trim()))?;
+    crate::red_directa::tv_en(ip)
+        .await
+        .ok_or_else(|| format!("No encontré una TV en {ip}. ¿Está encendida y en esta misma red?"))
 }
 
 /// ¿Sigue la TV en esa IP? Sirve para validar la TV recordada antes de

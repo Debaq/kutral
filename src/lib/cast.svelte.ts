@@ -76,6 +76,8 @@ export const cast = $state({
   /** Descubrir en la TV por defecto (si no, en este equipo). */
   usarTv: false,
   buscando: false,
+  /** La búsqueda normal no trajo nada y va equipo por equipo (tarda más). */
+  busquedaLarga: false,
   encontradas: [] as CastTv[],
   errorBusqueda: "",
   /** Transmisión en curso (null = nada en la TV desde Kütral). */
@@ -113,6 +115,9 @@ export function cargarCast() {
 export async function buscarTvs(): Promise<CastTv[]> {
   cast.buscando = true;
   cast.errorBusqueda = "";
+  // Pasados los 3 s de la búsqueda normal, el backend prueba equipo por
+  // equipo (routers que no dejan pasar multicast): avisar que tarda.
+  const lenta = setTimeout(() => (cast.busquedaLarga = true), 4000);
   try {
     cast.encontradas = await invoke<CastTv[]>("cast_scan", { ms: 3000 });
     // La recordada pudo cambiar de IP: se actualiza sola al reaparecer.
@@ -122,14 +127,34 @@ export async function buscarTvs(): Promise<CastTv[]> {
     }
     if (!cast.encontradas.length) {
       cast.errorBusqueda =
-        "No apareció ninguna TV. Revisa que esté encendida y en la misma red wifi que este equipo.";
+        "No apareció ninguna TV. Revisa que esté encendida y conectada al mismo router, " +
+        "o agrégala con su IP (la ves en la configuración de red de la TV).";
     }
   } catch (e) {
     cast.errorBusqueda = String(e);
   } finally {
+    clearTimeout(lenta);
     cast.buscando = false;
+    cast.busquedaLarga = false;
   }
   return cast.encontradas;
+}
+
+/** TV escrita a mano por IP: la elige y la deja en la lista. */
+export async function agregarTvPorIp(ip: string): Promise<CastTv> {
+  cast.buscando = true;
+  cast.errorBusqueda = "";
+  try {
+    const tv = await invoke<CastTv>("cast_tv_por_ip", { ip });
+    if (!cast.encontradas.some((t) => t.id === tv.id)) cast.encontradas = [...cast.encontradas, tv];
+    elegirTv(tv);
+    return tv;
+  } catch (e) {
+    cast.errorBusqueda = String(e);
+    throw e;
+  } finally {
+    cast.buscando = false;
+  }
 }
 
 export function elegirTv(tv: CastTv) {

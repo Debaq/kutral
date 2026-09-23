@@ -7,6 +7,7 @@
   import {
     cast,
     buscarTvs,
+    agregarTvPorIp,
     elegirTv,
     olvidarTv,
     setUsarTv,
@@ -362,6 +363,8 @@
   // Transmitir a la TV: puerto y firewall, para avisar si la TV no va a poder
   // entrar a este equipo.
   let redTv = $state<RedInfo | null>(null);
+  // IP escrita a mano para una TV que la búsqueda no encuentra.
+  let tvIp = $state("");
   onMount(() => {
     void redInfo().then((r) => (redTv = r));
   });
@@ -1258,6 +1261,33 @@
           <button data-nav class="btn-sec" onclick={() => void buscarTvs()} disabled={cast.buscando}>
             {cast.buscando ? "Buscando…" : "🔍 Buscar TVs en la red"}
           </button>
+          {#if cast.busquedaLarga}
+            <p class="hint">
+              La búsqueda rápida no encontró nada: probando los equipos de la red uno
+              por uno (hay routers que no dejan pasar la búsqueda normal). Tarda unos
+              segundos.
+            </p>
+          {/if}
+          <div class="cast-ip">
+            <input
+              data-nav
+              type="text"
+              inputmode="decimal"
+              placeholder="IP de la TV, ej. 192.168.1.5"
+              bind:value={tvIp}
+              onkeydown={(e) => {
+                if (e.key === "Enter" && tvIp.trim()) void agregarTvPorIp(tvIp).catch(() => {});
+              }}
+            />
+            <button
+              data-nav
+              class="btn-sec"
+              disabled={cast.buscando || !tvIp.trim()}
+              onclick={() => void agregarTvPorIp(tvIp).catch(() => {})}
+            >
+              ➕ Agregar por IP
+            </button>
+          </div>
           {#if cast.errorBusqueda}<p class="err">{cast.errorBusqueda}</p>{/if}
           {#if cast.encontradas.length}
             <div class="cast-lista">
@@ -1651,6 +1681,14 @@
   .cast-nombre { flex: 1; color: #e6e6ec; font-size: 13.5px; }
   .cast-proto { color: #888892; font-size: 12px; margin-left: 6px; }
   .cast-lista { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+  .cast-ip { display: flex; gap: 8px; margin-top: 10px; }
+  .cast-ip input {
+    flex: 1; max-width: 260px;
+    padding: 6px 8px; background: #0b0b0f; color: #e6e6ec;
+    border: 1px solid #2a2a36; border-radius: 6px; font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  .cast-ip input:focus { border-color: #f3a951; outline: none; }
   .cast-opcion {
     display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
     background: #1c1c25; color: #d8d8e0;

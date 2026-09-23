@@ -21,6 +21,7 @@ mod mpv_embed;
 mod reposo;
 #[cfg(windows)]
 mod reposo_win;
+mod red_directa;
 mod screening;
 mod sistema;
 mod tmdb;
@@ -585,6 +586,7 @@ pub fn run() {
             anilist::anizip_episodes,
             probe::ffprobe_tracks,
             cast::cast_scan,
+            cast::cast_tv_por_ip,
             cast::cast_ping,
             cast::cast_play,
             cast::cast_status,

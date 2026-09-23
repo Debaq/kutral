@@ -150,7 +150,7 @@ fn subred_propia() -> Vec<std::net::Ipv4Addr> {
         .collect()
 }
 
-async fn describir(loc: &str) -> Option<CastTv> {
+pub(crate) async fn describir(loc: &str) -> Option<CastTv> {
     let desc = cliente().get(loc).send().await.ok()?.text().await.ok()?;
     let base = etiqueta(&desc, "URLBase").map(str::to_string).unwrap_or_else(|| loc.to_string());
     let (av_url, av_srv) = servicio(&desc, &base, "AVTransport")?;
