@@ -506,7 +506,7 @@
     const tracks = await probeTracks(url).catch(() => [] as ProbeTrack[]);
     const r = rasgosDe(tracks);
     if (r) {
-      const ev = evaluar(tv.id, r);
+      const ev = evaluar(tv, r);
       if (!ev.apto) {
         s._tv = ev.motivo; // badge en la lista
         throw new Error(`TV_INCOMPATIBLE: ${ev.motivo}`);

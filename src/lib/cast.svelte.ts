@@ -203,12 +203,22 @@ function anotar(tvId: string, k: string, ok: boolean) {
   escribir(K_APRENDIDO, cast.aprendido);
 }
 
+// Audio que el receptor de Google Cast no decodifica: sale el video mudo, sin
+// error que lo delate. Se da por malo de entrada; si alguna TV lo reproduce
+// ("aprenderExito"), lo aprendido manda.
+const AUDIO_SIN_CAST = new Set(["dts", "truehd"]);
+
 /**
  * ¿Esta TV puede con estos rasgos, según lo aprendido? `motivo` explica en
  * palabras por qué no, para mostrarlo en el selector.
  */
-export function evaluar(tvId: string, r: Rasgos): { apto: boolean; motivo: string } {
-  if (leccion(tvId, kA(r))?.ok === false) {
+export function evaluar(tv: CastTv, r: Rasgos): { apto: boolean; motivo: string } {
+  const tvId = tv.id;
+  const audioAprendido = leccion(tvId, kA(r))?.ok;
+  if (tv.tipo !== "dlna" && AUDIO_SIN_CAST.has(r.audio) && audioAprendido !== true) {
+    return { apto: false, motivo: `Google Cast no reproduce audio ${nombreAudio(r.audio)}` };
+  }
+  if (audioAprendido === false) {
     return { apto: false, motivo: `tu TV no reproduce audio ${nombreAudio(r.audio)}` };
   }
   if (leccion(tvId, kV(r))?.ok === false) {
