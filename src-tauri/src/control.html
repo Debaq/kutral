@@ -283,7 +283,7 @@
     </div>
 
     <div class="row c1">
-      <a class="btn" href="/api">⌨<span>Teclado</span></a>
+      <a class="btn" href="api">⌨<span>Teclado</span></a>
     </div>
 
     </div>
@@ -361,7 +361,7 @@
 
   async function send(key, down) {
     try {
-      const r = await fetch("/key", {
+      const r = await fetch("key", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ key, down }),
@@ -541,15 +541,15 @@
     }
   }
 
-  const cargarTendencias = () => pedir("/catalogo?tipo=" + tipo);
-  const buscar = (q) => pedir("/buscar?tipo=" + tipo + "&q=" + encodeURIComponent(q));
+  const cargarTendencias = () => pedir("catalogo?tipo=" + tipo);
+  const buscar = (q) => pedir("buscar?tipo=" + tipo + "&q=" + encodeURIComponent(q));
 
   async function abrir(it, card) {
     vibrar();
     card.classList.add("press");
     setTimeout(() => card.classList.remove("press"), 200);
     try {
-      const r = await fetch("/abrir", {
+      const r = await fetch("abrir", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: it.id, tipo: it.tipo }),
@@ -584,7 +584,7 @@
   document.getElementById("btnFuente").addEventListener("click", async () => {
     vibrar();
     try {
-      const r = await fetch("/accion", {
+      const r = await fetch("accion", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ accion: "fuente" }),
@@ -642,7 +642,7 @@
 
   async function pollMpv() {
     try {
-      const r = await fetch("/mpv", { cache: "no-store" });
+      const r = await fetch("mpv", { cache: "no-store" });
       const s = await r.json();
       if (s && s.running) {
         np.hidden = false;

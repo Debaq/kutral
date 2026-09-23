@@ -96,7 +96,7 @@ $('#send').onclick = async () => {
   const text = txt.value.trim();
   if (!text) { say('Escribe o pega algo primero', 'wait'); return; }
   try {
-    const r = await fetch('/text', {
+    const r = await fetch('text', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ text })
     });
@@ -178,6 +178,52 @@ struct ServerState {
     stop: std::sync::Arc<AtomicBool>,
     port: u16,
     ip: String,
+    token: String,
+}
+
+/// Secreto que va en la URL del QR (`http://ip:puerto/<token>/...`). Sin él
+/// cualquier equipo de la red, o cualquier página web abierta en este mismo
+/// equipo (un anuncio dentro del iframe del reproductor, por ejemplo), podía
+/// mandar teclas y texto con un `fetch` que el navegador ni siquiera frena por
+/// CORS. Se guarda en disco para que el control que el celular tiene en
+/// favoritos siga sirviendo después de reiniciar.
+fn token(app: &tauri::AppHandle) -> String {
+    use tauri::Manager;
+    let ruta = app.path().app_config_dir().ok().map(|d| d.join("web-token"));
+    if let Some(t) = ruta.as_ref().and_then(|r| std::fs::read_to_string(r).ok()) {
+        let t = t.trim();
+        if t.len() >= 16 && t.chars().all(|c| c.is_ascii_hexdigit()) {
+            return t.to_string();
+        }
+    }
+    let mut b = [0u8; 12];
+    if getrandom::getrandom(&mut b).is_err() {
+        // Sin fuente de azar del sistema (no debería pasar): RandomState
+        // también sale sembrado por el sistema operativo.
+        use std::hash::{BuildHasher, Hasher};
+        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+        h.write_u128(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        );
+        b[..8].copy_from_slice(&h.finish().to_le_bytes());
+    }
+    let t = hex::encode(b);
+    if let Some(r) = ruta {
+        if let Some(dir) = r.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if std::fs::write(&r, &t).is_ok() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&r, std::fs::Permissions::from_mode(0o600));
+            }
+        }
+    }
+    t
 }
 
 fn state() -> &'static Mutex<Option<ServerState>> {
@@ -282,8 +328,30 @@ fn json_resp(body: String) -> Response<std::io::Cursor<Vec<u8>>> {
     r
 }
 
-fn build_url(ip: &str, port: u16) -> String {
-    format!("http://{}:{}", ip, port)
+enum Ruta {
+    /// Ruta ya sin el prefijo del token, lista para el `match`.
+    Interna(String),
+    Redirigir(String),
+}
+
+/// Todo cuelga de `/<token>/` salvo lo que no expone nada. Sin el token la
+/// ruta queda en una que no existe y se responde 404, igual que a cualquier
+/// otra: no se delata que el servidor pide un secreto.
+fn resolver(path: &str, prefijo: &str) -> Ruta {
+    if path == "/jsqr.js" || path == "/health" {
+        return Ruta::Interna(path.to_string());
+    }
+    match path.strip_prefix(prefijo) {
+        // Sin la barra final las rutas relativas de la página resolverían
+        // fuera del prefijo.
+        Some("") => Ruta::Redirigir(format!("{}/", prefijo)),
+        Some(resto) if resto.starts_with('/') => Ruta::Interna(resto.to_string()),
+        _ => Ruta::Interna("/no-existe".to_string()),
+    }
+}
+
+fn build_url(ip: &str, port: u16, token: &str) -> String {
+    format!("http://{}:{}/{}", ip, port, token)
 }
 
 fn header(name: &[u8], value: &[u8]) -> Option<Header> {
@@ -346,7 +414,7 @@ pub fn web_server_status() -> WebStatus {
             running: true,
             ip: Some(s.ip.clone()),
             port: Some(s.port),
-            url: Some(build_url(&s.ip, s.port)),
+            url: Some(build_url(&s.ip, s.port, &s.token)),
         },
         None => WebStatus {
             running: false,
@@ -369,10 +437,12 @@ pub fn web_server_start(
             running: true,
             ip: Some(s.ip.clone()),
             port: Some(s.port),
-            url: Some(build_url(&s.ip, s.port)),
+            url: Some(build_url(&s.ip, s.port, &s.token)),
         });
     }
     let port = port.unwrap_or(8080);
+    let token = token(&app);
+    let prefijo = format!("/{}", token);
     let addr = format!("0.0.0.0:{}", port);
     let server = Server::http(&addr).map_err(|e| format!("bind {}: {}", addr, e))?;
     let stop = std::sync::Arc::new(AtomicBool::new(false));
@@ -390,6 +460,20 @@ pub fn web_server_start(
         let url = req.url().to_string();
         let method = req.method().clone();
         let path = url.split('?').next().unwrap_or("/").to_string();
+        let path = match resolver(&path, &prefijo) {
+            Ruta::Interna(p) => p,
+            Ruta::Redirigir(destino) => {
+                let r = Response::empty(302);
+                let r = match header(b"Location", destino.as_bytes()) {
+                    Some(h) => r.with_header(h),
+                    None => r,
+                };
+                if let Err(e) = req.respond(r) {
+                    eprintln!("[web] respond err: {}", e);
+                }
+                continue;
+            }
+        };
 
         let resp_result = match (method, path.as_str()) {
             (Method::Get, "/") | (Method::Get, "/index.html") => {
@@ -623,12 +707,13 @@ pub fn web_server_start(
         stop,
         port,
         ip: ip.clone(),
+        token: token.clone(),
     });
     Ok(WebStatus {
         running: true,
         ip: Some(ip.clone()),
         port: Some(port),
-        url: Some(build_url(&ip, port)),
+        url: Some(build_url(&ip, port, &token)),
     })
 }
 
@@ -643,4 +728,43 @@ pub fn web_server_stop() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn interna(path: &str) -> Option<String> {
+        match resolver(path, "/abc123") {
+            Ruta::Interna(p) => Some(p),
+            Ruta::Redirigir(_) => None,
+        }
+    }
+
+    #[test]
+    fn sin_token_no_se_llega_a_nada() {
+        assert_eq!(interna("/key").as_deref(), Some("/no-existe"));
+        assert_eq!(interna("/").as_deref(), Some("/no-existe"));
+        assert_eq!(interna("/abc12/key").as_deref(), Some("/no-existe"));
+        // El token tiene que ser el segmento completo, no un prefijo.
+        assert_eq!(interna("/abc1234/key").as_deref(), Some("/no-existe"));
+    }
+
+    #[test]
+    fn con_token_se_quita_el_prefijo() {
+        assert_eq!(interna("/abc123/").as_deref(), Some("/"));
+        assert_eq!(interna("/abc123/key").as_deref(), Some("/key"));
+        assert_eq!(interna("/abc123/api").as_deref(), Some("/api"));
+    }
+
+    #[test]
+    fn sin_barra_final_redirige() {
+        assert!(matches!(resolver("/abc123", "/abc123"), Ruta::Redirigir(d) if d == "/abc123/"));
+    }
+
+    #[test]
+    fn lo_publico_no_pide_token() {
+        assert_eq!(interna("/jsqr.js").as_deref(), Some("/jsqr.js"));
+        assert_eq!(interna("/health").as_deref(), Some("/health"));
+    }
 }

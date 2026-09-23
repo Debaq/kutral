@@ -29,6 +29,7 @@ url = "2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 sha2 = "0.10"
 hex = "0.4"
+getrandom = "0.2"
 tauri-plugin-global-shortcut = "2.3.1"
 tauri-plugin-sql = { version = "2.4.0", features = ["sqlite"] }
 enigo = "0.6.1"
