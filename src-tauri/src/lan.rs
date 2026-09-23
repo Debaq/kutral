@@ -224,8 +224,11 @@ pub async fn cast_red_info() -> RedInfo {
     let puerto = LAN.get().map(|l| l.puerto).unwrap_or(PUERTO);
     let firewall = firewall_activo();
     let comando = match firewall {
+        // Puerto y servicio en llamadas separadas: firewall-cmd rechaza
+        // --add-port junto con --add-service ("not allowed with argument").
         "firewalld" => format!(
-            "sudo firewall-cmd --permanent --add-port={puerto}/tcp --add-service=ssdp && sudo firewall-cmd --reload"
+            "sudo firewall-cmd --permanent --add-port={puerto}/tcp && \
+             sudo firewall-cmd --permanent --add-service=ssdp && sudo firewall-cmd --reload"
         ),
         "ufw" => format!("sudo ufw allow {puerto}/tcp && sudo ufw allow proto udp from any port 1900"),
         // Sin perfil: muchas redes de casa quedan marcadas como "pública" y una
