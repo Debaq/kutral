@@ -692,6 +692,8 @@ pub mod imp {
                 extra.push(format!("--start=+{s}"));
             }
         }
+        // "--": lo que sigue es un archivo aunque empiece con "--".
+        extra.push("--".into());
         extra.push(url.clone());
         eprintln!("[mpv] spawn fullscreen url={url}");
         spawn_mpv(&app, &state, extra)
@@ -722,6 +724,7 @@ pub mod imp {
         if let Some(a) = audio_url.filter(|a| !a.is_empty()) {
             extra.push(format!("--audio-file={a}"));
         }
+        extra.push("--".into());
         extra.push(url);
         spawn_mpv(&app, &state, extra)
     }
