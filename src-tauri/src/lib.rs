@@ -1656,6 +1656,8 @@ async fn cache_image(
         .send()
         .await
         .map_err(|e| format!("fetch: {}", e))?
+        .error_for_status()
+        .map_err(|e| format!("fetch: {}", e))?
         .bytes()
         .await
         .map_err(|e| e.to_string())?;
@@ -1681,13 +1683,28 @@ async fn cache_image(
         };
         // JPEG no lleva alfa: rgb8, no rgba8.
         let rgb = resized.to_rgb8();
-        let mut file = std::fs::File::create(&path_clone).map_err(|e| e.to_string())?;
-        let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut file, 82);
-        use image::ImageEncoder;
-        encoder
-            .write_image(rgb.as_raw(), rgb.width(), rgb.height(), image::ExtendedColorType::Rgb8)
-            .map_err(|e| format!("encode jpeg: {}", e))?;
-        Ok(())
+        // A un temporal y después rename (atómico): si el encode falla o la
+        // app se cierra a mitad, en la ruta final nunca queda un .jpg cortado
+        // que el `path.exists()` de arriba devolvería para siempre. El nombre
+        // lleva un contador para que dos pedidos simultáneos de la misma URL
+        // no escriban el mismo archivo a la vez.
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp = path_clone.with_extension(format!("jpg.{}.tmp", n));
+        let escribir = || -> Result<(), String> {
+            let mut file = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
+            let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut file, 82);
+            use image::ImageEncoder;
+            encoder
+                .write_image(rgb.as_raw(), rgb.width(), rgb.height(), image::ExtendedColorType::Rgb8)
+                .map_err(|e| format!("encode jpeg: {}", e))?;
+            std::fs::rename(&tmp, &path_clone).map_err(|e| e.to_string())
+        };
+        let r = escribir();
+        if r.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+        r
     })
     .await
     .map_err(|e| e.to_string())??;
