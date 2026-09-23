@@ -406,6 +406,254 @@ fn parse_str_field(body: &str, field: &str) -> Option<String> {
     None
 }
 
+/// Atiende un pedido del control. /buscar y /catalogo corren en su propio
+/// hilo: esperan a TMDb (hasta 15 s) y no pueden frenar las flechas.
+fn atender(mut req: tiny_http::Request, app_th: &tauri::AppHandle, prefijo: &str) {
+    let url = req.url().to_string();
+    let method = req.method().clone();
+    let path = url.split('?').next().unwrap_or("/").to_string();
+    let path = match resolver(&path, prefijo) {
+        Ruta::Interna(p) => p,
+        Ruta::Redirigir(destino) => {
+            let r = Response::empty(302);
+            let r = match header(b"Location", destino.as_bytes()) {
+                Some(h) => r.with_header(h),
+                None => r,
+            };
+            if let Err(e) = req.respond(r) {
+                eprintln!("[web] respond err: {}", e);
+            }
+            return;
+        }
+    };
+
+    let resp_result = match (method, path.as_str()) {
+        (Method::Get, "/") | (Method::Get, "/index.html") => {
+            let mut r = Response::from_string(CONTROL_HTML);
+            if let Some(h) = header(b"Content-Type", b"text/html; charset=utf-8") {
+                r = r.with_header(h);
+            }
+            if let Some(h) = header(b"Cache-Control", b"no-store") {
+                r = r.with_header(h);
+            }
+            req.respond(r)
+        }
+        (Method::Get, "/api") => {
+            let mut r = Response::from_string(KEYBOARD_HTML);
+            if let Some(h) = header(b"Content-Type", b"text/html; charset=utf-8") {
+                r = r.with_header(h);
+            }
+            if let Some(h) = header(b"Cache-Control", b"no-store") {
+                r = r.with_header(h);
+            }
+            req.respond(r)
+        }
+        (Method::Get, "/jsqr.js") => {
+            let mut r = Response::from_string(JSQR_JS);
+            if let Some(h) = header(b"Content-Type", b"application/javascript; charset=utf-8") {
+                r = r.with_header(h);
+            }
+            if let Some(h) = header(b"Cache-Control", b"max-age=86400") {
+                r = r.with_header(h);
+            }
+            req.respond(r)
+        }
+        (Method::Get, "/health") => {
+            req.respond(Response::from_string("ok"))
+        }
+        (Method::Get, "/mpv") => {
+            // Estado en vivo del reproductor para que el control muestre
+            // título + barra de progreso mientras mpv reproduce.
+            let st = crate::player::status_for(app_th);
+            let body = serde_json::to_string(&st).unwrap_or_else(|_| "{}".into());
+            let mut r = Response::from_string(body);
+            if let Some(h) = header(b"Content-Type", b"application/json") {
+                r = r.with_header(h);
+            }
+            if let Some(h) = header(b"Cache-Control", b"no-store") {
+                r = r.with_header(h);
+            }
+            req.respond(r)
+        }
+        (Method::Get, "/buscar") => {
+            // Buscar desde el celular, con el teclado del celular. Es la
+            // razón principal por la que alguien toma el teléfono en vez
+            // de deletrear con la cruceta.
+            let q = query_param(&url, "q").unwrap_or_default();
+            let tipo = query_param(&url, "tipo").unwrap_or_else(|| "movie".into());
+            let key = key_actual();
+            if key.is_empty() {
+                req.respond(json_resp(
+                    serde_json::json!({ "error": "sin key de TMDb" }).to_string(),
+                ))
+            } else if q.trim().is_empty() {
+                req.respond(json_resp(serde_json::json!({ "items": [] }).to_string()))
+            } else {
+                let r = tauri::async_runtime::block_on(crate::tmdb_buscar(
+                    tipo.clone(),
+                    q,
+                    1,
+                    key,
+                ));
+                match r {
+                    Ok(lista) => req.respond(json_resp(items_json(&lista, &tipo))),
+                    Err(e) => req.respond(json_resp(
+                        serde_json::json!({ "error": e }).to_string(),
+                    )),
+                }
+            }
+        }
+        (Method::Get, "/catalogo") => {
+            let tipo = query_param(&url, "tipo").unwrap_or_else(|| "movie".into());
+            let key = key_actual();
+            if key.is_empty() {
+                req.respond(json_resp(
+                    serde_json::json!({ "error": "sin key de TMDb" }).to_string(),
+                ))
+            } else {
+                let r = tauri::async_runtime::block_on(crate::tmdb_trending(
+                    tipo.clone(),
+                    1,
+                    key,
+                ));
+                match r {
+                    Ok(lista) => req.respond(json_resp(items_json(&lista, &tipo))),
+                    Err(e) => req.respond(json_resp(
+                        serde_json::json!({ "error": e }).to_string(),
+                    )),
+                }
+            }
+        }
+        (Method::Post, "/abrir") => {
+            // Mandar un título a la tele. Reusa el handoff que ya existe
+            // para Vera (`/?play=<id>&type=<tipo>`): el front resuelve el
+            // detalle y entra a Descubrir como si se hubiera clickeado la
+            // card en la tele.
+            let mut body = String::new();
+            if req.as_reader().read_to_string(&mut body).is_err() {
+                req.respond(Response::from_string("bad body").with_status_code(StatusCode(400)))
+            } else {
+                let v: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+                let id = v.get("id").and_then(|x| x.as_u64());
+                let tipo = v.get("tipo").and_then(|x| x.as_str()).unwrap_or("");
+                match (id, tipo) {
+                    (Some(id), t) if t == "movie" || t == "tv" || t == "anime" => {
+                        match app_th.emit("remote_open", serde_json::json!({ "id": id, "tipo": t }))
+                        {
+                            Ok(_) => req.respond(Response::from_string("ok")),
+                            Err(e) => req.respond(
+                                Response::from_string(format!("err: {}", e))
+                                    .with_status_code(StatusCode(500)),
+                            ),
+                        }
+                    }
+                    _ => req.respond(
+                        Response::from_string("bad json").with_status_code(StatusCode(400)),
+                    ),
+                }
+            }
+        }
+        (Method::Post, "/accion") => {
+            // Acciones que no son una tecla. Hoy: cambiar de fuente, que
+            // en la tele es un botón de la barra del reproductor y acá no
+            // tenía equivalente.
+            let mut body = String::new();
+            if req.as_reader().read_to_string(&mut body).is_err() {
+                req.respond(Response::from_string("bad body").with_status_code(StatusCode(400)))
+            } else {
+                match parse_str_field(&body, "accion").as_deref() {
+                    Some("fuente") => match app_th.emit("player:cambiar-fuente", ()) {
+                        Ok(_) => req.respond(Response::from_string("ok")),
+                        Err(e) => req.respond(
+                            Response::from_string(format!("err: {}", e))
+                                .with_status_code(StatusCode(500)),
+                        ),
+                    },
+                    _ => req.respond(
+                        Response::from_string("bad json").with_status_code(StatusCode(400)),
+                    ),
+                }
+            }
+        }
+        (Method::Post, "/key") => {
+            let mut body = String::new();
+            if req.as_reader().read_to_string(&mut body).is_err() {
+                let r = Response::from_string("bad body")
+                    .with_status_code(StatusCode(400));
+                req.respond(r)
+            } else {
+                // ¿Es soltar la tecla? {"down": false}. Por defecto es apretar.
+                let down = !body.contains("\"down\":false")
+                    && !body.contains("\"down\": false");
+                match parse_key_body(&body) {
+                    Some(k) if down && crate::player::remote_to_mpv(app_th, &k) => {
+                        // mpv está vivo y la tecla es de control de reproducción:
+                        // se mandó directo al IPC de mpv (phone → Rust → mpv),
+                        // sin pasar por el webview. Funciona aunque mpv tenga
+                        // el foco (clave en Wayland).
+                        req.respond(Response::from_string("mpv"))
+                    }
+                    // Soltar tecla: la interfaz solo reacciona al apretar.
+                    Some(_) if !down => req.respond(Response::from_string("ok")),
+                    Some(k) => {
+                        // Emite evento al frontend; el frontend dispatcha
+                        // un KeyboardEvent nativo. Portable a Wayland/X11/macOS/Windows
+                        // sin depender de enigo (que falla en Wayland).
+                        match app_th.emit("remote_key", k.clone()) {
+                            Ok(_) => req.respond(Response::from_string("ok")),
+                            Err(e) => {
+                                eprintln!("[web /key] emit fail: {}", e);
+                                let r = Response::from_string(format!("err: {}", e))
+                                    .with_status_code(StatusCode(500));
+                                req.respond(r)
+                            }
+                        }
+                    }
+                    None => {
+                        let r = Response::from_string("bad json")
+                            .with_status_code(StatusCode(400));
+                        req.respond(r)
+                    }
+                }
+            }
+        }
+        (Method::Post, "/text") => {
+            // Texto largo (API key) tecleado/pegado/escaneado en el celular.
+            // Se emite al frontend, que lo escribe en el input enfocado.
+            let mut body = String::new();
+            if req.as_reader().read_to_string(&mut body).is_err() {
+                let r = Response::from_string("bad body")
+                    .with_status_code(StatusCode(400));
+                req.respond(r)
+            } else {
+                match parse_str_field(&body, "text") {
+                    Some(t) => match app_th.emit("remote_text", t) {
+                        Ok(_) => req.respond(Response::from_string("ok")),
+                        Err(e) => {
+                            eprintln!("[web /text] emit fail: {}", e);
+                            let r = Response::from_string(format!("err: {}", e))
+                                .with_status_code(StatusCode(500));
+                            req.respond(r)
+                        }
+                    },
+                    None => {
+                        let r = Response::from_string("bad json")
+                            .with_status_code(StatusCode(400));
+                        req.respond(r)
+                    }
+                }
+            }
+        }
+        _ => {
+            let r = Response::from_string("not found").with_status_code(StatusCode(404));
+            req.respond(r)
+        }
+    };
+    if let Err(e) = resp_result {
+        eprintln!("[web] respond err: {}", e);
+    }
+}
+
 #[tauri::command]
 pub fn web_server_status() -> WebStatus {
     let g = state().lock().unwrap_or_else(|e| e.into_inner());
@@ -452,253 +700,20 @@ pub fn web_server_start(
         if stop_th.load(Ordering::Relaxed) {
             break;
         }
-        let mut req = match server.recv_timeout(Duration::from_millis(300)) {
+        let req = match server.recv_timeout(Duration::from_millis(300)) {
             Ok(Some(r)) => r,
             Ok(None) => continue,
             Err(_) => break,
         };
-        let url = req.url().to_string();
-        let method = req.method().clone();
-        let path = url.split('?').next().unwrap_or("/").to_string();
-        let path = match resolver(&path, &prefijo) {
-            Ruta::Interna(p) => p,
-            Ruta::Redirigir(destino) => {
-                let r = Response::empty(302);
-                let r = match header(b"Location", destino.as_bytes()) {
-                    Some(h) => r.with_header(h),
-                    None => r,
-                };
-                if let Err(e) = req.respond(r) {
-                    eprintln!("[web] respond err: {}", e);
-                }
-                continue;
-            }
-        };
-
-        let resp_result = match (method, path.as_str()) {
-            (Method::Get, "/") | (Method::Get, "/index.html") => {
-                let mut r = Response::from_string(CONTROL_HTML);
-                if let Some(h) = header(b"Content-Type", b"text/html; charset=utf-8") {
-                    r = r.with_header(h);
-                }
-                if let Some(h) = header(b"Cache-Control", b"no-store") {
-                    r = r.with_header(h);
-                }
-                req.respond(r)
-            }
-            (Method::Get, "/api") => {
-                let mut r = Response::from_string(KEYBOARD_HTML);
-                if let Some(h) = header(b"Content-Type", b"text/html; charset=utf-8") {
-                    r = r.with_header(h);
-                }
-                if let Some(h) = header(b"Cache-Control", b"no-store") {
-                    r = r.with_header(h);
-                }
-                req.respond(r)
-            }
-            (Method::Get, "/jsqr.js") => {
-                let mut r = Response::from_string(JSQR_JS);
-                if let Some(h) = header(b"Content-Type", b"application/javascript; charset=utf-8") {
-                    r = r.with_header(h);
-                }
-                if let Some(h) = header(b"Cache-Control", b"max-age=86400") {
-                    r = r.with_header(h);
-                }
-                req.respond(r)
-            }
-            (Method::Get, "/health") => {
-                req.respond(Response::from_string("ok"))
-            }
-            (Method::Get, "/mpv") => {
-                // Estado en vivo del reproductor para que el control muestre
-                // título + barra de progreso mientras mpv reproduce.
-                let st = crate::player::status_for(&app_th);
-                let body = serde_json::to_string(&st).unwrap_or_else(|_| "{}".into());
-                let mut r = Response::from_string(body);
-                if let Some(h) = header(b"Content-Type", b"application/json") {
-                    r = r.with_header(h);
-                }
-                if let Some(h) = header(b"Cache-Control", b"no-store") {
-                    r = r.with_header(h);
-                }
-                req.respond(r)
-            }
-            (Method::Get, "/buscar") => {
-                // Buscar desde el celular, con el teclado del celular. Es la
-                // razón principal por la que alguien toma el teléfono en vez
-                // de deletrear con la cruceta.
-                let q = query_param(&url, "q").unwrap_or_default();
-                let tipo = query_param(&url, "tipo").unwrap_or_else(|| "movie".into());
-                let key = key_actual();
-                if key.is_empty() {
-                    req.respond(json_resp(
-                        serde_json::json!({ "error": "sin key de TMDb" }).to_string(),
-                    ))
-                } else if q.trim().is_empty() {
-                    req.respond(json_resp(serde_json::json!({ "items": [] }).to_string()))
-                } else {
-                    let r = tauri::async_runtime::block_on(crate::tmdb_buscar(
-                        tipo.clone(),
-                        q,
-                        1,
-                        key,
-                    ));
-                    match r {
-                        Ok(lista) => req.respond(json_resp(items_json(&lista, &tipo))),
-                        Err(e) => req.respond(json_resp(
-                            serde_json::json!({ "error": e }).to_string(),
-                        )),
-                    }
-                }
-            }
-            (Method::Get, "/catalogo") => {
-                let tipo = query_param(&url, "tipo").unwrap_or_else(|| "movie".into());
-                let key = key_actual();
-                if key.is_empty() {
-                    req.respond(json_resp(
-                        serde_json::json!({ "error": "sin key de TMDb" }).to_string(),
-                    ))
-                } else {
-                    let r = tauri::async_runtime::block_on(crate::tmdb_trending(
-                        tipo.clone(),
-                        1,
-                        key,
-                    ));
-                    match r {
-                        Ok(lista) => req.respond(json_resp(items_json(&lista, &tipo))),
-                        Err(e) => req.respond(json_resp(
-                            serde_json::json!({ "error": e }).to_string(),
-                        )),
-                    }
-                }
-            }
-            (Method::Post, "/abrir") => {
-                // Mandar un título a la tele. Reusa el handoff que ya existe
-                // para Vera (`/?play=<id>&type=<tipo>`): el front resuelve el
-                // detalle y entra a Descubrir como si se hubiera clickeado la
-                // card en la tele.
-                let mut body = String::new();
-                if req.as_reader().read_to_string(&mut body).is_err() {
-                    req.respond(Response::from_string("bad body").with_status_code(StatusCode(400)))
-                } else {
-                    let v: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
-                    let id = v.get("id").and_then(|x| x.as_u64());
-                    let tipo = v.get("tipo").and_then(|x| x.as_str()).unwrap_or("");
-                    match (id, tipo) {
-                        (Some(id), t) if t == "movie" || t == "tv" || t == "anime" => {
-                            match app_th.emit("remote_open", serde_json::json!({ "id": id, "tipo": t }))
-                            {
-                                Ok(_) => req.respond(Response::from_string("ok")),
-                                Err(e) => req.respond(
-                                    Response::from_string(format!("err: {}", e))
-                                        .with_status_code(StatusCode(500)),
-                                ),
-                            }
-                        }
-                        _ => req.respond(
-                            Response::from_string("bad json").with_status_code(StatusCode(400)),
-                        ),
-                    }
-                }
-            }
-            (Method::Post, "/accion") => {
-                // Acciones que no son una tecla. Hoy: cambiar de fuente, que
-                // en la tele es un botón de la barra del reproductor y acá no
-                // tenía equivalente.
-                let mut body = String::new();
-                if req.as_reader().read_to_string(&mut body).is_err() {
-                    req.respond(Response::from_string("bad body").with_status_code(StatusCode(400)))
-                } else {
-                    match parse_str_field(&body, "accion").as_deref() {
-                        Some("fuente") => match app_th.emit("player:cambiar-fuente", ()) {
-                            Ok(_) => req.respond(Response::from_string("ok")),
-                            Err(e) => req.respond(
-                                Response::from_string(format!("err: {}", e))
-                                    .with_status_code(StatusCode(500)),
-                            ),
-                        },
-                        _ => req.respond(
-                            Response::from_string("bad json").with_status_code(StatusCode(400)),
-                        ),
-                    }
-                }
-            }
-            (Method::Post, "/key") => {
-                let mut body = String::new();
-                if req.as_reader().read_to_string(&mut body).is_err() {
-                    let r = Response::from_string("bad body")
-                        .with_status_code(StatusCode(400));
-                    req.respond(r)
-                } else {
-                    // ¿Es soltar la tecla? {"down": false}. Por defecto es apretar.
-                    let down = !body.contains("\"down\":false")
-                        && !body.contains("\"down\": false");
-                    match parse_key_body(&body) {
-                        Some(k) if down && crate::player::remote_to_mpv(&app_th, &k) => {
-                            // mpv está vivo y la tecla es de control de reproducción:
-                            // se mandó directo al IPC de mpv (phone → Rust → mpv),
-                            // sin pasar por el webview. Funciona aunque mpv tenga
-                            // el foco (clave en Wayland).
-                            req.respond(Response::from_string("mpv"))
-                        }
-                        // Soltar tecla: la interfaz solo reacciona al apretar.
-                        Some(_) if !down => req.respond(Response::from_string("ok")),
-                        Some(k) => {
-                            // Emite evento al frontend; el frontend dispatcha
-                            // un KeyboardEvent nativo. Portable a Wayland/X11/macOS/Windows
-                            // sin depender de enigo (que falla en Wayland).
-                            match app_th.emit("remote_key", k.clone()) {
-                                Ok(_) => req.respond(Response::from_string("ok")),
-                                Err(e) => {
-                                    eprintln!("[web /key] emit fail: {}", e);
-                                    let r = Response::from_string(format!("err: {}", e))
-                                        .with_status_code(StatusCode(500));
-                                    req.respond(r)
-                                }
-                            }
-                        }
-                        None => {
-                            let r = Response::from_string("bad json")
-                                .with_status_code(StatusCode(400));
-                            req.respond(r)
-                        }
-                    }
-                }
-            }
-            (Method::Post, "/text") => {
-                // Texto largo (API key) tecleado/pegado/escaneado en el celular.
-                // Se emite al frontend, que lo escribe en el input enfocado.
-                let mut body = String::new();
-                if req.as_reader().read_to_string(&mut body).is_err() {
-                    let r = Response::from_string("bad body")
-                        .with_status_code(StatusCode(400));
-                    req.respond(r)
-                } else {
-                    match parse_str_field(&body, "text") {
-                        Some(t) => match app_th.emit("remote_text", t) {
-                            Ok(_) => req.respond(Response::from_string("ok")),
-                            Err(e) => {
-                                eprintln!("[web /text] emit fail: {}", e);
-                                let r = Response::from_string(format!("err: {}", e))
-                                    .with_status_code(StatusCode(500));
-                                req.respond(r)
-                            }
-                        },
-                        None => {
-                            let r = Response::from_string("bad json")
-                                .with_status_code(StatusCode(400));
-                            req.respond(r)
-                        }
-                    }
-                }
-            }
-            _ => {
-                let r = Response::from_string("not found").with_status_code(StatusCode(404));
-                req.respond(r)
-            }
-        };
-        if let Err(e) = resp_result {
-            eprintln!("[web] respond err: {}", e);
+        // Solo lo que espera a TMDb va a otro hilo. Las teclas se atienden
+        // acá, en orden: dos flechas seguidas no pueden llegar al revés.
+        let ruta = req.url().split('?').next().unwrap_or("");
+        if ruta.ends_with("/buscar") || ruta.ends_with("/catalogo") {
+            let app = app_th.clone();
+            let prefijo = prefijo.clone();
+            std::thread::spawn(move || atender(req, &app, &prefijo));
+        } else {
+            atender(req, &app_th, &prefijo);
         }
     });
     let ip = local_ip();
