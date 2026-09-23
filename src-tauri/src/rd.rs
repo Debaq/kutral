@@ -1,9 +1,10 @@
 // RealDebrid — resolución magnet → URL directa reproducible + cache check.
 //
-// Portado de kodi-os/scraper/src/realdebrid.rs, adaptado a kutral SIN estado
-// propio: el access_token se pasa en cada llamada (el frontend ya lo guarda
-// en el store del backend tras el device-flow de más abajo). Para renovar token expirado
-// está `rd_refresh`, que el frontend persiste igual que rd_device_poll.
+// Portado de kodi-os/scraper/src/realdebrid.rs. El token vive en el store del
+// backend (creds.rs) y nunca pasa por el webview. Toda llamada va por
+// `con_token`, que lo renueva solo: antes de que venza (dura 24 h) y cuando RD
+// lo rechaza antes de tiempo, que pasa al vincular la misma cuenta en otro
+// equipo.
 //
 // Flujo resolve: addMagnet → selectFiles(video más grande) → poll hasta
 // "downloaded" (instantáneo si está cacheado) → unrestrict → URL directa.
@@ -215,6 +216,10 @@ async fn instant_available(token: &str, hashes: &[String]) -> Result<Vec<String>
             .await
         {
             Ok(r) if r.status().is_success() => r,
+            // Token rechazado: que suba, así con_token renueva y reintenta.
+            Ok(r) if r.status() == reqwest::StatusCode::UNAUTHORIZED => {
+                return Err(format!("instantAvailability {}", r.status()));
+            }
             _ => continue,
         };
         let v: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
@@ -237,13 +242,107 @@ async fn instant_available(token: &str, hashes: &[String]) -> Result<Vec<String>
     Ok(found.into_iter().collect())
 }
 
+// ---- Token: renovación automática ---------------------------------------
+
+const REVINCULAR: &str =
+    "Real-Debrid rechazó la sesión y no se pudo renovar: vuelve a vincularlo en Configuración.";
+
+// Margen antes del vencimiento: renovar un poco antes evita que una
+// reproducción arranque con un token que muere a mitad de camino.
+const MARGEN_VENCE_S: u64 = 300;
+
+// Una sola renovación a la vez: al abrir la lista de fuentes salen varias
+// llamadas juntas y cada una renovaría por su cuenta.
+static RENOVANDO: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+fn ahora_s() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+// expires_at 0 = desconocido (token pegado a mano): se usa hasta que RD lo rechace.
+fn por_vencer(c: &crate::creds::RdCreds) -> bool {
+    c.expires_at != 0 && c.expires_at <= ahora_s() + MARGEN_VENCE_S
+}
+
+fn token_rechazado(e: &str) -> bool {
+    e.contains("401 Unauthorized") || e.contains("bad_token")
+}
+
+/// Pide un access_token nuevo con el refresh_token del store y lo guarda.
+/// `rechazado` es el token que RD acaba de rechazar (None = renovar por
+/// vencimiento).
+async fn renovar(app: &tauri::AppHandle, rechazado: Option<&str>) -> Result<String, String> {
+    let _turno = RENOVANDO.lock().await;
+    let mut c = crate::creds::load(app).ok_or("RD no vinculado")?;
+    // Otra llamada lo renovó mientras esperábamos el turno.
+    let ya_renovado = match rechazado {
+        Some(t) => c.access_token != t,
+        None => !por_vencer(&c),
+    };
+    if ya_renovado && !c.access_token.is_empty() {
+        return Ok(c.access_token);
+    }
+    if c.refresh_token.is_empty() || c.client_id.is_empty() {
+        return Err(REVINCULAR.into());
+    }
+    let cli = client()?;
+    let form = [
+        ("client_id", c.client_id.as_str()),
+        ("client_secret", c.client_secret.as_str()),
+        ("code", c.refresh_token.as_str()),
+        ("grant_type", RD_GRANT_DEVICE),
+    ];
+    let r = cli
+        .post(format!("{OAUTH}/token"))
+        .form(&form)
+        .send()
+        .await
+        .map_err(|e| format!("refresh red: {e}"))?;
+    if !r.status().is_success() {
+        let st = r.status();
+        let body = r.text().await.unwrap_or_default();
+        eprintln!("[rd] refresh falló {st}: {body}");
+        return Err(REVINCULAR.into());
+    }
+    let t: RdTokenResp = r.json().await.map_err(|e| format!("refresh parse: {e}"))?;
+    c.access_token = t.access_token;
+    c.refresh_token = t.refresh_token;
+    c.expires_at = ahora_s() + t.expires_in;
+    crate::creds::save(app, &c)?;
+    eprintln!("[rd] token renovado");
+    Ok(c.access_token)
+}
+
+/// Corre `op` con un token vigente; si RD lo rechaza, renueva y reintenta una vez.
+async fn con_token<T, F, Fut>(app: &tauri::AppHandle, op: F) -> Result<T, String>
+where
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = Result<T, String>>,
+{
+    let c = crate::creds::load(app)
+        .filter(|c| !c.access_token.is_empty())
+        .ok_or("RD no vinculado")?;
+    let token = if por_vencer(&c) { renovar(app, None).await? } else { c.access_token };
+    match op(token.clone()).await {
+        Err(e) if token_rechazado(&e) => {
+            eprintln!("[rd] token rechazado ({e}), renovando");
+            let nuevo = renovar(app, Some(&token)).await?;
+            op(nuevo).await
+        }
+        r => r,
+    }
+}
+
 // ---- Comandos Tauri -----------------------------------------------------
 
 /// Resuelve un magnet → URL directa lista para mpv.
 #[tauri::command]
 pub async fn rd_resolve(app: tauri::AppHandle, magnet: String) -> Result<String, String> {
-    let token = crate::creds::token(&app)?;
-    resolve_magnet(&token, &magnet).await
+    let magnet = magnet.as_str();
+    con_token(&app, |token| async move { resolve_magnet(&token, magnet).await }).await
 }
 
 /// Desbloquea un link de hoster (Mega, Streamtape, Voe, Mixdrop, MP4Upload…)
@@ -261,9 +360,12 @@ pub async fn rd_unrestrict(app: tauri::AppHandle, link: String) -> Result<String
     if link.trim().is_empty() {
         return Err("link vacío".into());
     }
-    let token = crate::creds::token(&app)?;
-    let cli = client()?;
-    unrestrict(&cli, &token, link.trim()).await
+    let link = link.trim();
+    con_token(&app, |token| async move {
+        let cli = client()?;
+        unrestrict(&cli, &token, link).await
+    })
+    .await
 }
 
 /// Devuelve qué info_hashes ya están cacheados en RD (para badge "instantáneo").
@@ -272,8 +374,8 @@ pub async fn rd_instant_available(
     app: tauri::AppHandle,
     hashes: Vec<String>,
 ) -> Result<Vec<String>, String> {
-    let token = crate::creds::token(&app)?;
-    instant_available(&token, &hashes).await
+    let hashes = hashes.as_slice();
+    con_token(&app, |token| async move { instant_available(&token, hashes).await }).await
 }
 
 #[derive(Deserialize, Serialize)]
@@ -293,11 +395,14 @@ pub struct RdAccount {
 /// Estado de la cuenta RD (premium/free, expiración). Diagnóstico de 451.
 #[tauri::command]
 pub async fn rd_account(app: tauri::AppHandle) -> Result<RdAccount, String> {
-    let token = crate::creds::token(&app)?;
+    con_token(&app, |token| async move { cuenta(&token).await }).await
+}
+
+async fn cuenta(token: &str) -> Result<RdAccount, String> {
     let cli = client()?;
     let r = cli
         .get(format!("{BASE}/user"))
-        .header("Authorization", bearer(&token))
+        .header("Authorization", bearer(token))
         .send()
         .await
         .map_err(|e| format!("user red: {e}"))?;
@@ -358,11 +463,14 @@ pub async fn rd_cleanup_torrents(
     if older_than_hours == 0 {
         return Ok(0);
     }
-    let token = crate::creds::token(&app)?;
+    con_token(&app, |token| async move { limpiar_viejos(&token, older_than_hours).await }).await
+}
+
+async fn limpiar_viejos(token: &str, older_than_hours: u64) -> Result<usize, String> {
     let cli = client()?;
     let r = cli
         .get(format!("{BASE}/torrents?limit=200"))
-        .header("Authorization", bearer(&token))
+        .header("Authorization", bearer(token))
         .send()
         .await
         .map_err(|e| format!("list red: {e}"))?;
@@ -378,7 +486,7 @@ pub async fn rd_cleanup_torrents(
             Some(added) if added < cutoff => {
                 let resp = cli
                     .delete(format!("{BASE}/torrents/delete/{}", t.id))
-                    .header("Authorization", bearer(&token))
+                    .header("Authorization", bearer(token))
                     .send()
                     .await;
                 if matches!(resp, Ok(ref x) if x.status().is_success()) {
@@ -391,52 +499,11 @@ pub async fn rd_cleanup_torrents(
     Ok(deleted)
 }
 
-#[derive(Serialize)]
-pub struct RdRefreshed {
-    pub access_token: String,
-    pub refresh_token: String,
-    pub expires_in: u64,
-}
-
 #[derive(Deserialize)]
 struct RdTokenResp {
     access_token: String,
     refresh_token: String,
     expires_in: u64,
-}
-
-/// Renueva el access_token usando las credenciales del device-flow.
-/// El frontend lo persiste igual que tras rd_device_poll.
-#[tauri::command]
-pub async fn rd_refresh(
-    client_id: String,
-    client_secret: String,
-    refresh_token: String,
-) -> Result<RdRefreshed, String> {
-    let cli = client()?;
-    let form = [
-        ("client_id", client_id.as_str()),
-        ("client_secret", client_secret.as_str()),
-        ("code", refresh_token.as_str()),
-        ("grant_type", RD_GRANT_DEVICE),
-    ];
-    let r = cli
-        .post(format!("{OAUTH}/token"))
-        .form(&form)
-        .send()
-        .await
-        .map_err(|e| format!("refresh red: {e}"))?;
-    if !r.status().is_success() {
-        let st = r.status();
-        let body = r.text().await.unwrap_or_default();
-        return Err(format!("RD refresh {st}: {body}"));
-    }
-    let t: RdTokenResp = r.json().await.map_err(|e| format!("refresh parse: {e}"))?;
-    Ok(RdRefreshed {
-        access_token: t.access_token,
-        refresh_token: t.refresh_token,
-        expires_in: t.expires_in,
-    })
 }
 
 // ============================================================

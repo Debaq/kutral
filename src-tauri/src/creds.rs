@@ -1,7 +1,8 @@
 // Store de credenciales Real-Debrid. Los secrets (access_token, refresh_token,
 // client_id, client_secret) viven en un archivo 0600 del dir de config, NUNCA
 // en localStorage del webview → fuera del alcance de cualquier JS/XSS. Las
-// commands rd_* leen el token de aquí; el frontend jamás lo recibe.
+// commands rd_* leen el token de aquí (rd::con_token, que además lo renueva);
+// el frontend jamás lo recibe.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -35,15 +36,6 @@ pub fn load(app: &tauri::AppHandle) -> Option<RdCreds> {
     let path = creds_path(app).ok()?;
     let raw = std::fs::read_to_string(&path).ok()?;
     serde_json::from_str(&raw).ok()
-}
-
-/// Access token actual. Error si RD no está vinculado.
-pub fn token(app: &tauri::AppHandle) -> Result<String, String> {
-    let c = load(app).ok_or("RD no vinculado")?;
-    if c.access_token.is_empty() {
-        return Err("RD no vinculado".into());
-    }
-    Ok(c.access_token)
 }
 
 /// Persiste las credenciales con permisos 0600 (solo el usuario).

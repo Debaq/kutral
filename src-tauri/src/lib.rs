@@ -590,7 +590,6 @@ pub fn run() {
             rd::rd_resolve,
             rd::rd_unrestrict,
             rd::rd_instant_available,
-            rd::rd_refresh,
             rd::rd_account,
             rd::rd_cleanup_torrents,
             torrent::torrent_add,
