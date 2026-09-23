@@ -1,21 +1,23 @@
 // Navegación espacial por teclado (y el control web, que manda las mismas teclas).
 //
-// Misma idea que la del catálogo (routes/+page.svelte): en vez de un orden
-// lineal de tabulación, cada flecha busca el elemento `[data-nav]` visible que
-// esté MÁS CERCA en esa dirección geométrica. Es lo que hace que un grid se
-// recorra como un grid y no como una lista.
+// En vez de un orden lineal de tabulación, cada flecha busca el elemento
+// `[data-nav]` visible que esté MÁS CERCA en esa dirección geométrica. Es lo
+// que hace que un grid se recorra como un grid y no como una lista.
 //
 // `data-section` agrupa: primero se buscan candidatos dentro de la misma
 // sección (el foco no se escapa de una fila de filtros al primer ArrowRight) y
 // solo si no hay ninguno se permite saltar a otra.
 //
-// La home tiene su propia copia con reglas cautivas propias (el panel de info
-// no sale verticalmente, ArrowDown en la galería dispara la carga de más
-// páginas). Esta versión es la genérica, sin esos casos.
+// La home y la IPTV arman su propio `navegar` con reglas cautivas propias (el
+// panel de info no sale verticalmente, un dropdown abierto atrapa el foco…),
+// pero usan la misma geometría: `mejor` y `seccionDe`.
 
 export type Dir = "up" | "down" | "left" | "right";
 
-function seccionDe(el: HTMLElement | null): string | null {
+/** Lo que importa de un rectángulo para medir distancias. */
+export type Rect = Pick<DOMRect, "left" | "right" | "top" | "bottom" | "width" | "height">;
+
+export function seccionDe(el: HTMLElement | null): string | null {
   let nodo: HTMLElement | null = el;
   while (nodo && nodo !== document.body) {
     const s = nodo.dataset?.section;
@@ -25,51 +27,53 @@ function seccionDe(el: HTMLElement | null): string | null {
   return null;
 }
 
-// Distancia dirigida: manda el avance en el eje de la flecha, y la desviación
-// en el otro eje penaliza (x1.4) para que no salte en diagonal si hay algo
-// derecho al frente.
-function mejor(actual: HTMLElement, candidatos: HTMLElement[], dir: Dir): HTMLElement | null {
+/**
+ * Distancia dirigida de `r` a `er` yendo hacia `dir`, o null si `er` no está
+ * en esa dirección. Manda el avance en el eje de la flecha; la desviación en
+ * el otro eje casi no cuenta si los rectángulos se cruzan (está al frente) y
+ * castiga fuerte si no. Con un factor fijo, un elemento lejano pero bien
+ * centrado le ganaba a uno pegado y corrido: en una serie, bajar desde
+ * Trailer se saltaba las temporadas y aterrizaba en el director.
+ */
+export function distancia(r: Rect, er: Rect, dir: Dir): number | null {
+  const dx = er.left + er.width / 2 - (r.left + r.width / 2);
+  const dy = er.top + er.height / 2 - (r.top + r.height / 2);
+  let principal: number;
+  let lateral: number;
+  if (dir === "right") {
+    if (dx <= 6) return null;
+    principal = dx;
+    lateral = Math.abs(dy);
+  } else if (dir === "left") {
+    if (dx >= -6) return null;
+    principal = -dx;
+    lateral = Math.abs(dy);
+  } else if (dir === "down") {
+    if (dy <= 6) return null;
+    principal = dy;
+    lateral = Math.abs(dx);
+  } else {
+    if (dy >= -6) return null;
+    principal = -dy;
+    lateral = Math.abs(dx);
+  }
+  const alFrente =
+    dir === "left" || dir === "right"
+      ? er.bottom > r.top + 6 && er.top < r.bottom - 6
+      : er.right > r.left + 6 && er.left < r.right - 6;
+  return principal + lateral * (alFrente ? 0.2 : 2.5);
+}
+
+/** El candidato más cercano a `actual` en la dirección `dir`. */
+export function mejor(actual: HTMLElement, candidatos: HTMLElement[], dir: Dir): HTMLElement | null {
   const r = actual.getBoundingClientRect();
-  const cx = r.left + r.width / 2;
-  const cy = r.top + r.height / 2;
   let elegido: HTMLElement | null = null;
   let mejorDist = Infinity;
   for (const el of candidatos) {
     if (el === actual) continue;
-    const er = el.getBoundingClientRect();
-    const dx = er.left + er.width / 2 - cx;
-    const dy = er.top + er.height / 2 - cy;
-    let principal = 0;
-    let lateral = 0;
-    let sirve = false;
-    if (dir === "right") {
-      sirve = dx > 6;
-      principal = dx;
-      lateral = Math.abs(dy);
-    } else if (dir === "left") {
-      sirve = dx < -6;
-      principal = -dx;
-      lateral = Math.abs(dy);
-    } else if (dir === "down") {
-      sirve = dy > 6;
-      principal = dy;
-      lateral = Math.abs(dx);
-    } else {
-      sirve = dy < -6;
-      principal = -dy;
-      lateral = Math.abs(dx);
-    }
-    if (!sirve) continue;
-    // ¿Está al frente? Si los rectángulos se cruzan en el eje perpendicular, el
-    // desvío casi no cuenta; si no, castiga fuerte. Con un factor fijo, un
-    // elemento lejano pero bien centrado le ganaba a uno pegado y corrido.
-    const alFrente =
-      dir === "left" || dir === "right"
-        ? er.bottom > r.top + 6 && er.top < r.bottom - 6
-        : er.right > r.left + 6 && er.left < r.right - 6;
-    const dist = principal + lateral * (alFrente ? 0.2 : 2.5);
-    if (dist < mejorDist) {
-      mejorDist = dist;
+    const d = distancia(r, el.getBoundingClientRect(), dir);
+    if (d !== null && d < mejorDist) {
+      mejorDist = d;
       elegido = el;
     }
   }

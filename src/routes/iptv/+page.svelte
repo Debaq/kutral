@@ -17,6 +17,7 @@
   import { config, loadConfig, IPTV_DEFAULT_LISTS } from "$lib/config.svelte";
   import { ayuda } from "$lib/atajos/store.svelte";
   import { inhibirReposo } from "$lib/reposo";
+  import { mejor } from "$lib/nav";
 
   type Canal = { name: string; logo: string; groups: string[]; url: string; source: string };
 
@@ -133,44 +134,10 @@
   const visibles = $derived(filtrados.slice(0, CAP));
   const ocultos = $derived(Math.max(0, filtrados.length - CAP));
 
-  // --- Navegación espacial key-first sobre [data-nav] (mismo motor que el home) ---
+  // --- Navegación espacial key-first sobre [data-nav] (geometría de $lib/nav) ---
   // Geométrica: elige el candidato más cercano en la dirección pedida. Cubre por
   // igual el header (volver, filtros, buscador) y la grilla, sin depender de un
   // índice. Con un dropdown abierto, atrapa el foco dentro del menú.
-  function findBest(
-    cur: HTMLElement,
-    candidates: HTMLElement[],
-    dir: "up" | "down" | "left" | "right",
-  ): HTMLElement | null {
-    const r = cur.getBoundingClientRect();
-    const cx = r.left + r.width / 2;
-    const cy = r.top + r.height / 2;
-    let best: HTMLElement | null = null;
-    let bestDist = Infinity;
-    for (const el of candidates) {
-      if (el === cur) continue;
-      const er = el.getBoundingClientRect();
-      const ex = er.left + er.width / 2;
-      const ey = er.top + er.height / 2;
-      const dx = ex - cx;
-      const dy = ey - cy;
-      let primary = 0, secondary = 0, valid = false;
-      if (dir === "right") { valid = dx > 6; primary = dx; secondary = Math.abs(dy); }
-      else if (dir === "left") { valid = dx < -6; primary = -dx; secondary = Math.abs(dy); }
-      else if (dir === "down") { valid = dy > 6; primary = dy; secondary = Math.abs(dx); }
-      else { valid = dy < -6; primary = -dy; secondary = Math.abs(dx); }
-      if (!valid) continue;
-      // Al frente pesa; lo lejano y alineado, no (ver nav.ts).
-      const alFrente =
-        dir === "left" || dir === "right"
-          ? er.bottom > r.top + 6 && er.top < r.bottom - 6
-          : er.right > r.left + 6 && er.left < r.right - 6;
-      const dist = primary + secondary * (alFrente ? 0.2 : 2.5);
-      if (dist < bestDist) { bestDist = dist; best = el; }
-    }
-    return best;
-  }
-
   function spatialNav(dir: "up" | "down" | "left" | "right") {
     let all = Array.from(
       document.querySelectorAll<HTMLElement>("[data-nav]:not([disabled])"),
@@ -182,7 +149,7 @@
     }
     const cur = document.activeElement as HTMLElement | null;
     if (!cur || !cur.matches?.("[data-nav]")) { all[0]?.focus(); return; }
-    const best = findBest(cur, all, dir);
+    const best = mejor(cur, all, dir);
     if (best) {
       best.focus({ preventScroll: false });
       best.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });

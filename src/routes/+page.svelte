@@ -32,6 +32,7 @@
   } from "$lib/catalogo";
   import { leerImgCache, guardarImgCache } from "$lib/imgcache";
   import { inhibirReposo } from "$lib/reposo";
+  import { mejor, seccionDe } from "$lib/nav";
   import {
     cargarNoDisponiblesIniciales,
     pausarScreening,
@@ -2733,54 +2734,6 @@
     return document;
   }
 
-  function getSection(el: HTMLElement | null): string | null {
-    let node: HTMLElement | null = el;
-    while (node && node !== document.body) {
-      const s = node.dataset?.section;
-      if (s) return s;
-      node = node.parentElement;
-    }
-    return null;
-  }
-
-  function findBest(
-    cur: HTMLElement,
-    candidates: HTMLElement[],
-    dir: "up" | "down" | "left" | "right"
-  ): HTMLElement | null {
-    const r = cur.getBoundingClientRect();
-    const cx = r.left + r.width / 2;
-    const cy = r.top + r.height / 2;
-    let best: HTMLElement | null = null;
-    let bestDist = Infinity;
-    for (const el of candidates) {
-      if (el === cur) continue;
-      const er = el.getBoundingClientRect();
-      const ex = er.left + er.width / 2;
-      const ey = er.top + er.height / 2;
-      const dx = ex - cx;
-      const dy = ey - cy;
-      let primary = 0, secondary = 0, valid = false;
-      if (dir === "right") { valid = dx > 6; primary = dx; secondary = Math.abs(dy); }
-      else if (dir === "left")  { valid = dx < -6; primary = -dx; secondary = Math.abs(dy); }
-      else if (dir === "down")  { valid = dy > 6; primary = dy; secondary = Math.abs(dx); }
-      else                       { valid = dy < -6; primary = -dy; secondary = Math.abs(dx); }
-      if (!valid) continue;
-      // ¿El candidato se cruza con el actual en el eje perpendicular? O sea,
-      // ¿está literalmente al frente? Con un castigo lateral fijo (era x1.4)
-      // un elemento MUY lejano pero centrado le ganaba a uno pegado y corrido:
-      // en una serie, bajar desde Trailer se saltaba las temporadas (anchas,
-      // centro lejos del botón) y aterrizaba en el director, 200px más abajo.
-      const alFrente =
-        dir === "left" || dir === "right"
-          ? er.bottom > r.top + 6 && er.top < r.bottom - 6
-          : er.right > r.left + 6 && er.left < r.right - 6;
-      const dist = primary + secondary * (alFrente ? 0.2 : 2.5);
-      if (dist < bestDist) { bestDist = dist; best = el; }
-    }
-    return best;
-  }
-
   function spatialNav(dir: "up" | "down" | "left" | "right") {
     const all = Array.from(
       getNavRoot().querySelectorAll<HTMLElement>('[data-nav]:not([disabled])')
@@ -2790,12 +2743,12 @@
       all[0]?.focus();
       return;
     }
-    const curSection = getSection(cur);
+    const curSection = seccionDe(cur);
     // Pass 1: candidatos en la misma sección (cautivos)
     let best: HTMLElement | null = null;
     if (curSection) {
-      const sameSec = all.filter((el) => getSection(el) === curSection);
-      best = findBest(cur, sameSec, dir);
+      const sameSec = all.filter((el) => seccionDe(el) === curSection);
+      best = mejor(cur, sameSec, dir);
     }
     // Borde izquierdo del grid de capítulos: salir vuelve SIEMPRE a la
     // temporada abierta, no a lo que quede más cerca (que era el botón de
@@ -2827,7 +2780,7 @@
           if (!loadingMore) void loadMore();
         }
       } else if (allowCross) {
-        best = findBest(cur, all, dir);
+        best = mejor(cur, all, dir);
       }
     }
     if (best) {
