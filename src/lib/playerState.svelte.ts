@@ -9,7 +9,7 @@ export const player = $state({
 	live: false,
 	/** Qué está cargado en mpv: lo necesita el buscador de subtítulos, que
 	 *  vive en el layout (no en el picker, que se desmonta al salir). */
-	nowPlaying: { imdbId: "", title: "" },
+	nowPlaying: { imdbId: "", title: "", season: null as number | null, episode: null as number | null },
 });
 
 export function setPlaying(v: boolean) {
@@ -34,6 +34,11 @@ export function setSession(s: MpvSession | null) {
 
 /** Contexto de lo que se manda a reproducir (para buscar subtítulos después).
  *  IPTV lo limpia: un canal en vivo no tiene imdb con el que buscar. */
-export function setNowPlaying(imdbId: string, title: string) {
-	player.nowPlaying = { imdbId, title };
+export function setNowPlaying(
+	imdbId: string,
+	title: string,
+	season: number | null = null,
+	episode: number | null = null,
+) {
+	player.nowPlaying = { imdbId, title, season, episode };
 }

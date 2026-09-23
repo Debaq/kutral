@@ -1671,6 +1671,10 @@
         imdbId,
         language: config.subsLang,
         apiKey: config.wyzieKey,
+        // Series: el capítulo elegido, si no trae subs de cualquier episodio.
+        ...(sourcesSeason != null && sourcesEpisode != null
+          ? { season: sourcesSeason, episode: sourcesEpisode }
+          : {}),
       });
       if (subs.length > 0) {
         currentSubUrl = subs[0].url;

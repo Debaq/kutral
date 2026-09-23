@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 // Subtítulos: Wyzie (sub.wyzie.io)
 // ============================================================
 // Endpoint observado: GET https://sub.wyzie.io/search?id={imdb}&language={lang}&key={key}
+// Series: &season=&episode= (sin ellos trae subtítulos de cualquier capítulo).
 // Sin key devuelve 401 con instrucciones para registrar en store.wyzie.io/redeem.
 
 #[derive(Serialize)]
@@ -33,6 +34,8 @@ pub async fn wyzie_search(
     imdb_id: String,
     language: String,
     api_key: String,
+    season: Option<u32>,
+    episode: Option<u32>,
 ) -> Result<Vec<WyzieSubtitle>, String> {
     if api_key.is_empty() {
         return Err("falta wyzie key".into());
@@ -40,12 +43,15 @@ pub async fn wyzie_search(
     if imdb_id.is_empty() {
         return Err("imdb_id vacío".into());
     }
-    let url = format!(
+    let mut url = format!(
         "https://sub.wyzie.io/search?id={}&language={}&key={}",
         urlencoding::encode(&imdb_id),
         urlencoding::encode(&language),
         urlencoding::encode(&api_key)
     );
+    if let (Some(t), Some(e)) = (season, episode) {
+        url.push_str(&format!("&season={t}&episode={e}"));
+    }
     let cli = crate::client()?;
     let resp = cli
         .get(&url)

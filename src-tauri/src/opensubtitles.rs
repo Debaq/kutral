@@ -272,11 +272,27 @@ pub async fn subtitle_save(
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// Query de /subtitles. Con capítulo se busca por la serie (`parent_imdb_id`)
+/// con temporada y episodio: por `imdb_id` de la serie la API devuelve
+/// subtítulos de cualquier capítulo. Los parámetros van en orden alfabético:
+/// si no, la API responde con una redirección en vez de resultados.
+fn consulta(imdb_num: &str, lang: &str, season: Option<u32>, episode: Option<u32>, por_descargas: bool) -> String {
+    let orden = if por_descargas { "&order_by=download_count" } else { "" };
+    match (season, episode) {
+        (Some(t), Some(e)) => format!(
+            "episode_number={e}&languages={lang}{orden}&parent_imdb_id={imdb_num}&season_number={t}"
+        ),
+        _ => format!("imdb_id={imdb_num}&languages={lang}{orden}"),
+    }
+}
+
 #[tauri::command]
 pub async fn os_search(
     app: tauri::AppHandle,
     imdb_id: String,
     language: String,
+    season: Option<u32>,
+    episode: Option<u32>,
 ) -> Result<OsSubtitle, String> {
     if OS_API_KEY.is_empty() {
         return Err("Falta API key de OpenSubtitles.".into());
@@ -290,7 +306,7 @@ pub async fn os_search(
     let token = valid_token(&app);
 
     // 1) Búsqueda. Api-Key obligatoria; Bearer opcional (sube la cuota).
-    let url = format!("{OS_BASE}/subtitles?imdb_id={imdb_num}&languages={lang}");
+    let url = format!("{OS_BASE}/subtitles?{}", consulta(imdb_num, lang, season, episode, false));
     let mut req = cli.get(&url).header("Api-Key", OS_API_KEY).header("Accept", "application/json");
     if let Some(t) = &token {
         req = req.header("Authorization", format!("Bearer {t}"));
@@ -367,6 +383,8 @@ pub async fn os_list(
     app: tauri::AppHandle,
     imdb_id: String,
     language: String,
+    season: Option<u32>,
+    episode: Option<u32>,
 ) -> Result<Vec<OsListItem>, String> {
     if OS_API_KEY.is_empty() {
         return Err("Falta API key de OpenSubtitles.".into());
@@ -379,8 +397,7 @@ pub async fn os_list(
     let cli = client()?;
     let token = valid_token(&app);
 
-    let url =
-        format!("{OS_BASE}/subtitles?imdb_id={imdb_num}&languages={lang}&order_by=download_count");
+    let url = format!("{OS_BASE}/subtitles?{}", consulta(imdb_num, lang, season, episode, true));
     let mut req = cli
         .get(&url)
         .header("Api-Key", OS_API_KEY)
@@ -462,6 +479,17 @@ pub async fn os_download(app: tauri::AppHandle, file_id: i64) -> Result<OsSubtit
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn consulta_por_capitulo_y_en_orden() {
+        assert_eq!(consulta("944947", "es", None, None, true), "imdb_id=944947&languages=es&order_by=download_count");
+        assert_eq!(
+            consulta("944947", "es", Some(1), Some(2), true),
+            "episode_number=2&languages=es&order_by=download_count&parent_imdb_id=944947&season_number=1"
+        );
+        // Temporada sin episodio: no alcanza para elegir capítulo.
+        assert_eq!(consulta("944947", "es", Some(1), None, false), "imdb_id=944947&languages=es");
+    }
 
     #[test]
     fn el_user_agent_sigue_la_version_del_crate() {

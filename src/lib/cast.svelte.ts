@@ -328,6 +328,14 @@ type Seguimiento = {
 
 let seg: Seguimiento | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
+// Recarga en curso (cambio de subtítulos): la TV pasa por IDLE/LOADING al
+// cambiar de medio y eso no es que haya terminado.
+let graciaHasta = 0;
+
+/** Ignora los estados de fin durante `ms` o hasta que la TV vuelva a reproducir. */
+export function darGracia(ms: number) {
+  graciaHasta = Date.now() + ms;
+}
 
 // Un minuto de video corriendo sin que nadie diga "no se oye" = funciona.
 const SEGUNDOS_PARA_APRENDER = 60;
@@ -355,6 +363,13 @@ async function muestrear() {
   if (!st.activa) {
     terminar(false);
     return;
+  }
+  if (Date.now() < graciaHasta) {
+    if (st.estado === "PLAYING" || st.estado === "PAUSED") graciaHasta = 0;
+    else {
+      cast.estado = { ...st, estado: "LOADING" };
+      return;
+    }
   }
   cast.estado = st;
   if (!seg) return;

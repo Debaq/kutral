@@ -55,6 +55,7 @@
     rasgosActuales,
     seguir as seguirEnTv,
     control as castControl,
+    darGracia,
     detener as castDetener,
     saltar as castSaltar,
     nombreAudio,
@@ -62,6 +63,7 @@
     type CastStatus,
     type ProbeTrack,
   } from "$lib/cast.svelte";
+  import { buscarSubtitulos, enlaceSub, type OpcionSub } from "$lib/subtitulos";
   import { contextoActual } from "$lib/historial.svelte";
 
   // Pista real del contenedor leída de mpv (verdad del archivo).
@@ -168,6 +170,13 @@
   let castSrc: Src | null = null;
   // Esc mientras la TV carga: cortar y no seguir probando.
   let castCancel = false;
+  // Lo que se mandó a la TV, para recargarlo en el mismo minuto con otros
+  // subtítulos (el receptor no deja cambiar la pista sin volver a cargar).
+  let castEnvio: Record<string, unknown> | null = null;
+  // Menú de subtítulos en la TV: null = cerrado.
+  let subsTv = $state<OpcionSub[] | null>(null);
+  let buscandoSubsTv = $state(false);
+  let subsTvActual = $state("");
   // La transmisión terminó desde la TV (su control, otra app, se apagó): el
   // segundo en que iba, para ofrecer seguir aquí. null = sigue en la TV.
   let tvTermino = $state<number | null>(null);
@@ -462,7 +471,7 @@
     resolvingMsg = "Abriendo reproductor…";
     desdeLocal = !!s.local;
     // Contexto para el buscador de subtítulos global (SubsService).
-    setNowPlaying(imdbId, title);
+    setNowPlaying(imdbId, title, season ?? null, episode ?? null);
     // Retomar donde quedó. 5 s de colchón: caer justo en el corte desorienta,
     // un poco de contexto previo hace que se retome la escena, no el frame.
     const base = desdeSegundos ?? desdeForzado ?? retomarSegundos;
@@ -534,18 +543,17 @@
     }
     if (castCancel) throw new Error("TV_CORTADO: cancelado");
     resolvingMsg = `Enviando a ${tv.nombre}… 📺`;
+    const envio = {
+      tv,
+      url,
+      titulo: title,
+      subtitulo: s.title || null,
+      imagen: backdrop,
+      subsIdioma: config.subsLang || "es",
+      archivo: archivoTorrent || null,
+    };
     try {
-      await invoke("cast_play", {
-        tv,
-        url,
-        titulo: title,
-        subtitulo: s.title || null,
-        imagen: backdrop,
-        desde,
-        subs,
-        subsIdioma: config.subsLang || "es",
-        archivo: archivoTorrent || null,
-      });
+      await invoke("cast_play", { ...envio, desde, subs });
     } catch (e) {
       const m = String(e);
       if (m.includes("LOAD_FAILED") && r) {
@@ -561,6 +569,9 @@
       castSrc = s;
       seguirEnTv({ tvId: tv.id, rasgos: r, ctx: contextoActual(), desde });
       resolving = false;
+      castEnvio = envio;
+      subsTv = null;
+      subsTvActual = subs ? "automáticos" : "";
       tvTermino = null;
       tvVista = false;
       tvPos = desde;
@@ -635,11 +646,18 @@
           { id: "aqui", label: `💻 Seguir aquí desde ${fmtTiempo(tvTermino)}` },
           { id: "volver", label: "↩ Volver" },
         ]
+      : subsTv != null
+      ? [
+          { id: "sub:off", label: "🚫 Sin subtítulos" },
+          ...subsTv.map((o, i) => ({ id: `sub:${i}`, label: o.label })),
+          { id: "sub:volver", label: "↩ Volver" },
+        ]
       : [
           { id: "pausa", label: cast.estado?.estado === "PAUSED" ? "▶ Seguir" : "⏸ Pausa" },
           { id: "atras", label: "⏪ 30 s" },
           { id: "adelante", label: "⏩ 30 s" },
           { id: "mudo", label: "🔇 No se oye" },
+          { id: "subs", label: buscandoSubsTv ? "💬 Buscando…" : "💬 Subtítulos" },
           { id: "aqui", label: "💻 Seguir aquí" },
           { id: "detener", label: "⏹ Detener" },
           { id: "navegar", label: "↩ Seguir navegando" },
@@ -668,6 +686,49 @@
     castFoco = 0;
   });
 
+  // Lista de subtítulos para lo que está en la TV (del capítulo, si es serie).
+  async function abrirSubsTv() {
+    if (buscandoSubsTv) return;
+    if (!imdbId) {
+      notify("info", "Sin subtítulos", "Este título no tiene con qué buscarlos.");
+      return;
+    }
+    buscandoSubsTv = true;
+    try {
+      const opts = await buscarSubtitulos(imdbId, { season, episode });
+      subsTv = opts;
+      castFoco = 0;
+      if (!opts.length) notify("info", "Sin alternativas", "No se encontraron subtítulos; solo puedes apagarlos.");
+    } finally {
+      buscandoSubsTv = false;
+    }
+  }
+
+  // Recarga el video en la TV en el mismo minuto con otro subtítulo (o sin).
+  async function elegirSubTv(id: string) {
+    const opts = subsTv;
+    subsTv = null;
+    castFoco = 0;
+    if (id === "sub:volver" || !opts || !castEnvio) return;
+    const o = id === "sub:off" ? null : opts[Number(id.slice(4))];
+    let subs: string | null = null;
+    try {
+      if (o) subs = await enlaceSub(o);
+    } catch (e) {
+      notify("warn", "No se pudo bajar el subtítulo", String(e));
+      return;
+    }
+    const desde = Math.max(0, Math.floor(cast.estado?.pos ?? tvPos) - 3);
+    darGracia(45_000);
+    try {
+      await invoke("cast_play", { ...castEnvio, desde, subs });
+      subsTvActual = o ? o.label : "";
+      notify("info", o ? "Subtítulos cambiados" : "Subtítulos apagados", "La TV retoma en el mismo minuto.");
+    } catch (e) {
+      notify("warn", "La TV no aceptó el cambio", String(e));
+    }
+  }
+
   // Corta la TV y abre la misma versión en este equipo, desde donde iba.
   async function seguirAqui() {
     const pos = tvTermino ?? cast.estado?.pos ?? tvPos;
@@ -690,8 +751,12 @@
   }
 
   async function castAccion(id: string) {
+    if (id.startsWith("sub:")) return void elegirSubTv(id);
     try {
       switch (id) {
+        case "subs":
+          await abrirSubsTv();
+          break;
         case "pausa":
           await castControl(cast.estado?.estado === "PAUSED" ? "seguir" : "pausa");
           break;
@@ -1242,6 +1307,11 @@
     await loadExternalSub();
   }
 
+  // Series: sin capítulo, las APIs devuelven subtítulos de cualquier episodio.
+  function capituloSubs() {
+    return season != null && episode != null ? { season, episode } : {};
+  }
+
   // URL de un subtítulo externo: Wyzie si hay key, si no OpenSubtitles (cuota
   // diaria). "" = no hay.
   async function buscarSubUrl(): Promise<string> {
@@ -1254,6 +1324,7 @@
           imdbId,
           language: lang,
           apiKey: config.wyzieKey,
+          ...capituloSubs(),
         });
         if (subs.length) url = subs[0].url;
       } catch (e) {
@@ -1265,6 +1336,7 @@
         const os = await invoke<{ url: string; remaining: number }>("os_search", {
           imdbId,
           language: lang,
+          ...capituloSubs(),
         });
         url = os.url;
         dbg(`opensubtitles ok, quedan ${os.remaining}/día`);
@@ -1426,9 +1498,11 @@
       if (e.key === "ArrowRight" || e.key === "ArrowDown") {
         e.preventDefault();
         castFoco = (castFoco + 1) % n;
+        scrollFocused();
       } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
         e.preventDefault();
         castFoco = (castFoco - 1 + n) % n;
+        scrollFocused();
       } else if (e.key === "Enter") {
         e.preventDefault();
         void castAccion(castBtns[castFoco].id);
@@ -1437,7 +1511,10 @@
         if (tvTermino == null) void castAccion("pausa");
       } else if (e.key === "Escape" || e.key === "Backspace") {
         e.preventDefault();
-        void castAccion("navegar");
+        if (subsTv != null) {
+          subsTv = null;
+          castFoco = 0;
+        } else void castAccion("navegar");
       }
       return;
     }
@@ -1567,13 +1644,19 @@
           {:else if st.estado === "SIN_CONEXION"}La TV no responde…
           {:else}{fmtTiempo(st.pos)} de {fmtTiempo(st.duracion)}{/if}
         </p>
+        {#if subsTvActual}
+          <p class="sp-tor-line">💬 Subtítulos: {subsTvActual}</p>
+        {/if}
         {#if st?.aviso === "SUBS_SIN_ACCESO"}
           <p class="sp-tor-slow">
             Los subtítulos no llegan a la TV: revisa el firewall en Configuración → Transmitir a la TV.
           </p>
         {/if}
         {/if}
-        <div class="sp-cast-btns">
+        {#if subsTv != null}
+          <p class="sp-tor-line">Elige subtítulos · la TV retoma en el mismo minuto</p>
+        {/if}
+        <div class="sp-cast-btns" class:sp-cast-subs={subsTv != null}>
           {#each castBtns as b, i (b.id)}
             <button
               class="sp-foot-btn"
@@ -2118,6 +2201,23 @@
     justify-content: center;
     gap: 10px;
     max-width: 720px;
+  }
+  /* Lista de subtítulos: una columna con scroll, los nombres de release son largos. */
+  .sp-cast-btns.sp-cast-subs {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    width: min(720px, 90vw);
+    max-height: 46vh;
+    overflow-y: auto;
+    padding: 4px;
+  }
+  .sp-cast-subs .sp-foot-btn {
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex-shrink: 0;
   }
   .sp-foot-btn {
     background: rgba(20, 20, 28, 0.62);
