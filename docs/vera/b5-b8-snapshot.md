@@ -1,7 +1,7 @@
 # Vera — snapshot B5–B8 (estado actual, vivo)
 
 Estado del recomendador Vera al cierre de B8. Reemplaza al snapshot anterior
-(`vera-b1-b4a-snapshot.md`) que documentaba una dirección cancelada. Lo que
+(`b1-b4a-snapshot.md`) que documentaba una dirección cancelada. Lo que
 está acá ESTÁ en el código, funciona y compila verde.
 
 ## Flujo actual (B6)

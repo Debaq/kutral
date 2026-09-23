@@ -19,7 +19,7 @@
 // bueno con pocos seeds miente, y esta comparación no.
 //
 // Portable a propósito: lee y escribe por comandos que existen en Linux (embed)
-// y en Windows (mpv de proceso, por IPC). Ver TODO.md, "Player en Windows".
+// y en Windows (mpv de proceso, por IPC). Ver docs/TODO.md, "Player en Windows".
 
 import { invoke } from "@tauri-apps/api/core";
 import { config, cachePresetActual } from "$lib/config.svelte";
