@@ -39,6 +39,9 @@
     type TrailerPick,
   } from "$lib/trailers";
   import { sugerenciasPara, type SugerenciaFin, type SiguienteFin } from "$lib/sugerenciasFin";
+  import { autofocusFirst } from "$lib/inicio/acciones";
+  import FichaPersona from "$lib/inicio/FichaPersona.svelte";
+  import Carrusel from "$lib/inicio/Carrusel.svelte";
   import {
     premioDe,
     premiosResueltos,
@@ -1467,14 +1470,6 @@
   function closePerson() {
     personOpen = null;
     volverAlGrid();
-  }
-
-  function autofocusFirst(node: HTMLElement) {
-    setTimeout(() => {
-      const btn = node.querySelector<HTMLElement>(".btn-primary, [data-nav]");
-      btn?.focus();
-    }, 30);
-    return {};
   }
 
   function attachCardObserver(node: HTMLButtonElement, id: number) {
@@ -3317,90 +3312,21 @@
   {/if}
 
   {#if personOpen || personLoading}
-    <div class="modal-bg" onclick={closePerson} onkeydown={(e) => { if (e.key === "Escape" || e.key === "Backspace") closePerson(); }} role="presentation">
-      <div class="person-modal" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()} role="dialog" tabindex="-1" aria-modal="true" use:autofocusFirst>
-        <button data-nav class="modal-close" onclick={closePerson} title="Cerrar (Esc)">✕</button>
-        {#if personLoading}
-          <div class="empty">Cargando…</div>
-        {:else if personOpen}
-          <div class="person-head">
-            {#if personOpen.profile_path}
-              <img class="person-photo" src={img(`${IMG}/w300${personOpen.profile_path}`, 300)} alt={personOpen.name} onerror={onImgError} />
-            {:else}
-              <div class="person-photo person-photo-empty">{personOpen.name.charAt(0)}</div>
-            {/if}
-            <div class="person-info">
-              <h2>{personOpen.name}</h2>
-              {#if personOpen.known_for_department}
-                <p class="person-dept">{personOpen.known_for_department}</p>
-              {/if}
-              {#if personOpen.birthday}
-                <p class="person-meta">
-                  Nacimiento: {personOpen.birthday}
-                  {#if personOpen.place_of_birth} · {personOpen.place_of_birth}{/if}
-                </p>
-              {/if}
-              {#if personOpen.deathday}
-                <p class="person-meta">Fallecimiento: {personOpen.deathday}</p>
-              {/if}
-            </div>
-          </div>
-          {#if personOpen.biography}
-            <div class="person-bio">{personOpen.biography}</div>
-          {/if}
-          {#if personOpen.filmography.length}
-            <h3 class="person-section">Filmografía destacada</h3>
-            <div class="filmography-grid">
-              {#each personOpen.filmography as f}
-                <button
-                  data-nav
-                  class="film-card"
-                  title={`${f.title} — ${f.roles.join(", ")}`}
-                  onclick={() => openFilmographyItem(f.id, f.media_type)}
-                >
-                  <div class="film-poster-wrap">
-                    {#if f.poster_path}
-                      <img src={img(`${IMG}/w185${f.poster_path}`, 185)} alt={f.title} loading="lazy" onerror={onImgError} />
-                    {:else}
-                      <div class="film-noposter">sin poster</div>
-                    {/if}
-                    {#if f.roles.length}
-                      <div class="film-pills">
-                        {#each f.roles as r}
-                          <span class="film-pill">{r}</span>
-                        {/each}
-                      </div>
-                    {/if}
-                  </div>
-                  <div class="film-meta">
-                    <span class="film-title">{f.title}</span>
-                    <span class="film-sub">{f.year}</span>
-                  </div>
-                </button>
-              {/each}
-            </div>
-          {/if}
-          <p class="person-foot">Premios no disponibles en TMDb. Para verlos, abrí el perfil en IMDb.</p>
-        {/if}
-      </div>
-    </div>
+    <FichaPersona
+      persona={personOpen}
+      cargando={personLoading}
+      onCerrar={closePerson}
+      onAbrirTitulo={openFilmographyItem}
+    />
   {/if}
 
   {#if carousel}
-    <div class="carousel-bg" onclick={closeCarousel} onkeydown={(e) => { if (e.key === "Escape" || e.key === "Backspace") closeCarousel(); }} role="presentation">
-      <button data-nav class="modal-close carousel-close" onclick={closeCarousel} title="Cerrar (Esc)">✕</button>
-      <button class="carousel-arrow left" onclick={(e) => { e.stopPropagation(); carouselGo(-1); }} aria-label="Anterior">‹</button>
-      <div class="carousel-img-wrap" role="presentation" onclick={(e) => e.stopPropagation()}>
-        <img
-          class="carousel-img"
-          src={img(`${IMG}/original${carousel.images[carousel.idx]}`, 1280)}
-          alt={`Escena ${carousel.idx + 1}`}
-          onerror={onImgError}
-        />
-      </div>
-      <button class="carousel-arrow right" onclick={(e) => { e.stopPropagation(); carouselGo(1); }} aria-label="Siguiente">›</button>
-      <div class="carousel-counter">{carousel.idx + 1} / {carousel.images.length}</div>
-    </div>
+    <Carrusel
+      imagenes={carousel.images}
+      idx={carousel.idx}
+      onCerrar={closeCarousel}
+      onMover={carouselGo}
+    />
   {/if}
 
   {#if unavailable.open}
@@ -3612,41 +3538,6 @@
   }
 
   /* --- Carrusel de escenas --- */
-  .carousel-bg {
-    position: fixed; inset: 0; z-index: 200;
-    background: rgba(0,0,0,0.92);
-    display: flex; align-items: center; justify-content: center;
-    gap: 12px;
-  }
-  .carousel-img {
-    max-width: 88vw; max-height: 82vh;
-    border-radius: 10px;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.8);
-    object-fit: contain;
-  }
-  .carousel-close {
-    position: absolute; top: 24px; right: 28px;
-    z-index: 2;
-  }
-  .carousel-arrow {
-    flex: 0 0 auto;
-    width: 72px; height: 72px;
-    border-radius: 50%;
-    border: none;
-    background: rgba(255,255,255,0.1);
-    color: #fff; font-size: 48px; line-height: 1;
-    cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-    transition: background 0.15s;
-  }
-  .carousel-arrow:hover { background: rgba(255,255,255,0.22); }
-  .carousel-counter {
-    position: absolute; bottom: 28px; left: 50%;
-    transform: translateX(-50%);
-    color: #ddd; font-size: 20px;
-    background: rgba(0,0,0,0.5);
-    padding: 6px 18px; border-radius: 999px;
-  }
   .person-chip {
     flex: 0 0 80px; width: 80px;
     background: transparent; border: 0; padding: 0;
@@ -3684,92 +3575,6 @@
   }
 
   /* Person modal */
-  .person-modal {
-    position: relative;
-    background: #15151c;
-    border: 1px solid #2a2a35;
-    border-radius: 12px;
-    width: 90%; max-width: 720px; max-height: 85vh;
-    overflow-y: auto;
-    padding: 28px;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.7);
-  }
-  .modal-close {
-    position: absolute; top: 12px; right: 12px;
-    width: 32px; height: 32px; border-radius: 50%;
-    background: #1a1a22; border: 1px solid #2a2a35;
-    color: #aaa; font-size: 14px; cursor: pointer;
-    transition: all 0.12s;
-  }
-  .modal-close:hover { background: #f5c518; color: #000; border-color: #f5c518; }
-  .person-head { display: flex; gap: 18px; align-items: flex-start; margin-bottom: 16px; }
-  .person-photo {
-    width: 120px; height: 180px; object-fit: cover;
-    border-radius: 8px; flex: 0 0 auto;
-    box-shadow: 0 8px 20px rgba(0,0,0,0.5);
-  }
-  .person-photo-empty {
-    background: #2a2a35;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 50px; color: #555; font-weight: 700;
-  }
-  .person-info { flex: 1; min-width: 0; }
-  .person-info h2 { margin: 0 0 6px; color: #f5c518; font-size: 24px; }
-  .person-dept { margin: 0 0 8px; color: #aaa; font-size: 13px; }
-  .person-meta { margin: 2px 0; color: #ccc; font-size: 13px; }
-  .person-bio {
-    color: #ccc; font-size: 14px; line-height: 1.6;
-    white-space: pre-wrap; margin: 0 0 16px;
-  }
-  .person-section { margin: 16px 0 12px; color: #f5c518; font-size: 14px; text-transform: uppercase; letter-spacing: 1.5px; }
-  .filmography-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
-    gap: 12px;
-  }
-  .film-card {
-    background: #1a1a22; border: 0; border-radius: 6px; overflow: hidden;
-    color: inherit; text-align: left;
-    padding: 0; cursor: pointer;
-    display: flex; flex-direction: column;
-    transition: transform 0.12s, box-shadow 0.12s;
-  }
-  .film-card:hover { transform: translateY(-2px); box-shadow: 0 6px 14px rgba(0,0,0,0.5); }
-  .film-card:focus, .film-card:focus-visible {
-    outline: 3px solid #f5c518; outline-offset: 2px;
-    transform: translateY(-2px);
-  }
-  .film-poster-wrap { position: relative; }
-  .film-card img, .film-noposter {
-    width: 100%; aspect-ratio: 2/3; object-fit: cover;
-    background: #222; display: block;
-  }
-  .film-noposter {
-    display: flex; align-items: center; justify-content: center;
-    color: #555; font-size: 11px;
-  }
-  .film-pills {
-    position: absolute; left: 4px; right: 4px; bottom: 4px;
-    display: flex; flex-wrap: wrap; gap: 3px;
-    justify-content: flex-start;
-  }
-  .film-pill {
-    background: rgba(245, 197, 24, 0.92);
-    color: #0d0d12;
-    padding: 2px 7px;
-    border-radius: 999px;
-    font-size: 9px;
-    font-weight: 700;
-    line-height: 1.3;
-    max-width: 100%;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.5);
-  }
-  .film-meta { padding: 6px 8px; }
-  .film-title { display: block; font-size: 12px; font-weight: 600; line-height: 1.2;
-    overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
-  .film-sub { display: block; font-size: 10px; color: #888; margin-top: 2px; }
-  .person-foot { margin: 18px 0 0; color: #666; font-size: 11px; text-align: center; }
   .progress-bar {
     position: relative; z-index: 1;
     height: 6px; background: #1f1f28; border-radius: 3px;
