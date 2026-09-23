@@ -2,7 +2,7 @@
 //
 // Portado de kodi-os/scraper/src/realdebrid.rs, adaptado a kutral SIN estado
 // propio: el access_token se pasa en cada llamada (el frontend ya lo guarda
-// en localStorage tras el device-flow de lib.rs). Para renovar token expirado
+// en el store del backend tras el device-flow de más abajo). Para renovar token expirado
 // está `rd_refresh`, que el frontend persiste igual que rd_device_poll.
 //
 // Flujo resolve: addMagnet → selectFiles(video más grande) → poll hasta
@@ -437,4 +437,128 @@ pub async fn rd_refresh(
         refresh_token: t.refresh_token,
         expires_in: t.expires_in,
     })
+}
+
+// ============================================================
+// RealDebrid — OAuth Device Code flow
+// ============================================================
+
+const RD_CLIENT_ID: &str = "X245A4XAIBGVM"; // public open-source client_id
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RdDeviceStart {
+    pub device_code: String,
+    pub user_code: String,
+    pub verification_url: String,
+    pub interval: u64,
+    pub expires_in: u64,
+}
+
+#[derive(Deserialize)]
+struct RdCredentialsResp {
+    client_id: String,
+    client_secret: String,
+}
+
+#[tauri::command]
+pub async fn rd_device_start() -> Result<RdDeviceStart, String> {
+    let url = format!(
+        "https://api.real-debrid.com/oauth/v2/device/code?client_id={}&new_credentials=yes",
+        RD_CLIENT_ID
+    );
+    let cli = crate::client()?;
+    let resp = cli.get(&url).send().await.map_err(|e| format!("red: {}", e))?;
+    if !resp.status().is_success() {
+        let st = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("RD {}: {}", st, body));
+    }
+    let v: RdDeviceStart = resp.json().await.map_err(|e| format!("parse: {}", e))?;
+    Ok(v)
+}
+
+#[tauri::command]
+pub async fn rd_device_poll(
+    app: tauri::AppHandle,
+    device_code: String,
+    interval: u64,
+    expires_in: u64,
+) -> Result<(), String> {
+    if device_code.is_empty() {
+        return Err("device_code vacío".into());
+    }
+    let cli = crate::client()?;
+    let poll_every = std::cmp::max(interval, 3);
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs(expires_in.max(60));
+
+    let creds_url = format!(
+        "https://api.real-debrid.com/oauth/v2/device/credentials?client_id={}&code={}",
+        RD_CLIENT_ID, device_code
+    );
+
+    loop {
+        if std::time::Instant::now() >= deadline {
+            return Err("código expirado".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(poll_every)).await;
+
+        // Hipo de red transitorio: NO abortar el flujo, reintentar al próximo
+        // poll. Un solo blip no debe tirar abajo todo el login.
+        let resp = match cli.get(&creds_url).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[rd] creds red transitorio, reintento: {}", e);
+                continue;
+            }
+        };
+        if !resp.status().is_success() {
+            continue;
+        }
+        let body = resp.text().await.unwrap_or_default();
+        let Ok(creds) = serde_json::from_str::<RdCredentialsResp>(&body) else {
+            continue;
+        };
+
+        let form = [
+            ("client_id", creds.client_id.as_str()),
+            ("client_secret", creds.client_secret.as_str()),
+            ("code", device_code.as_str()),
+            ("grant_type", RD_GRANT_DEVICE),
+        ];
+        let tok = match cli
+            .post("https://api.real-debrid.com/oauth/v2/token")
+            .form(&form)
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[rd] token red transitorio, reintento: {}", e);
+                continue;
+            }
+        };
+        if !tok.status().is_success() {
+            let st = tok.status();
+            let body = tok.text().await.unwrap_or_default();
+            return Err(format!("RD token {}: {}", st, body));
+        }
+        let t: RdTokenResp = tok.json().await.map_err(|e| format!("parse token: {}", e))?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        // El token NO vuelve al webview: se persiste en el store 0600 del backend.
+        crate::creds::save(
+            &app,
+            &crate::creds::RdCreds {
+                access_token: t.access_token,
+                refresh_token: t.refresh_token,
+                client_id: creds.client_id,
+                client_secret: creds.client_secret,
+                expires_at: now + t.expires_in,
+            },
+        )?;
+        return Ok(());
+    }
 }
