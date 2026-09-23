@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+  import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
   import Database from "@tauri-apps/plugin-sql";
@@ -29,9 +29,24 @@
     leerFiltros,
     guardarPrimeraPagina,
     leerPrimeraPagina,
-    type AwardsSummary,
   } from "$lib/catalogo";
-  import { leerImgCache, guardarImgCache } from "$lib/imgcache";
+  import { IMG, img, art, onImgError, volcarImgCache } from "$lib/imagenes.svelte";
+  import {
+    EMPTY_PICK,
+    resolveTrailer,
+    resolveAnimeTrailer,
+    ytTrailerSrc,
+    type TrailerPick,
+  } from "$lib/trailers";
+  import { sugerenciasPara, type SugerenciaFin, type SiguienteFin } from "$lib/sugerenciasFin";
+  import {
+    premioDe,
+    premiosResueltos,
+    restaurarPremios,
+    enqueueAwards,
+    awardsLabel,
+    awardsTitle,
+  } from "$lib/premios.svelte";
   import { inhibirReposo } from "$lib/reposo";
   import { mejor, seccionDe } from "$lib/nav";
   import {
@@ -165,69 +180,6 @@
   // el markup y los estilos quedan, poner en true la devuelve.
   const SEPA_VISIBLE = false;
 
-  const IMG = "https://image.tmdb.org/t/p";
-
-  // Cache local WebP — guarda URL→file path una vez bajado.
-  // Se hidrata de localStorage: sin esto, cada arranque pintaba primero desde
-  // image.tmdb.org y recién después cambiaba al archivo del disco, aunque el
-  // archivo ya estuviera ahí. Guardamos el path crudo y convertimos al leer.
-  let cachedImgs = $state<Map<string, string>>(new Map(leerImgCache()));
-  const cacheInflight = new Set<string>();
-  let imgPersistTimer: ReturnType<typeof setTimeout> | null = null;
-  // Escribir en cada póster bajado sería un JSON.stringify por imagen: se
-  // agenda una sola pasada cuando la ráfaga termina.
-  function persistirImgCache() {
-    if (imgPersistTimer) clearTimeout(imgPersistTimer);
-    imgPersistTimer = setTimeout(() => {
-      imgPersistTimer = null;
-      guardarImgCache(Array.from(cachedImgs));
-    }, 1500);
-  }
-  async function ensureCached(url: string, maxW: number) {
-    const key = `${url}::${maxW}`;
-    if (cachedImgs.has(key) || cacheInflight.has(key)) return;
-    cacheInflight.add(key);
-    try {
-      const path = await invoke<string>("cache_image", { url, maxW });
-      const m = new Map(cachedImgs);
-      m.set(key, path);
-      cachedImgs = m;
-      persistirImgCache();
-    } catch (e) {
-      // Si falla, dejamos URL original
-    } finally {
-      cacheInflight.delete(key);
-    }
-  }
-  function img(url: string | null | undefined, maxW: number): string {
-    if (!url) return "";
-    const key = `${url}::${maxW}`;
-    const cached = cachedImgs.get(key);
-    if (cached) return convertFileSrc(cached);
-    ensureCached(url, maxW);
-    return url;
-  }
-  // El archivo cacheado puede no estar (limpieza del sistema, borrado manual).
-  // Sacamos la entrada y el re-render vuelve solo a la URL remota, que a su vez
-  // dispara ensureCached de nuevo.
-  function onImgError(e: Event) {
-    const src = (e.currentTarget as HTMLImageElement | null)?.src;
-    if (!src || !src.includes("asset")) return;
-    for (const [k, path] of cachedImgs) {
-      if (convertFileSrc(path) !== src) continue;
-      const m = new Map(cachedImgs);
-      m.delete(k);
-      cachedImgs = m;
-      persistirImgCache();
-      return;
-    }
-  }
-  // Como img() pero acepta fragmento TMDb ("/abc.jpg") O URL completa:
-  // AniList/ani.zip mandan https://… directo, sin base TMDb.
-  function art(path: string | null | undefined, size: string, maxW: number): string {
-    if (!path) return "";
-    return path.startsWith("http") ? img(path, maxW) : img(`${IMG}/${size}${path}`, maxW);
-  }
   const REF = "hm_tpks_i_2_pd_tp1_pbr_ic";
 
   let apiKey = $state("");
@@ -502,64 +454,6 @@
     }
   }
 
-  let awardsMap = $state<Map<string, AwardsSummary | "loading">>(new Map());
-  let awardsQueue: string[] = [];
-  let awardsActive = 0;
-  const AWARDS_CONCURRENCY = 3;
-
-  // Una sola píldora: "🏆 3 · 5 nom.". Dos emojis de medalla apilados eran
-  // indistinguibles a 10px en la esquina del póster — y el title= es tooltip
-  // de mouse, que en la tele no existe. Sin premios ganados no va el trofeo:
-  // mentiría. La palabra "nom." es lo que desambigua.
-  function awardsLabel(aw: AwardsSummary): string {
-    const partes: string[] = [];
-    if (aw.wins > 0) partes.push(`🏆 ${aw.wins}`);
-    if (aw.nominations > 0) partes.push(`${aw.nominations} nom.`);
-    return partes.join(" · ");
-  }
-
-  function awardsTitle(aw: AwardsSummary): string {
-    const partes: string[] = [];
-    if (aw.wins > 0) partes.push(`${aw.wins} ${aw.wins === 1 ? "premio" : "premios"}`);
-    if (aw.nominations > 0) {
-      partes.push(
-        `${aw.nominations} ${aw.nominations === 1 ? "nominación" : "nominaciones"}`,
-      );
-    }
-    return partes.join(" · ");
-  }
-
-  function enqueueAwards(imdb: string) {
-    if (!imdb || awardsMap.has(imdb)) return;
-    const m = new Map(awardsMap);
-    m.set(imdb, "loading");
-    awardsMap = m;
-    awardsQueue.push(imdb);
-    pumpAwards();
-  }
-
-  async function pumpAwards() {
-    while (awardsActive < AWARDS_CONCURRENCY && awardsQueue.length > 0) {
-      const imdb = awardsQueue.shift()!;
-      awardsActive++;
-      void (async () => {
-        try {
-          const s: AwardsSummary = await invoke("wikidata_awards", { imdbId: imdb });
-          const m = new Map(awardsMap);
-          m.set(imdb, s);
-          awardsMap = m;
-        } catch (e) {
-          console.warn("[awards]", imdb, e);
-          const m = new Map(awardsMap);
-          m.set(imdb, { wins: 0, nominations: 0 });
-          awardsMap = m;
-        } finally {
-          awardsActive--;
-          pumpAwards();
-        }
-      })();
-    }
-  }
   const statusInflight = new Set<number>();
   let statusObserver: IntersectionObserver | null = null;
 
@@ -678,7 +572,7 @@
       statusMap = new Map(snap.statusMap);
       imdbIdMap = new Map(snap.imdbIdMap);
       seasonsMap = new Map(snap.seasonsMap);
-      awardsMap = new Map(snap.awardsMap);
+      restaurarPremios(snap.awardsMap);
       focusedIdx = Math.min(Math.max(snap.focusedIdx, 0), snap.items.length - 1);
       scrollPendiente = snap.scrollTop;
       scrollGrid = snap.scrollTop;
@@ -773,13 +667,7 @@
   onDestroy(() => {
     desmontado = true;
     guardarSnapshotCatalogo();
-    // Volcar ya el cache de imágenes: si el debounce estaba pendiente, los
-    // pósters bajados en esta pantalla se perderían.
-    if (imgPersistTimer) {
-      clearTimeout(imgPersistTimer);
-      imgPersistTimer = null;
-      guardarImgCache(Array.from(cachedImgs));
-    }
+    volcarImgCache();
     if (calentarTimer) {
       clearTimeout(calentarTimer);
       calentarTimer = null;
@@ -819,9 +707,7 @@
       statusMap: Array.from(statusMap).filter(([, v]) => v !== "checking"),
       imdbIdMap: Array.from(imdbIdMap),
       seasonsMap: Array.from(seasonsMap),
-      awardsMap: Array.from(awardsMap).filter(
-        (e): e is [string, AwardsSummary] => e[1] !== "loading",
-      ),
+      awardsMap: premiosResueltos(),
     });
   }
 
@@ -1110,119 +996,6 @@
     } catch (e) {
       console.warn("[db] clearUnavailable error", e);
     }
-  }
-
-  // Resultado de la búsqueda de trailer.
-  //  - `ytKey`: video de YouTube que existe (verificado contra oEmbed).
-  //  - `playable`: yt-dlp lo puede resolver → mpv lo reproduce.
-  //  - `apple`: mp4 de iTunes, alternativa cuando YouTube no se puede.
-  // `video`/`audio`: URLs directas que devolvió yt-dlp (audio va aparte porque
-  // YouTube entrega DASH). `at` es cuándo se resolvieron: caducan en unas horas,
-  // así que un pick viejo se vuelve a resolver antes de reproducir.
-  type TrailerPick = {
-    ytKey: string;
-    apple: string;
-    playable: boolean;
-    err: string;
-    video: string;
-    audio: string;
-    at: number;
-  };
-
-  const EMPTY_PICK: TrailerPick = {
-    ytKey: "",
-    apple: "",
-    playable: false,
-    err: "",
-    video: "",
-    audio: "",
-    at: 0,
-  };
-
-  // Los trailers se reproducen SIEMPRE en mpv, nunca en el webview:
-  //  1. El iframe de YouTube da "error 153" en Tauri (el origen es
-  //     `tauri://localhost`, que no es un referrer http(s) válido) — pasa con
-  //     todos los videos, permitan embed o no. Invidious/Piped tampoco: sus
-  //     instancias públicas están caídas o bloqueadas.
-  //  2. Un <video> tampoco sirve: YouTube ya casi no entrega formatos
-  //     progresivos, el video y el audio van en streams DASH separados y el
-  //     webview no los puede juntar.
-  // mpv sí los junta (ytdl_hook + yt-dlp de vendor/), así que la reproducción
-  // va por ahí. Si ni eso, se muestra un QR para verlo en el celular.
-  //
-  // TMDb va antes que Apple porque se consulta por id exacto y nunca devuelve
-  // otra película; iTunes solo se puede buscar por texto y para títulos fuera
-  // del catálogo US (cine coreano, indio, europeo) el match es frágil.
-  async function resolveTrailer(d: {
-    media_type: "movie" | "tv";
-    id: number;
-    title: string;
-    original_title?: string | null;
-    year?: string;
-  }): Promise<TrailerPick> {
-    const out: TrailerPick = { ...EMPTY_PICK };
-    try {
-      const tk = await invoke<{ key: string; embeddable: boolean } | null>("tmdb_trailer_key", {
-        mediaType: d.media_type,
-        id: d.id,
-        apiKey,
-      });
-      if (tk?.key) out.ytKey = tk.key;
-    } catch (e) {
-      console.warn("[tmdb_trailer_key]", e);
-    }
-    if (out.ytKey) {
-      const src = await ytTrailerSrc(out.ytKey);
-      out.playable = src.ok;
-      out.err = src.err;
-      out.video = src.video;
-      out.audio = src.audio;
-      out.at = Date.now();
-      if (out.playable) return out;
-    }
-    try {
-      const a = await invoke<{ url: string } | null>("apple_trailer", {
-        title: d.title,
-        originalTitle: d.original_title || "",
-        year: d.year || "",
-        mediaType: d.media_type,
-      });
-      if (a?.url) out.apple = a.url;
-    } catch (e) {
-      console.warn("[apple_trailer]", e);
-    }
-    return out;
-  }
-
-  // Resuelve el trailer con yt-dlp: la misma llamada dice si se puede
-  // reproducir y devuelve las URLs para mpv (una sola ejecución de yt-dlp por
-  // trailer). `video` vacío con ok=true significa reproducible pero por
-  // ytdl_hook. `err` casi siempre es que falta el binario en vendor/ (lo baja
-  // vendor/fetch.sh) o que YouTube pide verificación.
-  async function ytTrailerSrc(
-    key: string,
-  ): Promise<{ ok: boolean; err: string; video: string; audio: string }> {
-    try {
-      const src = await invoke<{ video: string; audio: string }>("yt_trailer_src", { key });
-      return { ok: true, err: "", video: src?.video || "", audio: src?.audio || "" };
-    } catch (e) {
-      console.warn("[yt_trailer_src]", e);
-      return { ok: false, err: String(e), video: "", audio: "" };
-    }
-  }
-
-  // Trailer de anime: la key viene de AniList; TMDb/Apple no aplican porque el
-  // id no es de TMDb.
-  async function resolveAnimeTrailer(key: string): Promise<TrailerPick> {
-    const out: TrailerPick = { ...EMPTY_PICK, ytKey: key };
-    if (!key) return out;
-    const src = await ytTrailerSrc(key);
-    out.playable = src.ok;
-    out.err = src.err;
-    out.video = src.video;
-    out.audio = src.audio;
-    out.at = Date.now();
-    return out;
   }
 
   // Reproduce el trailer en mpv. Devuelve false si mpv no lo aceptó.
@@ -2149,7 +1922,7 @@
     if (!trailerCache.has(imdb)) {
       tasks.push(
         (async () => {
-          const pick = await resolveTrailer(detail);
+          const pick = await resolveTrailer(detail, apiKey);
           trailerCache.set(imdb, pick);
           if (selected?.imdb_id === imdb) menuTrailerPick = pick;
         })(),
@@ -2293,9 +2066,6 @@
   //
   // En vez del corte seco al catálogo se abre una pantalla de fin: capítulo
   // siguiente (con Enter, nada arranca solo) y recomendaciones del título.
-  type SugerenciaFin = { id: number; title: string; posterUrl: string | null; year: string };
-  type SiguienteFin = { season: number; episode: number; nombre: string; stillUrl: string | null };
-
   let finTitulo = $state("");
   let finBackdrop = $state<string | null>(null);
   let finSiguiente = $state<SiguienteFin | null>(null);
@@ -2387,91 +2157,17 @@
   }
 
   // "Porque viste X": recomendaciones del título que acaba de terminar.
-  // Anime → AniList (secuela primero); películas y series → TMDb.
   async function sugerenciasDe(): Promise<SugerenciaFin[]> {
     if (!selected) return [];
-    try {
-      let items: ListItem[] = [];
-      if (tab === "anime") {
-        const r = await invoke<ListResp>("anilist_relacionados", { id: selected.id });
-        items = r.results ?? [];
-      } else {
-        if (!apiKey) return [];
-        items = await recomendacionesTmdb(selected.id);
-      }
-      return await filtrarSugerencias(items);
-    } catch (e) {
-      console.warn("[fin] sugerencias", e);
-      return [];
-    }
-  }
-
-  async function recomendacionesTmdb(id: number): Promise<ListItem[]> {
-    const mediaType = tabToMediaType(tab);
-    const pedir = async (kind: "recommendations" | "similar") => {
-      const r = await invoke<ListResp>("tmdb_recommendations", {
-        mediaType,
-        id,
-        page: 1,
-        apiKey,
-        kind,
-      });
-      return r.results ?? [];
-    };
-    const recs = await pedir("recommendations");
-    // TMDb devuelve pocas (o ninguna) recomendación en títulos de nicho:
-    // "similar" es el respaldo, con el mismo shape.
-    if (recs.length >= 4) return recs;
-    const sim = await pedir("similar").catch(() => [] as ListItem[]);
-    return [...recs, ...sim.filter((x) => !recs.some((y) => y.id === x.id))];
-  }
-
-  const MAX_SUGERENCIAS = 8;
-
-  // Deja fuera lo que no sirve ofrecer: lo ya visto, lo marcado como no
-  // disponible y (en TMDb) lo que no tiene imdb, que es lo que necesitan los
-  // scrapers para encontrar fuentes.
-  async function filtrarSugerencias(items: ListItem[]): Promise<SugerenciaFin[]> {
-    const out: SugerenciaFin[] = [];
-    if (tab === "anime") {
-      for (const it of items) {
-        if (out.length >= MAX_SUGERENCIAS) break;
-        if (estadoDe(claveMedio(null, it.id))?.visto) continue;
-        out.push(aSugerencia(it));
-      }
-      return out;
-    }
-    // TMDb: el imdb sale de item_status (una llamada por título). Se miran solo
-    // las primeras candidatas, en paralelo, para no encadenar 20 llamadas.
-    const candidatas = items.slice(0, MAX_SUGERENCIAS + 6);
-    const estados = await Promise.all(
-      candidatas.map((it) =>
-        invoke<{ has_imdb: boolean; imdb_id: string | null }>("item_status", {
-          mediaType: tabToMediaType(tab),
-          id: it.id,
-          apiKey,
-        }).catch(() => null),
-      ),
-    );
-    for (let i = 0; i < candidatas.length && out.length < MAX_SUGERENCIAS; i++) {
-      const st = estados[i];
-      if (!st?.has_imdb || !st.imdb_id) continue; // sin imdb no hay fuentes
-      if (unavailableSet.has(st.imdb_id)) continue;
-      if (estadoDe(claveMedio(st.imdb_id))?.visto) continue;
-      out.push(aSugerencia(candidatas[i]));
-    }
-    return out;
-  }
-
-  function aSugerencia(it: ListItem): SugerenciaFin {
-    finItems.set(it.id, it);
-    const fecha = it.release_date || it.first_air_date || "";
-    return {
-      id: it.id,
-      title: it.title || it.name || "",
-      posterUrl: it.poster_path ? art(it.poster_path, "w342", 342) : null,
-      year: fecha.slice(0, 4),
-    };
+    const r = await sugerenciasPara({
+      id: selected.id,
+      esAnime: tab === "anime",
+      mediaType: tabToMediaType(tab),
+      apiKey,
+      noDisponibles: unavailableSet,
+    });
+    for (const [id, it] of r.items) finItems.set(id, it);
+    return r.sugerencias;
   }
 
   // Capítulo siguiente: el que sigue dentro de la temporada y, si se acabó, el
@@ -2633,7 +2329,7 @@
     // Anime: la key viene de AniList; TMDb/Apple no aplican (el id no es TMDb).
     const pick = selected.is_anime
       ? await resolveAnimeTrailer(selected.trailer_youtube || "")
-      : await resolveTrailer(selected);
+      : await resolveTrailer(selected, apiKey);
     trailerMsg = "";
     console.log("[trailer]", title, "→", pick);
 
@@ -3563,7 +3259,7 @@
                     <span class="card-barra"><span class="card-barra-fill" style:width="{Math.max(3, vis.pct)}%"></span></span>
                   {/if}
                   {#if itImdb}
-                    {@const aw = awardsMap.get(itImdb)}
+                    {@const aw = premioDe(itImdb)}
                     {#if aw && aw !== "loading" && (aw.wins > 0 || aw.nominations > 0)}
                       <div class="card-awards" class:stacked={it.vote_average > 0}>
                         <span
