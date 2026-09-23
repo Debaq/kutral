@@ -2042,7 +2042,7 @@ pub fn play_trailer(url: &str, title: Option<&str>, audio: Option<&str>) -> Resu
     if !TRAILER.load(Ordering::SeqCst) {
         let path = get_string("path");
         let pending = (RUNNING.load(Ordering::SeqCst) || SUSPENDED.load(Ordering::SeqCst))
-            .then(|| ())
+            .then_some(())
             .filter(|_| !path.is_empty())
             .map(|_| Pending {
                 path,

@@ -436,6 +436,9 @@ async fn tmdb_genres(media_type: String, api_key: String) -> Result<Vec<GenreIte
     Ok(r.genres)
 }
 
+// Cada filtro es un argumento con nombre del invoke del front: agruparlos en
+// un struct cambiaría la forma de la llamada en todos los que la usan.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 async fn tmdb_discover(
     app: tauri::AppHandle,
@@ -1024,10 +1027,10 @@ async fn apple_trailer(
 
         let mut best: Option<(f32, &Item)> = None;
         for i in r.results.iter() {
-            if i.preview_url.as_deref().map_or(true, |u| u.is_empty()) {
+            if i.preview_url.as_deref().is_none_or(|u| u.is_empty()) {
                 continue;
             }
-            if !i.kind.as_deref().map_or(false, |k| want_kinds.contains(&k)) {
+            if !i.kind.as_deref().is_some_and(|k| want_kinds.contains(&k)) {
                 continue;
             }
             let name = norm_title(i.track_name.as_deref().unwrap_or(""));
@@ -1055,7 +1058,7 @@ async fn apple_trailer(
             if !year_ok {
                 continue;
             }
-            if best.map_or(true, |(s, _)| sim > s) {
+            if best.is_none_or(|(s, _)| sim > s) {
                 best = Some((sim, i));
             }
         }
@@ -1727,7 +1730,7 @@ async fn tmdb_person(id: u64, api_key: String) -> Result<PersonInfo, String> {
     if let Some(c) = raw.combined_credits {
         use std::collections::HashMap;
         let mut by_id: HashMap<(u64, String), PersonFilmography> = HashMap::new();
-        for cr in c.cast.into_iter().chain(c.crew.into_iter()) {
+        for cr in c.cast.into_iter().chain(c.crew) {
             let title = cr.title.or(cr.name).unwrap_or_default();
             if title.is_empty() { continue; }
             let date = cr.release_date.or(cr.first_air_date).unwrap_or_default();
@@ -2681,7 +2684,7 @@ async fn wifi_scan() -> Result<Vec<WifiNetwork>, String> {
             let secured = !sec.is_empty() && sec != "--";
             nets.push(WifiNetwork { ssid, signal, secured, in_use });
         }
-        nets.sort_by(|a, b| b.signal.cmp(&a.signal));
+        nets.sort_by_key(|n| std::cmp::Reverse(n.signal));
         Ok(nets)
     }
 }
@@ -3192,7 +3195,7 @@ pub fn run() {
                     });
                     // Reproductor libmpv embebido: crea el handle y mete el
                     // GtkGLArea en el toplevel del webview (una sola ventana).
-                    if let Err(e) = mpv_embed::init(&app.handle(), &win) {
+                    if let Err(e) = mpv_embed::init(app.handle(), &win) {
                         eprintln!("[mpv-embed] init falló: {e}");
                     }
                 }
@@ -3336,7 +3339,7 @@ mod overview_tests {
             let o = super::tmdb_overview_es(kind, id, &key).await;
             let txt = o.expect("sin sinopsis en español");
             assert!(txt.len() > 40, "{name}: sinopsis sospechosamente corta");
-            eprintln!("\n{name} →\n  {}", &txt.chars().take(160).collect::<String>());
+            eprintln!("\n{name} →\n  {}", txt.chars().take(160).collect::<String>());
         }
 
         // Sin key no explota: devuelve None y quien llama deja el inglés.

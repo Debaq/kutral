@@ -574,7 +574,7 @@ pub async fn torrent_add(
     dir: Option<String>,
 ) -> Result<TorrentAdded, String> {
     let tor = ensure(&app, dir.as_deref()).await?;
-    eprintln!("[torrent] add {}", &magnet.chars().take(60).collect::<String>());
+    eprintln!("[torrent] add {}", magnet.chars().take(60).collect::<String>());
 
     // La carpeta se manda por torrent, no solo al crear la sesión: así cambiarla
     // en Configuración vale desde la próxima descarga, sin reiniciar la app.

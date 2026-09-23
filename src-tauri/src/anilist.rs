@@ -654,7 +654,7 @@ async fn detail_anilist(id: u64, api_key: &str) -> Result<AnimeDetail, String> {
     if m.is_null() {
         return Err(format!("anilist: media {id} no encontrado"));
     }
-    let ids = anizip.as_ref().map(|z| extract_ids(z)).unwrap_or_default();
+    let ids = anizip.as_ref().map(extract_ids).unwrap_or_default();
 
     let format = s(&m["format"]);
     let is_movie = format.as_deref() == Some("MOVIE");

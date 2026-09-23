@@ -420,7 +420,7 @@ pub async fn os_list(
             }
         })
         .collect();
-    items.sort_by(|a, b| b.downloads.cmp(&a.downloads));
+    items.sort_by_key(|it| std::cmp::Reverse(it.downloads));
     items.truncate(25);
     Ok(items)
 }
