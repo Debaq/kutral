@@ -300,7 +300,7 @@
   let lastApplied: boolean | null = null;
   $effect(() => {
     if (!config.loaded) return;
-    const target = kiosk;
+    const target = kiosk || config.pantallaCompleta;
     if (target === lastApplied) return;
     lastApplied = target;
     getCurrentWindow().setFullscreen(target).catch((e) => {

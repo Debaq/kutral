@@ -11,7 +11,7 @@
   import Notifications from "$lib/Notifications.svelte";
   import TorrentQueue from "$lib/TorrentQueue.svelte";
   import { player } from "$lib/playerState.svelte";
-  import { config, isKioskActive } from "$lib/config.svelte";
+  import { config, isKioskActive, saveConfig } from "$lib/config.svelte";
   import { notify, unreadCount } from "$lib/notifStore.svelte";
   import { torrents, activeCount } from "$lib/torrents.svelte";
   import { cola, enEspera } from "$lib/colaDescargas.svelte";
@@ -139,6 +139,9 @@
       const next = !fullscreen;
       await win.setFullscreen(next);
       fullscreen = next;
+      // Elección manual: se recuerda para la próxima sesión.
+      config.pantallaCompleta = next;
+      saveConfig();
     } catch (e) { console.warn(e); }
   }
   async function close() {

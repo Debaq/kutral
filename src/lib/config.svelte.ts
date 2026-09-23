@@ -185,6 +185,10 @@ export const config = $state({
 	rdLinked: false,
 	omdbKey: "",
 	modeOverride: "auto" as ModeOverride,
+	// Modo escritorio: abrir en pantalla completa. Lo cambia el botón ⛶ del
+	// header o /config, y se recuerda entre sesiones. En kiosko no aplica
+	// (siempre es pantalla completa).
+	pantallaCompleta: false,
 	screeningConcurrency: SCREENING_DEFAULT,
 	// Subtítulos: idioma preferido (ISO 639-1) y API key de Wyzie para buscar.
 	// Sin wyzieKey: el player intenta auto-buscar en OpenSubtitles (cuota limitada).
@@ -264,6 +268,7 @@ export function loadConfig() {
 	config.omdbKey = localStorage.getItem("omdb_key") || "";
 	const m = (localStorage.getItem("kiosk_mode") || "auto") as ModeOverride;
 	config.modeOverride = ["auto", "kiosk", "desktop"].includes(m) ? m : "auto";
+	config.pantallaCompleta = localStorage.getItem("pantalla_completa") === "1";
 	const sc = parseInt(localStorage.getItem("screening_concurrency") || "", 10);
 	config.screeningConcurrency = clampConcurrency(sc);
 	const sl = localStorage.getItem("subs_lang") || "es";
@@ -357,6 +362,7 @@ export function saveConfig() {
 	localStorage.setItem("tmdb_key", config.tmdbKey);
 	localStorage.setItem("omdb_key", config.omdbKey.trim());
 	localStorage.setItem("kiosk_mode", config.modeOverride);
+	localStorage.setItem("pantalla_completa", config.pantallaCompleta ? "1" : "0");
 	localStorage.setItem(
 		"screening_concurrency",
 		String(clampConcurrency(config.screeningConcurrency)),

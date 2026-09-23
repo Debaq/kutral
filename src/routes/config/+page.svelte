@@ -285,6 +285,7 @@
   let osBusy = $state(false);
   let osErr = $state("");
   let webAuto = $state(config.webAutoStart);
+  let pantallaCompleta = $state(config.pantallaCompleta);
   let webPortInput = $state(config.webPort);
   let torrentLocal = $state(config.torrentLocal);
   let torrentBufferMb = $state(config.torrentBufferMb);
@@ -403,6 +404,7 @@
     blockedSourceAnime = config.blockedSourceAnime;
     void refreshOsStatus();
     webAuto = config.webAutoStart;
+    pantallaCompleta = config.pantallaCompleta;
     webPortInput = config.webPort;
     torrentLocal = config.torrentLocal;
     torrentBufferMb = config.torrentBufferMb;
@@ -451,6 +453,7 @@
     blockedSourceSeries !== config.blockedSourceSeries ||
     blockedSourceAnime !== config.blockedSourceAnime ||
     webAuto !== config.webAutoStart ||
+    pantallaCompleta !== config.pantallaCompleta ||
     webPortInput !== config.webPort ||
     gameRegions.join(",") !== config.gameRegions.join(",") ||
     JSON.stringify(iptvLists) !== JSON.stringify(config.iptvLists)
@@ -488,6 +491,7 @@
     config.blockedSourceSeries = blockedSourceSeries.trim();
     config.blockedSourceAnime = blockedSourceAnime.trim();
     config.webAutoStart = webAuto;
+    config.pantallaCompleta = pantallaCompleta;
     config.webPort = Math.min(65535, Math.max(1024, Math.round(webPortInput) || 8080));
     webPortInput = config.webPort;
     aplicarTorrent();
@@ -1137,6 +1141,16 @@
               <div><strong>Kiosko / embedido</strong><span>Pantalla completa. Solo "Salir" + gestor WiFi.</span></div>
             </label>
           </div>
+          {#if mode !== "kiosk"}
+            <label class="toggle-row">
+              <input data-nav type="checkbox" bind:checked={pantallaCompleta} />
+              <span>Abrir en pantalla completa</span>
+            </label>
+            <p class="hint">
+              Se recuerda entre sesiones. También cambia al usar el botón ⛶
+              de la barra superior.
+            </p>
+          {/if}
         </section>
 
         <section class="block">
