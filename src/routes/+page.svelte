@@ -43,6 +43,11 @@
   import FichaPersona from "$lib/inicio/FichaPersona.svelte";
   import Carrusel from "$lib/inicio/Carrusel.svelte";
   import FichaTitulo from "$lib/inicio/FichaTitulo.svelte";
+  import ClaveTmdb from "$lib/inicio/ClaveTmdb.svelte";
+  import AvisoNoDisponible from "$lib/inicio/AvisoNoDisponible.svelte";
+  import TrailerQr from "$lib/inicio/TrailerQr.svelte";
+  import Descubrir from "$lib/inicio/Descubrir.svelte";
+  import PantallaNoDisponible from "$lib/inicio/PantallaNoDisponible.svelte";
   import {
     premioDe,
     premiosResueltos,
@@ -2249,6 +2254,14 @@
     }, 50);
   }
 
+  // "Marcar disponible" desde la pantalla de no disponible.
+  async function marcarDisponible() {
+    if (!selected?.imdb_id) return;
+    await clearUnavailable(selected.imdb_id);
+    mode = "browse";
+    setTimeout(volverAlGrid, 50);
+  }
+
   async function reportUnavailableFromDiscover() {
     if (!selected?.imdb_id) return;
     try {
@@ -2534,33 +2547,12 @@
 />
 
 {#if mode === "unavailable" && selected}
-  <div class="unavail-screen">
-    <div class="unavail-card">
-      {#if selected.poster_path}
-        <img class="unavail-poster" src={art(selected.poster_path, "w342", 342)} alt="" onerror={onImgError} />
-      {/if}
-      <h2>Lo sentimos muchísimo</h2>
-      <p>
-        <strong>{selected.title}</strong> aún no se encuentra en nuestra cartelera.
-      </p>
-      <p class="unavail-sub">La marcamos así no la sugerimos próximamente. Si volviera a estar disponible, podés desmarcarla.</p>
-      <div class="unavail-actions">
-        <button data-nav class="unavail-back btn-secondary" onclick={stopDiscover}>← Volver</button>
-        {#if selected.imdb_id}
-          <button data-nav class="btn-primary" onclick={watchTrailer}>🎬 Ver trailer</button>
-          <button data-nav class="btn-secondary" onclick={async () => {
-            if (selected?.imdb_id) {
-              await clearUnavailable(selected.imdb_id);
-              mode = "browse";
-              setTimeout(volverAlGrid, 50);
-            }
-          }}>
-            Marcar disponible
-          </button>
-        {/if}
-      </div>
-    </div>
-  </div>
+  <PantallaNoDisponible
+    titulo={selected}
+    onVolver={stopDiscover}
+    onTrailer={watchTrailer}
+    onMarcarDisponible={marcarDisponible}
+  />
 {:else if mode === "playmenu" && (selected?.imdb_id || selected?.kitsu_id)}
   <PlayMenu
     detail={selected}
@@ -2634,73 +2626,19 @@
   />
   {/key}
 {:else if mode === "discover" && selected?.imdb_id}
-  <div class="discover-mode">
-    <button data-nav class="back-btn" onclick={stopDiscover} title="Volver (Esc / Backspace)">
-      <span class="arrow">←</span> Volver
-    </button>
-    <button data-nav class="report-btn" onclick={reportUnavailableFromDiscover} title="Marcar como no disponible">
-      ⚠ No funciona
-    </button>
-    <iframe
-      bind:this={discoverFrame}
-      src={discoverSrc}
-      title="discover"
-      referrerpolicy="no-referrer"
-      sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"
-      allow="autoplay; fullscreen; picture-in-picture"
-    ></iframe>
-  </div>
+  <Descubrir
+    src={discoverSrc}
+    bind:frame={discoverFrame}
+    onVolver={stopDiscover}
+    onReportar={reportUnavailableFromDiscover}
+  />
 {:else if mode === "trailer" && trailerQr}
-  <div class="discover-mode trailer-qr-mode">
-    <div class="trailer-bar">
-      <button data-nav class="bar-btn" onclick={stopDiscover} title="Volver (Esc / Backspace)">
-        ← Volver
-      </button>
-      <div class="trailer-badge-inline">TRAILER</div>
-    </div>
-    <div class="trailer-qr">
-      <h2>Trailer disponible en YouTube</h2>
-      <p>Escanea el código con el celular, o ábrelo acá en el navegador.</p>
-      <img src={trailerQr} alt="Código QR del trailer en YouTube" />
-      <code>{trailerQrUrl}</code>
-      <button data-nav class="trailer-open" onclick={abrirTrailerWeb}>
-        🌐  Abrir en el navegador
-      </button>
-    </div>
-  </div>
+  <TrailerQr qr={trailerQr} url={trailerQrUrl} onVolver={stopDiscover} onAbrir={abrirTrailerWeb} />
 {:else}
   <main>
     <aside class="info" data-section="info">
       {#if !apiKey || showKey}
-        <div class="key-box">
-          <h3>TMDb API Key</h3>
-          <p class="hint">
-            Consíguela en <code>themoviedb.org/settings/api</code> (gratis).
-          </p>
-          <input
-            type="password"
-            bind:value={keyInput}
-            placeholder="32 chars hex"
-            onkeydown={(e) => e.key === "Enter" && saveKey()}
-          />
-          <button onclick={saveKey} disabled={!keyInput.trim()}>Guardar</button>
-
-          {#if webKeyboardUrl}
-            <div class="key-phone">
-              <RemoteQr url={webKeyboardUrl} label="Teclado" size={110} />
-              <div class="key-phone-txt">
-                <strong>¿Difícil escribir con el control?</strong>
-                <span>
-                  Escanea este QR con el celular. Desde ahí puedes escribir,
-                  pegar o escanear la key con la cámara: aparece sola en el campo
-                  de arriba. Luego pulsa Guardar.
-                </span>
-              </div>
-            </div>
-          {:else}
-            <p class="key-phone-wait">Preparando teclado por celular…</p>
-          {/if}
-        </div>
+        <ClaveTmdb bind:valor={keyInput} urlTeclado={webKeyboardUrl} onGuardar={saveKey} />
       {:else if detailLoading}
         <div class="empty">Cargando…</div>
       {:else if selected}
@@ -3154,35 +3092,12 @@
   {/if}
 
   {#if unavailable.open}
-    <div class="modal-bg" onclick={() => (unavailable.open = false)} onkeydown={(e) => { if (e.key === "Escape" || e.key === "Backspace") unavailable.open = false; }} role="presentation">
-      <div
-        class="modal"
-        onclick={(e) => e.stopPropagation()}
-        onkeydown={(e) => e.stopPropagation()}
-        role="dialog"
-        tabindex="-1"
-        aria-modal="true"
-        use:autofocusFirst
-      >
-        <h3>No disponible</h3>
-        <p>
-          {#if unavailable.reason === "404"}
-            <strong>{selected?.title}</strong> aún no se encuentra en playimdb.com.
-          {:else}
-            <strong>{selected?.title}</strong> no tiene IMDb ID en TMDb, así que no podemos abrirlo.
-          {/if}
-        </p>
-        <p class="modal-sub">¿Querés ver el trailer mientras tanto?</p>
-        <div class="modal-actions">
-          <button data-nav class="btn-secondary" onclick={() => (unavailable.open = false)}>
-            Cancelar
-          </button>
-          <button data-nav class="btn-primary" onclick={watchTrailer}>
-            🎬 Ver trailer
-          </button>
-        </div>
-      </div>
-    </div>
+    <AvisoNoDisponible
+      titulo={selected?.title ?? ""}
+      motivo={unavailable.reason}
+      onCerrar={() => (unavailable.open = false)}
+      onTrailer={watchTrailer}
+    />
   {/if}
 {/if}
 
@@ -3240,25 +3155,6 @@
     text-transform: uppercase;
   }
 
-  .key-box { padding: 20px; }
-  .key-box h3 { margin: 0 0 8px; }
-  .key-box .hint { font-size: 12px; color: #888; margin: 0 0 12px; }
-  .key-box code { background: #1a1a22; padding: 2px 5px; border-radius: 3px; font-size: 11px; }
-  .key-box input { width: 100%; padding: 8px; background: #1a1a22; border: 1px solid #2a2a35; color: #eee; border-radius: 4px; margin-bottom: 8px; box-sizing: border-box; }
-  .key-box button { width: 100%; padding: 8px; background: #f5c518; color: #000; border: 0; border-radius: 4px; font-weight: 700; cursor: pointer; }
-  .key-box button:disabled { opacity: 0.4; cursor: not-allowed; }
-  .key-phone {
-    display: flex;
-    gap: 14px;
-    align-items: center;
-    margin-top: 18px;
-    padding-top: 16px;
-    border-top: 1px solid #23232c;
-  }
-  .key-phone-txt { display: flex; flex-direction: column; gap: 4px; }
-  .key-phone-txt strong { font-size: 13px; color: #f5c518; }
-  .key-phone-txt span { font-size: 12px; color: #9a9aa4; line-height: 1.45; }
-  .key-phone-wait { margin: 16px 0 0; font-size: 11.5px; color: #6e6e78; }
 
 
 
@@ -3910,165 +3806,13 @@
   /* Lista vertical de temporadas en el panel derecho. */
 
   /* PLAY mode */
-  .discover-mode { position: fixed; inset: 0; background: #000; z-index: 1500; }
-  .discover-mode iframe { width: 100%; height: 100%; border: 0; background: #000; }
-  .back-btn {
-    position: absolute; top: 14px; right: 14px; z-index: 1100;
-    display: inline-flex; align-items: center; gap: 8px;
-    padding: 10px 18px 10px 14px;
-    background: rgba(0,0,0,0.75);
-    color: #fff;
-    border: 1px solid #333;
-    border-radius: 999px;
-    font-size: 14px; font-weight: 600;
-    cursor: pointer;
-    backdrop-filter: blur(6px);
-    transition: background 0.15s, color 0.15s, transform 0.1s;
-  }
-  .back-btn .arrow { font-size: 18px; line-height: 1; }
-  .back-btn:hover { background: #f5c518; color: #000; border-color: #f5c518; }
-  .back-btn:active { transform: scale(0.97); }
-  .report-btn {
-    position: absolute; top: 14px; left: 14px; z-index: 1100;
-    padding: 10px 16px;
-    background: rgba(20,20,28,0.75);
-    color: #ffb4b4;
-    border: 1px solid rgba(220,38,38,0.6);
-    border-radius: 999px;
-    font-size: 13px; font-weight: 600;
-    cursor: pointer;
-    backdrop-filter: blur(6px);
-    transition: background 0.12s, color 0.12s;
-  }
-  .report-btn:hover { background: rgba(220,38,38,0.9); color: #fff; }
 
   /* Vista unavailable */
-  .unavail-screen {
-    position: fixed; inset: 0; z-index: 1500;
-    background: #0d0d12;
-    display: flex; align-items: center; justify-content: center;
-    padding: 40px;
-  }
-  .unavail-card {
-    max-width: 480px; text-align: center;
-    background: #15151c;
-    border: 1px solid #2a2a35;
-    border-radius: 12px;
-    padding: 36px 32px;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
-  }
-  .unavail-poster {
-    width: 140px; border-radius: 8px;
-    margin-bottom: 20px;
-    box-shadow: 0 8px 20px rgba(0,0,0,0.5);
-    filter: grayscale(0.6);
-  }
-  .unavail-card h2 {
-    margin: 0 0 12px;
-    color: #f5c518; font-size: 24px;
-  }
-  .unavail-card p { color: #ddd; font-size: 15px; line-height: 1.5; margin: 0 0 10px; }
-  .unavail-sub { color: #888 !important; font-size: 13px !important; margin-bottom: 22px !important; }
-  .unavail-actions {
-    display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;
-    margin-top: 22px;
-  }
-  .unavail-actions button {
-    padding: 10px 18px; border-radius: 6px;
-    font-size: 14px; font-weight: 600; cursor: pointer;
-  }
-  .trailer-bar {
-    position: absolute; top: 0; left: 0; right: 0; z-index: 1100;
-    display: flex; align-items: center; gap: 10px;
-    padding: 10px 14px;
-    background: linear-gradient(180deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0) 100%);
-    pointer-events: none;
-  }
-  .trailer-bar > * { pointer-events: auto; }
   /* Último recurso del trailer: QR para verlo en el celular. */
-  .trailer-qr-mode { display: grid; place-items: center; }
-  .trailer-qr {
-    display: flex; flex-direction: column; align-items: center; gap: 18px;
-    padding: 40px; text-align: center;
-  }
-  .trailer-qr h2 { margin: 0; font-size: 28px; color: #fff; }
-  .trailer-qr p { margin: 0; color: #9a9aa8; font-size: 15px; }
-  .trailer-qr img {
-    width: 300px; height: 300px;
-    background: #fff; padding: 12px; border-radius: 12px;
-  }
-  .trailer-qr code { color: #f5c518; font-size: 14px; letter-spacing: 0.5px; }
-  .trailer-open {
-    background: #f5c518;
-    color: #0d0d12;
-    border: 2px solid transparent;
-    padding: 12px 26px;
-    border-radius: 999px;
-    font-size: 15px;
-    font-weight: 800;
-    cursor: pointer;
-  }
-  .trailer-open:hover,
-  .trailer-open:focus,
-  .trailer-open:focus-visible {
-    outline: none;
-    border-color: #fff;
-    box-shadow: 0 0 0 4px rgba(245, 197, 24, 0.28);
-  }
 
-  .trailer-badge-inline {
-    padding: 5px 12px;
-    background: #f5c518; color: #0d0d12;
-    font-weight: 900; font-size: 11px; letter-spacing: 2px;
-    border-radius: 4px;
-  }
-  .bar-btn {
-    background: rgba(20, 20, 28, 0.85);
-    color: #fff;
-    border: 1px solid #333;
-    padding: 8px 14px;
-    border-radius: 999px;
-    font-size: 13px; font-weight: 600;
-    cursor: pointer;
-    backdrop-filter: blur(6px);
-    transition: background 0.12s, color 0.12s, border-color 0.12s;
-  }
-  .bar-btn:hover { background: #f5c518; color: #0d0d12; border-color: #f5c518; }
 
 
   /* Modal */
-  .modal-bg {
-    position: fixed; inset: 0; z-index: 800;
-    background: rgba(0,0,0,0.7);
-    display: flex; align-items: center; justify-content: center;
-    backdrop-filter: blur(4px);
-  }
-  .modal {
-    background: #15151c; border: 1px solid #2a2a35;
-    border-radius: 10px; padding: 28px;
-    max-width: 460px; width: 90%;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.7);
-  }
-  .modal h3 {
-    margin: 0 0 14px;
-    color: #f5c518; font-size: 22px;
-  }
-  .modal p { margin: 0 0 10px; color: #ddd; font-size: 15px; line-height: 1.5; }
-  .modal .modal-sub { color: #888; font-size: 14px; margin-bottom: 22px; }
-  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
-  .modal-actions button {
-    padding: 10px 20px; border-radius: 6px;
-    font-size: 14px; font-weight: 600; cursor: pointer;
-    border: 1px solid transparent;
-  }
-  .btn-secondary {
-    background: transparent; color: #aaa; border-color: #2a2a35;
-  }
-  .btn-secondary:hover { color: #fff; border-color: #444; }
-  .btn-primary {
-    background: #f5c518; color: #0d0d12; border: 0;
-  }
-  .btn-primary:hover { transform: scale(1.03); }
 
   .toast {
     position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
