@@ -2,7 +2,7 @@
   // Ficha de una persona del reparto (TMDb): datos, biografía y filmografía.
   // Elegir un título de la filmografía lo abre en el panel de detalle.
   import { IMG, img, onImgError } from "$lib/imagenes.svelte";
-  import { autofocusFirst } from "$lib/inicio/acciones";
+  import { autofocusFirst } from "$lib/inicio/util";
   import type { PersonInfo } from "$lib/tipos";
 
   let {

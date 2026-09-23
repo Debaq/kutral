@@ -30,7 +30,7 @@
     guardarPrimeraPagina,
     leerPrimeraPagina,
   } from "$lib/catalogo";
-  import { IMG, img, art, onImgError, volcarImgCache } from "$lib/imagenes.svelte";
+  import { IMG, art, onImgError, volcarImgCache } from "$lib/imagenes.svelte";
   import {
     EMPTY_PICK,
     resolveTrailer,
@@ -39,9 +39,10 @@
     type TrailerPick,
   } from "$lib/trailers";
   import { sugerenciasPara, type SugerenciaFin, type SiguienteFin } from "$lib/sugerenciasFin";
-  import { autofocusFirst } from "$lib/inicio/acciones";
+  import { autofocusFirst, seasonLabel } from "$lib/inicio/util";
   import FichaPersona from "$lib/inicio/FichaPersona.svelte";
   import Carrusel from "$lib/inicio/Carrusel.svelte";
+  import FichaTitulo from "$lib/inicio/FichaTitulo.svelte";
   import {
     premioDe,
     premiosResueltos,
@@ -1744,10 +1745,6 @@
   // Cache por `${tmdbId}:${season}` para no rebajar episodios al volver.
   const seasonEpCache = new Map<string, EpisodeMini[]>();
 
-  function seasonLabel(n: number): string {
-    return n === 0 ? "Especiales" : `Temporada ${n}`;
-  }
-
   // Abre una temporada: carga capítulos (cacheado) y el grid los muestra.
   async function openSeason(seasonNumber: number) {
     if (!selected) return;
@@ -2707,199 +2704,26 @@
       {:else if detailLoading}
         <div class="empty">Cargando…</div>
       {:else if selected}
-        <div class="detail">
-          {#if selected.backdrop_path}
-            <div class="backdrop" style:background-image="url({art(selected.backdrop_path, "w780", 780)})"></div>
-          {/if}
-          {#if selected.poster_path}
-            <div class="poster-wrap">
-              <img class="poster" src={art(selected.poster_path, "w342", 342)} alt="" onerror={onImgError} />
-              {#if !disponibleSel}
-                <span class="poster-stamp">NO DISPONIBLE</span>
-              {/if}
-            </div>
-          {/if}
-          <h2>{selected.title} {selected.year ? `(${selected.year})` : ""}</h2>
-          <div class="meta">
-            <span class="rating">★ {selected.vote_average.toFixed(1)}</span>
-            {#if selected.runtime}<span>{selected.runtime} min</span>{/if}
-            {#each selected.genres as g}<span class="genre">{g}</span>{/each}
-          </div>
-          <p class="overview">{selected.overview || "(sin sinopsis)"}</p>
-          {#if claveSel}
-            <div class="hist-row">
-              <button
-                data-nav
-                class="hist-btn"
-                class:on={favSel}
-                onclick={() => void alternarFavorito(metaDe()!)}
-              >
-                {favSel ? "★ Quitar de favoritos" : "☆ Agregar a favoritos"}
-              </button>
-              {#if enCursoSel}
-                {@const ec = enCursoSel}
-                <button
-                  data-nav
-                  class="hist-btn"
-                  onclick={() => void borrarProgreso(ec.imdb_id, ec.season, ec.episode)}
-                  title="Borra el minuto guardado y lo saca de la lista"
-                >
-                  ✕ Quitar de seguir viendo{ec.season >= 0 ? ` (T${ec.season} E${ec.episode})` : ""}
-                </button>
-              {/if}
-              {#if selected.media_type === "movie"}
-                {@const yaVista = progressForSelected?.completed === 1}
-                <button
-                  data-nav
-                  class="hist-btn"
-                  class:on={yaVista}
-                  onclick={() => void marcarVisto(metaDe()!, !yaVista)}
-                  title={yaVista ? "Desmarcar" : "Marcar como vista sin reproducirla"}
-                >
-                  {yaVista ? "✓ Vista" : "✓ Marcar vista"}
-                </button>
-              {:else if estadoSel?.vistos}
-                <span class="hist-info">{estadoSel.vistos} {estadoSel.vistos === 1 ? "capítulo visto" : "capítulos vistos"}</span>
-              {/if}
-            </div>
-          {/if}
-          {#if disponibleSel}
-            {#if selected.media_type === "tv"}
-              <!-- Series: la reproducción es por capítulo (lista de Temporadas
-                   abajo). No hay "Descubrir" de título; solo Trailer. -->
-              {#if localSel}
-                <div class="local-note">📁 Tienes capítulos bajados en este equipo</div>
-              {/if}
-              <div class="action-row">
-                <button data-nav class="trailer-btn trailer-btn-row" onclick={watchTrailer}>🎬 Trailer</button>
-              </div>
-            {:else}
-              {@const prog = progressForSelected}
-              {@const pct = prog && prog.runtime_seconds && prog.runtime_seconds > 0
-                ? Math.min(100, Math.round((prog.progress_real ?? prog.watched_seconds / prog.runtime_seconds) * 100))
-                : null}
-              {@const watchedMin = prog ? Math.floor(prog.watched_seconds / 60) : 0}
-              {@const watchedSec = prog ? prog.watched_seconds % 60 : 0}
-              {#if prog && prog.completed}
-                <div class="watched-note">✓ Ya la viste</div>
-              {:else if prog && prog.watched_seconds > 5 && pct != null}
-                <div class="progress-bar"><div class="progress-fill" style:width="{pct}%"></div></div>
-              {/if}
-              {#if localSel}
-                <div class="local-note">📁 Ya está en tu equipo — arranca al instante, sin internet</div>
-              {:else if bajandoSel}
-                <div class="local-note bajando">📥 Bajándola ahora — te avisamos cuando esté lista</div>
-              {:else if enColaSel}
-                <div class="local-note bajando">⏳ En la cola de descargas — arranca cuando haya lugar</div>
-              {/if}
-              <div class="action-row">
-                {#if prog && prog.completed}
-                  <button data-nav class="discover-btn discover-btn-row" onclick={goDescubrir}>▶ Descubrir de nuevo</button>
-                {:else if prog && prog.watched_seconds > 5}
-                  <button data-nav class="discover-btn discover-btn-row" onclick={goDescubrir} title="Opciones de reproducción">
-                    ↻ Desde el inicio
-                  </button>
-                  <button data-nav class="discover-btn discover-btn-row" onclick={goDescubrir}>
-                    ▶ Continuar {pct != null ? `(${pct}%)` : `(${watchedMin}m ${watchedSec}s)`}
-                  </button>
-                {:else}
-                  <button data-nav class="discover-btn discover-btn-row" onclick={goDescubrir}>▶ Descubrir</button>
-                {/if}
-                <button data-nav class="trailer-btn trailer-btn-row" onclick={watchTrailer}>🎬 Trailer</button>
-              </div>
-            {/if}
-          {:else}
-            <div class="unavail-note">
-              Este título no está disponible para reproducir.
-            </div>
-            <div class="action-row">
-              <button data-nav class="discover-btn" onclick={watchTrailer}>
-                🎬 Ver trailer
-              </button>
-              {#if selected.imdb_id}
-                <button
-                  data-nav
-                  class="trailer-btn"
-                  onclick={goDescubrir}
-                  title="Intentar abrir aunque esté marcada como no disponible"
-                >
-                  ⚠ Intentar de todas formas
-                </button>
-              {/if}
-            </div>
-          {/if}
-          {#if selected.media_type === "tv" && selected.seasons && selected.seasons.length}
-            <div class="people-row seasons-row">
-              <h4 class="people-title">Temporadas</h4>
-              <div class="season-list">
-                {#each selected.seasons as s (s.season_number)}
-                  <button
-                    data-nav
-                    class="season-item"
-                    class:active={seriesSeason === s.season_number}
-                    onclick={() => openSeason(s.season_number)}
-                  >
-                    <span class="season-num">{seasonLabel(s.season_number)}</span>
-                    <span class="season-count">{s.episode_count} cap.</span>
-                  </button>
-                {/each}
-              </div>
-            </div>
-          {/if}
-          {#if selected.directors.length}
-            <div class="people-row">
-              <h4 class="people-title">{selected.media_type === "tv" ? "Creado por" : "Dirigido por"}</h4>
-              <div class="people-strip">
-                {#each selected.directors as p}
-                  <button data-nav class="person-chip" onclick={() => openPerson(p.id)} title={p.name}>
-                    {#if p.profile_path}
-                      <img src={art(p.profile_path, "w185", 185)} alt={p.name} loading="lazy" onerror={onImgError} />
-                    {:else}
-                      <div class="person-noimg">{p.name.charAt(0)}</div>
-                    {/if}
-                    <span class="person-name">{p.name}</span>
-                  </button>
-                {/each}
-              </div>
-            </div>
-          {/if}
-          {#if selected.cast.length}
-            <div class="people-row">
-              <h4 class="people-title">Estelares</h4>
-              <div class="people-strip">
-                {#each selected.cast as p}
-                  <button data-nav class="person-chip" onclick={() => openPerson(p.id)} title={p.name}>
-                    {#if p.profile_path}
-                      <img src={art(p.profile_path, "w185", 185)} alt={p.name} loading="lazy" onerror={onImgError} />
-                    {:else}
-                      <div class="person-noimg">{p.name.charAt(0)}</div>
-                    {/if}
-                    <span class="person-name">{p.name}</span>
-                    {#if p.character}<span class="person-character">{p.character}</span>{/if}
-                  </button>
-                {/each}
-              </div>
-            </div>
-          {/if}
-          {#if selected.images && selected.images.length}
-            {@const scenes = selected.images}
-            <div class="people-row">
-              <h4 class="people-title">Escenas</h4>
-              <div class="scenes-strip">
-                {#each scenes.slice(0, 8) as path, i}
-                  <button
-                    data-nav
-                    class="scene-shot"
-                    style:background-image="url({img(`${IMG}/w500${path}`, 500)})"
-                    onclick={() => openCarousel(scenes, i)}
-                    title="Ver escena (Enter)"
-                    aria-label={`Escena ${i + 1}`}
-                  ></button>
-                {/each}
-              </div>
-            </div>
-          {/if}
-        </div>
+        <FichaTitulo
+          titulo={selected}
+          clave={claveSel}
+          favorito={favSel}
+          enCurso={enCursoSel}
+          estado={estadoSel}
+          progreso={progressForSelected}
+          disponible={disponibleSel}
+          local={localSel}
+          bajando={bajandoSel}
+          enCola={enColaSel}
+          temporadaAbierta={seriesSeason}
+          onFavorito={() => void alternarFavorito(metaDe()!)}
+          onVisto={(v) => void marcarVisto(metaDe()!, v)}
+          onDescubrir={goDescubrir}
+          onTrailer={watchTrailer}
+          onTemporada={openSeason}
+          onPersona={openPerson}
+          onEscenas={openCarousel}
+        />
       {:else}
         <div class="brand-empty">
           <h1 class="brand-name">Kütral</h1>
@@ -3436,178 +3260,15 @@
   .key-phone-txt span { font-size: 12px; color: #9a9aa4; line-height: 1.45; }
   .key-phone-wait { margin: 16px 0 0; font-size: 11.5px; color: #6e6e78; }
 
-  .detail { position: relative; padding: 0 20px 20px; flex: 1; }
-  .backdrop {
-    position: absolute; top: 0; left: 0; right: 0; height: 240px;
-    background-size: cover; background-position: center;
-    opacity: 0.35;
-    mask-image: linear-gradient(180deg, #000 0%, transparent 100%);
-    -webkit-mask-image: linear-gradient(180deg, #000 0%, transparent 100%);
-    z-index: 0;
-  }
-  .poster-wrap { position: relative; display: inline-block; margin-top: 60px; z-index: 1; }
-  .poster { width: 180px; border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.6); display: block; }
-  .poster-stamp {
-    position: absolute; top: 50%; left: 50%;
-    transform: translate(-50%, -50%) rotate(-18deg);
-    background: rgba(220, 38, 38, 0.92);
-    color: #fff;
-    padding: 6px 18px;
-    font-weight: 900; font-size: 14px;
-    letter-spacing: 1.5px;
-    border: 3px solid #fff;
-    border-radius: 3px;
-    box-shadow: 0 4px 14px rgba(0,0,0,0.7);
-    text-transform: uppercase;
-    white-space: nowrap;
-    pointer-events: none;
-  }
-  .detail h2 { position: relative; margin: 14px 0 8px; font-size: 22px; z-index: 1; }
-  .meta { display: flex; flex-wrap: wrap; gap: 8px; font-size: 12px; color: #aaa; margin-bottom: 12px; position: relative; z-index: 1; }
-  .rating { color: #f5c518; font-weight: 700; }
-  .genre { background: #1a1a22; padding: 2px 8px; border-radius: 999px; }
-  .overview { color: #c0c0c8; font-size: 14px; line-height: 1.5; position: relative; z-index: 1; }
-  .discover-btn {
-    position: relative; z-index: 1;
-    background: #f5c518; color: #000; border: 0;
-    padding: 12px 24px; font-weight: 800; font-size: 16px;
-    border-radius: 6px; cursor: pointer; width: 100%;
-    margin-top: 12px;
-    transition: transform 0.1s;
-  }
-  .discover-btn:hover:not(:disabled) { transform: scale(1.02); }
-  .discover-btn:disabled { opacity: 0.6; cursor: wait; }
-  .trailer-btn {
-    position: relative; z-index: 1;
-    background: transparent; color: #f5c518;
-    border: 1.5px solid #f5c518;
-    padding: 10px 20px; font-weight: 700; font-size: 14px;
-    border-radius: 6px; cursor: pointer; width: 100%;
-    margin-top: 8px;
-    transition: background 0.12s, color 0.12s;
-  }
-  .trailer-btn:hover { background: #f5c518; color: #0d0d12; }
-  .unavail-note {
-    position: relative; z-index: 1;
-    margin: 12px 0;
-    padding: 10px 12px;
-    background: rgba(220, 38, 38, 0.12);
-    border: 1px solid rgba(220, 38, 38, 0.4);
-    border-radius: 6px;
-    color: #ffb4b4;
-    font-size: 13px;
-    text-align: center;
-  }
 
-  .action-row { display: flex; gap: 8px; position: relative; z-index: 1; margin-top: 12px; }
-  .discover-btn-row { flex: 1; padding: 12px 16px; font-size: 15px; }
-  .trailer-btn-row { width: auto; padding: 12px 18px; margin-top: 0 !important; font-size: 14px; }
-  .people-row { position: relative; z-index: 1; margin-top: 18px; }
-  .people-title {
-    margin: 0 0 8px; font-size: 12px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 1px;
-    color: #888;
-  }
-  .people-strip {
-    display: flex; gap: 10px; flex-wrap: wrap;
-  }
-  .scenes-strip {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    width: 100%;
-  }
-  .scene-shot {
-    width: 100%;
-    aspect-ratio: 16 / 9;
-    border-radius: 8px;
-    border: 2px solid transparent;
-    padding: 0;
-    background-size: cover; background-position: center;
-    background-color: #2a2a35;
-    box-shadow: 0 4px 10px rgba(0,0,0,0.4);
-    cursor: pointer;
-    transition: transform 0.15s, border-color 0.15s;
-  }
-  .scene-shot:hover { transform: translateY(-2px); }
-  .scene-shot:focus {
-    outline: none;
-    border-color: #f5c518;
-    transform: translateY(-2px) scale(1.03);
-    box-shadow: 0 6px 18px rgba(0,0,0,0.55), 0 0 0 2px rgba(245,197,24,0.4);
-  }
 
   /* --- Carrusel de escenas --- */
-  .person-chip {
-    flex: 0 0 80px; width: 80px;
-    background: transparent; border: 0; padding: 0;
-    color: inherit; cursor: pointer;
-    display: flex; flex-direction: column; align-items: center;
-    gap: 4px;
-    transition: transform 0.15s;
-  }
-  .person-chip:hover { transform: translateY(-2px); }
-  .person-chip:focus { outline: 3px solid #f5c518; outline-offset: 2px; border-radius: 6px; }
-  .person-chip img, .person-noimg {
-    width: 64px; height: 64px;
-    border-radius: 50%; object-fit: cover;
-    background: #2a2a35;
-    box-shadow: 0 4px 10px rgba(0,0,0,0.4);
-  }
-  .person-noimg {
-    display: flex; align-items: center; justify-content: center;
-    font-size: 22px; font-weight: 700; color: #888;
-  }
-  .person-name {
-    font-size: 11px; font-weight: 600; line-height: 1.2;
-    text-align: center; color: #ddd;
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 2; line-clamp: 2;
-    -webkit-box-orient: vertical;
-    max-width: 80px;
-  }
-  .person-character {
-    font-size: 10px; color: #777; line-height: 1.1;
-    text-align: center;
-    overflow: hidden; text-overflow: ellipsis;
-    max-width: 80px; white-space: nowrap;
-  }
 
   /* Person modal */
-  .progress-bar {
-    position: relative; z-index: 1;
-    height: 6px; background: #1f1f28; border-radius: 3px;
-    overflow: hidden; margin: 4px 0 8px;
-  }
-  .progress-fill { height: 100%; background: linear-gradient(90deg, #f5c518, #ff9b00); transition: width 0.3s; }
   /* Mismo lenguaje visual que "ya la viste", en verde más frío: las dos son
      cosas que la app YA sabe del título, no acciones. */
-  .local-note {
-    position: relative; z-index: 1;
-    background: rgba(64, 160, 120, 0.15);
-    border: 1px solid rgba(64, 160, 120, 0.4);
-    color: #8fe3a8;
-    padding: 6px 10px; border-radius: 6px;
-    font-size: 12px; text-align: center;
-    margin: 8px 0;
-  }
 
-  .local-note.bajando {
-    background: rgba(243, 169, 81, 0.13);
-    border-color: rgba(243, 169, 81, 0.4);
-    color: #f3c489;
-  }
 
-  .watched-note {
-    position: relative; z-index: 1;
-    background: rgba(82, 181, 96, 0.15);
-    border: 1px solid rgba(82, 181, 96, 0.4);
-    color: #b6e9bf;
-    padding: 6px 10px; border-radius: 6px;
-    font-size: 12px; text-align: center;
-    margin: 8px 0;
-  }
 
   .key-edit { padding: 12px 20px; border-top: 1px solid #1f1f28; }
   .link { background: none; border: 0; color: #888; font-size: 11px; cursor: pointer; padding: 0; }
@@ -4079,38 +3740,6 @@
     white-space: nowrap;
   }
   /* Fila de acciones de historial del panel de info. */
-  .hist-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    align-items: center;
-    margin: 10px 0 4px;
-  }
-  .hist-btn {
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    color: #d8d8e0;
-    border-radius: 8px;
-    padding: 6px 12px;
-    font-size: 12px;
-    font-weight: 700;
-    cursor: pointer;
-  }
-  .hist-btn:hover,
-  .hist-btn:focus-visible {
-    border-color: #f3a951;
-    color: #fff;
-    outline: none;
-  }
-  .hist-btn.on {
-    background: rgba(47, 158, 68, 0.18);
-    border-color: #2f9e44;
-    color: #7ee094;
-  }
-  .hist-info {
-    font-size: 12px;
-    color: #9a9aa4;
-  }
   .ep-card.ep-visto img {
     opacity: 0.45;
   }
@@ -4279,38 +3908,6 @@
   }
 
   /* Lista vertical de temporadas en el panel derecho. */
-  .season-list {
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-  }
-  .season-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    background: rgba(20, 20, 28, 0.6);
-    border: 2px solid rgba(255, 255, 255, 0.1);
-    border-radius: 10px;
-    padding: 10px 14px;
-    cursor: pointer;
-    color: #e6e6ec;
-    text-align: left;
-  }
-  .season-item:focus-visible,
-  .season-item:hover {
-    outline: none;
-    border-color: #f3a951;
-    background: rgba(243, 169, 81, 0.16);
-    color: #fff;
-  }
-  .season-item.active {
-    border-color: #f3a951;
-    background: rgba(243, 169, 81, 0.22);
-    color: #fff;
-  }
-  .season-num { font-size: 14px; font-weight: 600; }
-  .season-count { font-size: 12px; color: #9a9aa4; }
 
   /* PLAY mode */
   .discover-mode { position: fixed; inset: 0; background: #000; z-index: 1500; }

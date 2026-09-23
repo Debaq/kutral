@@ -1,4 +1,4 @@
-// Acciones `use:` compartidas por las piezas del catálogo.
+// Utilidades compartidas por las piezas del catálogo.
 
 /** Enfoca el primer botón navegable al montar (menús y modales). */
 export function autofocusFirst(node: HTMLElement) {
@@ -7,4 +7,8 @@ export function autofocusFirst(node: HTMLElement) {
     btn?.focus();
   }, 30);
   return {};
+}
+
+export function seasonLabel(n: number): string {
+  return n === 0 ? "Especiales" : `Temporada ${n}`;
 }
