@@ -231,7 +231,8 @@ export function infoChips(s: Src): string[] {
   else if (/x264|h\.?264|avc/.test(t)) out.push("H264");
   if (/dolby ?vision|dovi|\bdv\b/.test(t)) out.push("DV");
   else if (/hdr10\+/.test(t)) out.push("HDR10+");
-  else if (/hdr/.test(t)) out.push("HDR");
+  // HDRip es un rip en SDR que solo se llama así: no es HDR.
+  else if (/hdr(?!ip)/.test(t)) out.push("HDR");
   if (/atmos/.test(t)) out.push("Atmos");
   else if (/truehd/.test(t)) out.push("TrueHD");
   else if (/dts/.test(t)) out.push("DTS");

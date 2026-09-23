@@ -31,6 +31,10 @@ describe("infoChips", () => {
       "Latino",
     ]);
   });
+
+  it("HDRip es un rip de SDR, no HDR", () => {
+    expect(infoChips(src({ title: "Pelicula.2024.HDRip.x264" }))).toEqual(["H264"]);
+  });
 });
 
 describe("stack", () => {
