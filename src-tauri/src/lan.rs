@@ -167,12 +167,34 @@ fn lan_si_existe() -> Option<&'static Lan> {
 #[derive(Serialize)]
 pub struct RedInfo {
     pub puerto: u16,
-    /// "firewalld" | "ufw" | "" (ninguno detectado).
+    /// "firewalld" | "ufw" | "Windows Defender" | "" (ninguno que tape).
     pub firewall: String,
     /// Comando para abrir el puerto, listo para copiar.
     pub comando: String,
 }
 
+/// Nombre de la regla que abre el puerto en Windows: con ella ya creada el
+/// aviso deja de salir.
+#[cfg(windows)]
+const REGLA_WINDOWS: &str = "Kutral TV";
+
+// Windows Defender viene activo casi siempre: lo que importa es si ya hay
+// regla. netsh habla el idioma del sistema; PowerShell devuelve valores fijos.
+#[cfg(windows)]
+fn firewall_activo() -> &'static str {
+    let script = format!(
+        "if (Get-NetFirewallRule -DisplayName '{REGLA_WINDOWS}' -ErrorAction SilentlyContinue) {{ 'regla' }} \
+         elseif (@(Get-NetFirewallProfile | Where-Object {{ $_.Enabled -eq 'True' }}).Count -gt 0) {{ 'activo' }}"
+    );
+    let mut cmd = std::process::Command::new("powershell");
+    crate::winproc::hide_console(&mut cmd);
+    match cmd.args(["-NoProfile", "-NonInteractive", "-Command", &script]).output() {
+        Ok(o) if String::from_utf8_lossy(&o.stdout).trim() == "activo" => "Windows Defender",
+        _ => "",
+    }
+}
+
+#[cfg(not(windows))]
 fn firewall_activo() -> &'static str {
     let activo = |svc: &str| {
         std::process::Command::new("systemctl")
@@ -195,8 +217,10 @@ fn firewall_activo() -> &'static str {
 }
 
 /// Qué puerto usa Kütral para la TV y si hay un firewall que lo tape.
+/// Async: en Windows la consulta pasa por PowerShell (~1 s) y un comando
+/// síncrono correría en el hilo de la UI.
 #[tauri::command]
-pub fn cast_red_info() -> RedInfo {
+pub async fn cast_red_info() -> RedInfo {
     let puerto = LAN.get().map(|l| l.puerto).unwrap_or(PUERTO);
     let firewall = firewall_activo();
     let comando = match firewall {
@@ -204,6 +228,12 @@ pub fn cast_red_info() -> RedInfo {
             "sudo firewall-cmd --permanent --add-port={puerto}/tcp --add-service=ssdp && sudo firewall-cmd --reload"
         ),
         "ufw" => format!("sudo ufw allow {puerto}/tcp && sudo ufw allow proto udp from any port 1900"),
+        // Sin perfil: muchas redes de casa quedan marcadas como "pública" y una
+        // regla solo para "privada" no las cubriría.
+        #[cfg(windows)]
+        "Windows Defender" => format!(
+            "netsh advfirewall firewall add rule name=\"{REGLA_WINDOWS}\" dir=in action=allow protocol=TCP localport={puerto}"
+        ),
         _ => String::new(),
     };
     RedInfo {

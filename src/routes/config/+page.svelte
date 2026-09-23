@@ -1301,7 +1301,9 @@
               <strong>Firewall activo ({redTv.firewall}).</strong> La TV necesita
               entrar a este equipo por el puerto {redTv.puerto} para los
               subtítulos, las TVs DLNA (Samsung) y las copias bajadas. Si eso no
-              funciona, ábrelo una vez con:
+              funciona, ábrelo una vez con{redTv.firewall === "Windows Defender"
+                ? " (en una terminal abierta como administrador)"
+                : ""}:
               <code>{redTv.comando}</code>
             </p>
           {/if}
