@@ -562,14 +562,31 @@ pub mod imp {
                             _ => {}
                         }
                     }
+                    // Acciones de input.conf y del menú de uosc (ver input.conf).
                     Some("client-message") => {
-                        let es_salir = v["args"]
+                        let args: Vec<&str> = v["args"]
                             .as_array()
-                            .and_then(|a| a.first())
-                            .and_then(|x| x.as_str())
-                            == Some("kutral-salir");
-                        if es_salir {
-                            suspender(&app);
+                            .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
+                            .unwrap_or_default();
+                        match args.as_slice() {
+                            ["kutral-salir", ..] => suspender(&app),
+                            ["kutral-subs", ..] => {
+                                let _ = app.emit("player:download-subs", ());
+                            }
+                            // Igual que en Linux: se avisa ANTES de cerrar,
+                            // para que el front no lo tome por un "salir" y
+                            // vuelva a la lista de fuentes.
+                            ["kutral-fuente", ..] => {
+                                let _ = app.emit("player:cambiar-fuente", ());
+                                let _ = mpv_cmd(vec![serde_json::Value::String("quit".into())]);
+                                if let Some(w) = tauri::Manager::get_webview_window(&app, "main") {
+                                    let _ = w.set_focus();
+                                }
+                            }
+                            ["kutral-pick", id, ..] => {
+                                let _ = app.emit("player:menu-pick", id.to_string());
+                            }
+                            _ => {}
                         }
                     }
                     Some("end-file") => {
@@ -837,14 +854,29 @@ pub mod imp {
         Ok(())
     }
 
-    // El picker in-video solo existe con libmpv embebido (Linux). Stub no-op:
-    // recibe los ítems como JSON crudo, porque acá nadie los lee.
+    /// Lista para elegir dentro del video (subtítulos descargables). En Linux
+    /// la dibuja el embed; acá, el menú de uosc. Cada ítem, al elegirlo, manda
+    /// `script-message kutral-pick <id>` y el vigía del IPC lo reenvía como
+    /// "player:menu-pick", el mismo evento que en Linux.
     #[tauri::command]
-    pub fn mpv_open_picker(
-        _title: String,
-        _items: Vec<serde_json::Value>,
-    ) -> Result<(), String> {
-        Ok(())
+    pub fn mpv_open_picker(title: String, items: Vec<serde_json::Value>) -> Result<(), String> {
+        let items: Vec<serde_json::Value> = items
+            .iter()
+            .map(|it| {
+                let id = it["id"].as_str().unwrap_or_default();
+                serde_json::json!({
+                    "title": it["label"].as_str().unwrap_or_default(),
+                    "value": ["script-message", "kutral-pick", id],
+                })
+            })
+            .collect();
+        let menu = serde_json::json!({ "type": "kutral-picker", "title": title, "items": items });
+        mpv_cmd(vec![
+            serde_json::Value::String("script-message-to".into()),
+            serde_json::Value::String("uosc".into()),
+            serde_json::Value::String("open-menu".into()),
+            serde_json::Value::String(menu.to_string()),
+        ])
     }
 
     #[tauri::command]
