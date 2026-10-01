@@ -35,8 +35,9 @@ mod winproc;
 // Lo de TMDb que usan los demás módulos, con la ruta de siempre.
 pub(crate) use tmdb::{
     fetch_json, tmdb_buscar, tmdb_overview_es, tmdb_trending, EpisodeMini, ExternalIds,
-    PersonMini, SeasonMini, TmdbItem, TmdbListResp, LANG, TMDB_BASE,
+    PersonMini, SeasonMini, TmdbItem, TmdbListResp, TMDB_BASE,
 };
+pub(crate) use tmdb::lang as tmdb_lang;
 
 /// El front avisa cuando reproduce fuera de mpv (iframe web, IPTV con hls.js)
 /// para que el escritorio no se duerma. mpv avisa por su cuenta.
@@ -547,6 +548,7 @@ pub fn run() {
             tmdb::tmdb_season,
             tmdb::tmdb_recommendations,
             tmdb::tmdb_genres,
+            tmdb::set_tmdb_lang,
             trailers::tmdb_videos,
             trailers::tmdb_trailer_key,
             trailers::yt_trailer_src,

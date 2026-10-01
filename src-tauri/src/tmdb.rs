@@ -7,7 +7,35 @@ use crate::trailers::VideosResp;
 use crate::vera::{map_keyword_to_themes, KeywordsField};
 
 pub(crate) const TMDB_BASE: &str = "https://api.themoviedb.org/3";
-pub(crate) const LANG: &str = "es-ES";
+
+/// Idioma de los metadatos de TMDb (títulos, sinopsis, géneros, pósters).
+/// Lo fija el front con `set_tmdb_lang` según la opción "Idioma" de
+/// Configuración. Arranca en latino porque ese es el idioma por defecto de la
+/// app; el front lo corrige apenas carga la configuración.
+static TMDB_LANG: std::sync::RwLock<&'static str> = std::sync::RwLock::new("es-MX");
+
+/// Idioma actual para el parámetro `language=` de TMDb.
+pub(crate) fn lang() -> &'static str {
+    TMDB_LANG.read().map(|g| *g).unwrap_or("es-MX")
+}
+
+/// Traduce el idioma de la app al de TMDb. TMDb no tiene `es-CL`: el español
+/// latino vive en `es-MX`, que es donde la comunidad sube las traducciones y
+/// carátulas de Latinoamérica. `es-ES` es el de España.
+fn lang_tmdb(app_lang: &str) -> &'static str {
+    match app_lang {
+        "es-ES" => "es-ES",
+        "en-US" => "en-US",
+        _ => "es-MX",
+    }
+}
+
+#[tauri::command]
+pub fn set_tmdb_lang(lang: String) {
+    if let Ok(mut g) = TMDB_LANG.write() {
+        *g = lang_tmdb(&lang);
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TmdbItem {
@@ -69,6 +97,9 @@ pub struct TmdbDetail {
     pub imdb_id: Option<String>,
     pub runtime: Option<u32>,
     pub genres: Vec<String>,
+    /// Ids TMDb de `genres`, en el mismo orden. Los nombres cambian con el
+    /// idioma (es-ES "Suspense", es-MX "Suspenso"); Vera cruza por id.
+    pub genre_ids: Vec<u64>,
     pub directors: Vec<PersonMini>,
     pub cast: Vec<PersonMini>,
     pub images: Vec<String>,
@@ -269,6 +300,8 @@ pub(crate) struct ExternalIds {
 
 #[derive(Deserialize)]
 struct Genre {
+    #[serde(default)]
+    id: u64,
     name: String,
 }
 
@@ -305,7 +338,9 @@ struct GenresResp {
 /// marca escribe en español NEUTRO y las traducciones `es-ES` de TMDb están
 /// hechas para España (aparece algún "vosotros"). Después va España, después
 /// cualquier variante, y recién ahí quien llama se queda con el inglés.
+/// Con la app en España el orden se invierte: primero `ES`, después latino.
 const OVERVIEW_ES_PREF: &[&str] = &["MX", "ES", "419", "AR", "CO", "US"];
+const OVERVIEW_ES_PREF_ESPANA: &[&str] = &["ES", "MX", "419", "AR", "CO", "US"];
 
 /// Sinopsis en español para un anime, vía su ficha equivalente en TMDb.
 ///
@@ -327,6 +362,8 @@ pub(crate) async fn tmdb_overview_es(
     if api_key.is_empty() || tmdb_id == 0 {
         return None;
     }
+    let espana = lang() == "es-ES";
+    let espanol = if espana { "es-ES" } else { "es-MX" };
     // ani.zip marca "MOVIE"/"TV"; ante la duda, serie (la mayoría del catálogo).
     let kind = if tmdb_type.is_some_and(|t| t.eq_ignore_ascii_case("movie")) {
         "movie"
@@ -334,15 +371,15 @@ pub(crate) async fn tmdb_overview_es(
         "tv"
     };
     let url = format!(
-        "{}/{}/{}?api_key={}&language=es-MX&append_to_response=translations",
-        TMDB_BASE, kind, tmdb_id, api_key
+        "{}/{}/{}?api_key={}&language={}&append_to_response=translations",
+        TMDB_BASE, kind, tmdb_id, api_key, espanol
     );
     let v: serde_json::Value = client().ok()?.get(&url).send().await.ok()?.json().await.ok()?;
 
     let clean = |x: &serde_json::Value| {
         x.as_str().map(str::trim).filter(|t| !t.is_empty()).map(str::to_string)
     };
-    // Camino rápido: la propia respuesta ya vino en es-MX.
+    // Camino rápido: la propia respuesta ya vino en la variante preferida.
     if let Some(o) = clean(&v["overview"]) {
         return Some(o);
     }
@@ -350,7 +387,8 @@ pub(crate) async fn tmdb_overview_es(
     let list = v["translations"]["translations"].as_array()?;
     let es: Vec<&serde_json::Value> =
         list.iter().filter(|t| t["iso_639_1"] == "es").collect();
-    for region in OVERVIEW_ES_PREF {
+    let pref = if espana { OVERVIEW_ES_PREF_ESPANA } else { OVERVIEW_ES_PREF };
+    for region in pref {
         if let Some(t) = es.iter().find(|t| t["iso_3166_1"] == *region) {
             if let Some(o) = clean(&t["data"]["overview"]) {
                 return Some(o);
@@ -371,7 +409,7 @@ pub async fn tmdb_genres(media_type: String, api_key: String) -> Result<Vec<Genr
     }
     let url = format!(
         "{}/genre/{}/list?api_key={}&language={}",
-        TMDB_BASE, media_type, api_key, LANG
+        TMDB_BASE, media_type, api_key, lang()
     );
     let r: GenresResp = fetch_json(&url).await?;
     Ok(r.genres)
@@ -427,7 +465,7 @@ pub async fn tmdb_discover(
 
     let mut url = format!(
         "{}/discover/{}?api_key={}&language={}&page={}&sort_by={}&include_adult=false",
-        TMDB_BASE, media_type, api_key, LANG, page, sort
+        TMDB_BASE, media_type, api_key, lang(), page, sort
     );
     // Piso de votos. TMDb es editable por usuarios y su cola larga son fichas
     // placeholder: sin póster, sin votos, muchas sin estrenar de verdad. Los
@@ -538,7 +576,7 @@ pub(crate) async fn tmdb_buscar(
     let q = urlencoding::encode(&query);
     let url = format!(
         "{}/search/{}?api_key={}&language={}&page={}&query={}",
-        TMDB_BASE, media_type, api_key, LANG, page, q
+        TMDB_BASE, media_type, api_key, lang(), page, q
     );
     fetch_json(&url).await
 }
@@ -559,7 +597,7 @@ pub(crate) async fn tmdb_trending(
     }
     let url = format!(
         "{}/trending/{}/week?api_key={}&language={}&page={}",
-        TMDB_BASE, media_type, api_key, LANG, page
+        TMDB_BASE, media_type, api_key, lang(), page
     );
     fetch_json(&url).await
 }
@@ -591,7 +629,7 @@ pub async fn tmdb_recommendations(
     };
     let url = format!(
         "{}/{}/{}/{}?api_key={}&language={}&page={}",
-        TMDB_BASE, media_type, id, endpoint, api_key, LANG, page
+        TMDB_BASE, media_type, id, endpoint, api_key, lang(), page
     );
     fetch_json(&url).await
 }
@@ -652,7 +690,7 @@ pub async fn item_status(
     // pelis y series enteras (todas las series desaparecían en el storm de 429).
     let url = format!(
         "{}/{}/{}?api_key={}&language={}&append_to_response=external_ids,videos",
-        TMDB_BASE, media_type, id, api_key, LANG
+        TMDB_BASE, media_type, id, api_key, lang()
     );
     let raw: ItemStatusRaw = fetch_json(&url).await?;
     let imdb_id = raw
@@ -697,7 +735,7 @@ pub async fn tmdb_detail(
     // include_image_language: backdrops sin texto (null) + es/en. Más variedad.
     let url = format!(
         "{}/{}/{}?api_key={}&language={}{}&include_image_language=es,en,null",
-        TMDB_BASE, media_type, id, api_key, LANG, extras
+        TMDB_BASE, media_type, id, api_key, lang(), extras
     );
     let raw: DetailRaw = fetch_json(&url).await?;
 
@@ -706,6 +744,7 @@ pub async fn tmdb_detail(
     let year = date.split('-').next().unwrap_or("").to_string();
     let imdb_id = raw.imdb_id.or_else(|| raw.external_ids.and_then(|e| e.imdb_id));
     let runtime = raw.runtime.or_else(|| raw.episode_run_time.and_then(|v| v.first().copied()));
+    let genre_ids = raw.genres.iter().map(|g| g.id).collect();
     let genres = raw.genres.into_iter().map(|g| g.name).collect();
 
     // Director (movies) o Creators (tv)
@@ -829,6 +868,7 @@ pub async fn tmdb_detail(
         imdb_id,
         runtime,
         genres,
+        genre_ids,
         directors,
         cast,
         images,
@@ -895,7 +935,7 @@ pub async fn tmdb_season(
     }
     let url = format!(
         "{}/tv/{}/season/{}?api_key={}&language={}",
-        TMDB_BASE, id, season_number, api_key, LANG
+        TMDB_BASE, id, season_number, api_key, lang()
     );
     let raw: SeasonDetailRaw = fetch_json(&url).await?;
     Ok(raw
@@ -998,7 +1038,7 @@ pub async fn tmdb_person(id: u64, api_key: String) -> Result<PersonInfo, String>
     }
     let url = format!(
         "{}/person/{}?api_key={}&language={}&append_to_response=combined_credits",
-        TMDB_BASE, id, api_key, LANG
+        TMDB_BASE, id, api_key, lang()
     );
     let raw: PersonRaw = fetch_json(&url).await?;
 

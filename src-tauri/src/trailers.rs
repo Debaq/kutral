@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{client, fetch_json, winproc, LANG, TMDB_BASE};
+use crate::{client, fetch_json, winproc, TMDB_BASE};
 
 #[derive(Serialize, Deserialize)]
 pub struct VideoItem {
@@ -36,7 +36,7 @@ pub async fn tmdb_videos(
     // 1ra pasada: idioma local
     let url_local = format!(
         "{}/{}/{}/videos?api_key={}&language={}",
-        TMDB_BASE, media_type, id, api_key, LANG
+        TMDB_BASE, media_type, id, api_key, crate::tmdb_lang()
     );
     let mut vids: VideosResp = fetch_json(&url_local).await.unwrap_or(VideosResp { results: vec![] });
     // Fallback inglés si no hay nada (común para trailers)
