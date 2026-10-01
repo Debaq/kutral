@@ -645,22 +645,7 @@ pub mod imp {
     /// yt-dlp vendorizado: ytdl_hook lo necesita para los trailers de YouTube
     /// (streams DASH separados) sin depender del PATH del sistema.
     fn ytdlp_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
-        use tauri::Manager;
-        #[cfg(windows)]
-        let exe = "yt-dlp.exe";
-        #[cfg(not(windows))]
-        let exe = "yt-dlp";
-        let mut cands: Vec<std::path::PathBuf> = Vec::new();
-        if let Ok(res) = app.path().resource_dir() {
-            cands.push(res.join("vendor").join(exe));
-        }
-        cands.push(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("vendor").join(exe));
-        if let Ok(p) = std::env::current_exe() {
-            if let Some(dir) = p.parent() {
-                cands.push(dir.join("vendor").join(exe));
-            }
-        }
-        cands.into_iter().find(|c| c.exists())
+        crate::ytdlp::path(app)
     }
 
     fn mpv_config_dir(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {

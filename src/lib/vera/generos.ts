@@ -3,7 +3,7 @@
 //
 //   id TMDb ("18")  ←→  nombre es-ES ("Drama")  ←→  slug v3 ("drama")
 //
-// El nombre es-ES es lo que devuelve tmdb_detail (LANG=es-ES) y lo que se
+// El nombre es-ES es lo que devuelve tmdb_detail (nombres canónicos; tmdb.ts los resuelve por id) y lo que se
 // muestra en pantalla. El slug v3 es lo que guarda `vera_titles.genres` y lo
 // que devuelve `vera_genre_list` (ver map_genre_id en src-tauri/src/lib.rs).
 // Sin esta tabla, filtrar el catálogo local por lo que el usuario excluyó en

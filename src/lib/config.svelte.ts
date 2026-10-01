@@ -233,10 +233,17 @@ export const config = $state({
 	detectedKutral: false,
 });
 
+// Los metadatos y carátulas de TMDb siguen al idioma de la app: Chile pide el
+// español latino (es-MX en TMDb) y España el castellano (es-ES).
+function syncTmdbLang() {
+	invoke("set_tmdb_lang", { lang: config.lang }).catch(() => {});
+}
+
 export function loadConfig() {
 	if (typeof localStorage === "undefined") return;
 	const lang = localStorage.getItem("app_lang") as Lang | null;
 	if (lang && LANGS.some((l) => l.id === lang)) config.lang = lang;
+	syncTmdbLang();
 	config.tmdbKey = localStorage.getItem("tmdb_key") || "";
 	config.omdbKey = localStorage.getItem("omdb_key") || "";
 	const m = (localStorage.getItem("kiosk_mode") || "auto") as ModeOverride;
@@ -325,6 +332,7 @@ export function loadConfig() {
 export function saveConfig() {
 	if (typeof localStorage === "undefined") return;
 	localStorage.setItem("app_lang", config.lang);
+	syncTmdbLang();
 	localStorage.setItem("tmdb_key", config.tmdbKey);
 	localStorage.setItem("omdb_key", config.omdbKey.trim());
 	localStorage.setItem("kiosk_mode", config.modeOverride);

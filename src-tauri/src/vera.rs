@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
-use crate::{client, fetch_json, ExternalIds, TmdbListResp, LANG, TMDB_BASE};
+use crate::{client, fetch_json, ExternalIds, TmdbListResp, TMDB_BASE};
 
 // ============================================================
 // Vera v3 — motor de recomendaciones (placeholders por ahora)
@@ -347,7 +347,7 @@ pub async fn vera_import_catalog(
     for page in 1..=pages {
         let discover_url = format!(
             "{}/discover/{}?api_key={}&language={}&page={}&sort_by=popularity.desc&include_adult=false",
-            TMDB_BASE, media_type, api_key, LANG, page
+            TMDB_BASE, media_type, api_key, crate::tmdb_lang(), page
         );
         let list: TmdbListResp = match fetch_json(&discover_url).await {
             Ok(l) => l,
@@ -380,7 +380,7 @@ pub async fn vera_import_catalog(
 
             let url = format!(
                 "{}/{}/{}?api_key={}&language={}{}",
-                TMDB_BASE, media_type, item.id, api_key, LANG, extras
+                TMDB_BASE, media_type, item.id, api_key, crate::tmdb_lang(), extras
             );
             let raw: ImportDetailRaw = match cli.get(&url).send().await {
                 Ok(r) => {

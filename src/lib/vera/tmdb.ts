@@ -106,6 +106,7 @@ interface TmdbDetail {
   imdb_id: string | null;
   runtime: number | null;
   genres: string[];
+  genre_ids?: number[];
   directors: { id: number; name: string }[];
   cast: { id: number; name: string; character: string | null }[];
   images: string[];
@@ -253,7 +254,9 @@ function mapearItem(it: TmdbItemMini): Pelicula {
 // Completa una peli con los datos del detail. Preserva `procedencia` y las
 // plataformas que ya haya puesto el catálogo local (el detail no las trae).
 function fusionarDetalle(base: Pelicula, d: TmdbDetail): Pelicula {
-  const generos = d.genres ?? [];
+  // Por id, no por nombre: el nombre cambia con el idioma de TMDb (es-ES
+  // "Suspense", es-MX "Suspenso") y Vera habla en los nombres canónicos.
+  const generos = d.genre_ids?.length ? nombresDesdeIds(d.genre_ids) : d.genres ?? [];
   cacheGenerosDe(d.id, generos);
   const tono: Tono = tonoDeGeneros(generos);
   return {

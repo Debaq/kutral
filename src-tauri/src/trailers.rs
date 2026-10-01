@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{client, fetch_json, winproc, LANG, TMDB_BASE};
+use crate::{client, fetch_json, winproc, TMDB_BASE};
 
 #[derive(Serialize, Deserialize)]
 pub struct VideoItem {
@@ -36,7 +36,7 @@ pub async fn tmdb_videos(
     // 1ra pasada: idioma local
     let url_local = format!(
         "{}/{}/{}/videos?api_key={}&language={}",
-        TMDB_BASE, media_type, id, api_key, LANG
+        TMDB_BASE, media_type, id, api_key, crate::tmdb_lang()
     );
     let mut vids: VideosResp = fetch_json(&url_local).await.unwrap_or(VideosResp { results: vec![] });
     // Fallback inglés si no hay nada (común para trailers)
@@ -202,32 +202,6 @@ pub async fn tmdb_trailer_key(
     Ok(first.map(|key| TrailerKey { key, embeddable: false }))
 }
 
-/// Ruta del binario yt-dlp: vendor/ del bundle primero, PATH después.
-fn ytdlp_bin(app: &tauri::AppHandle) -> String {
-    use tauri::Manager;
-    #[cfg(windows)]
-    let exe = "yt-dlp.exe";
-    #[cfg(not(windows))]
-    let exe = "yt-dlp";
-
-    let mut cands: Vec<std::path::PathBuf> = Vec::new();
-    if let Ok(res) = app.path().resource_dir() {
-        cands.push(res.join("vendor").join(exe));
-    }
-    cands.push(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("vendor").join(exe));
-    if let Ok(p) = std::env::current_exe() {
-        if let Some(dir) = p.parent() {
-            cands.push(dir.join("vendor").join(exe));
-        }
-    }
-    for c in cands {
-        if c.exists() {
-            return c.to_string_lossy().into_owned();
-        }
-    }
-    exe.to_string()
-}
-
 /// URLs directas del trailer de YouTube, resueltas con yt-dlp.
 ///
 /// Una sola ejecución de yt-dlp por trailer: la misma llamada dice si el video
@@ -257,31 +231,43 @@ pub async fn yt_trailer_src(app: tauri::AppHandle, key: String) -> Result<Traile
     if k.is_empty() || !k.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         return Err("key inválida".into());
     }
-    let bin = ytdlp_bin(&app);
+    let bin = crate::ytdlp::bin(&app);
     let url = format!("https://www.youtube.com/watch?v={}", k);
 
-    let mut cmd = tokio::process::Command::new(&bin);
-    winproc::hide_console_tokio(&mut cmd);
-    let fut = cmd
-        .args([
-            "--no-playlist",
-            "--no-warnings",
-            "--socket-timeout", "10",
-            "-f", "bv*+ba/b",
-            "-g",
-            &url,
-        ])
-        .kill_on_drop(true)
-        .output();
-    // Tope duro: si yt-dlp se cuelga, el menú no puede quedarse esperando.
-    let out = match tokio::time::timeout(std::time::Duration::from_secs(30), fut).await {
-        Ok(r) => r.map_err(|e| format!("yt-dlp: {}", e))?,
-        Err(_) => return Err("yt-dlp: timeout".into()),
-    };
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        return Err(format!("yt-dlp: {}", err.lines().next().unwrap_or("").trim()));
+    // YouTube bloquea por cliente: el "Sign in to confirm you're not a bot",
+    // algunos age-gate blandos y ciertos bloqueos de formato afectan al cliente
+    // web y no al de TV o al de iOS. Si el primer intento falla se reintenta
+    // con esos antes de rendirse (y caer a Apple o al QR). Los reintentos van
+    // con tope más corto para que la espera total no pase de un minuto.
+    let intentos: [(Option<&str>, u64); 3] = [
+        (None, 30),
+        (Some("youtube:player_client=tv"), 15),
+        (Some("youtube:player_client=ios"), 15),
+    ];
+    let mut ultimo_err = String::new();
+    let mut salida = None;
+    for (extractor, segs) in intentos {
+        match ytdlp_urls(&bin, &url, extractor, segs).await {
+            Ok(out) => {
+                salida = Some(out);
+                break;
+            }
+            Err(Fallo::SinBinario(e)) => return Err(e),
+            Err(Fallo::Video(e)) => {
+                eprintln!("[trailer] {k} ({}): {e}", extractor.unwrap_or("web"));
+                // Borrado, privado o región: es el video, no el cliente. Y un
+                // timeout es la red: otros 15 s no lo arreglan.
+                let definitivo = ["unavailable", "Private video", "removed", "timeout"]
+                    .iter()
+                    .any(|m| e.contains(m));
+                ultimo_err = e;
+                if definitivo {
+                    break;
+                }
+            }
+        }
     }
+    let Some(out) = salida else { return Err(ultimo_err) };
     let stdout = String::from_utf8_lossy(&out.stdout);
     let urls: Vec<&str> = stdout
         .lines()
@@ -299,6 +285,40 @@ pub async fn yt_trailer_src(app: tauri::AppHandle, key: String) -> Result<Traile
         return Ok(TrailerSrc { video: String::new(), audio: String::new() });
     }
     Ok(TrailerSrc { video, audio })
+}
+
+enum Fallo {
+    /// yt-dlp no está o no arranca: otro cliente no lo arregla.
+    SinBinario(String),
+    /// yt-dlp corrió pero no pudo con el video.
+    Video(String),
+}
+
+/// Una ejecución de `yt-dlp -g`, opcionalmente con otro cliente de YouTube.
+async fn ytdlp_urls(
+    bin: &str,
+    url: &str,
+    extractor: Option<&str>,
+    segs: u64,
+) -> Result<std::process::Output, Fallo> {
+    let mut cmd = tokio::process::Command::new(bin);
+    winproc::hide_console_tokio(&mut cmd);
+    cmd.args(["--no-playlist", "--no-warnings", "--socket-timeout", "10", "-f", "bv*+ba/b", "-g"]);
+    if let Some(x) = extractor {
+        cmd.args(["--extractor-args", x]);
+    }
+    let fut = cmd.arg(url).kill_on_drop(true).output();
+    // Tope duro: si yt-dlp se cuelga, el menú no puede quedarse esperando.
+    let out = match tokio::time::timeout(std::time::Duration::from_secs(segs), fut).await {
+        Ok(Ok(o)) => o,
+        Ok(Err(e)) => return Err(Fallo::SinBinario(format!("yt-dlp: {}", e))),
+        Err(_) => return Err(Fallo::Video("yt-dlp: timeout".into())),
+    };
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(Fallo::Video(format!("yt-dlp: {}", err.lines().next().unwrap_or("").trim())));
+    }
+    Ok(out)
 }
 
 #[derive(Serialize)]

@@ -31,12 +31,14 @@ mod trailers;
 mod webserver;
 mod wyzie;
 mod winproc;
+mod ytdlp;
 
 // Lo de TMDb que usan los demás módulos, con la ruta de siempre.
 pub(crate) use tmdb::{
     fetch_json, tmdb_buscar, tmdb_overview_es, tmdb_trending, EpisodeMini, ExternalIds,
-    PersonMini, SeasonMini, TmdbItem, TmdbListResp, LANG, TMDB_BASE,
+    PersonMini, SeasonMini, TmdbItem, TmdbListResp, TMDB_BASE,
 };
+pub(crate) use tmdb::lang as tmdb_lang;
 
 /// El front avisa cuando reproduce fuera de mpv (iframe web, IPTV con hls.js)
 /// para que el escritorio no se duerma. mpv avisa por su cuenta.
@@ -502,6 +504,9 @@ pub fn run() {
                 let h = app.handle().clone();
                 std::thread::spawn(move || cache::purgar(&h));
             }
+            // yt-dlp al día para los trailers de YouTube (una vez al día,
+            // en segundo plano; ver ytdlp.rs).
+            ytdlp::actualizar_en_segundo_plano(app.handle().clone());
             // Activa MSE en el WebKitGTK del webview para que hls.js pueda
             // reproducir HLS (IPTV) DENTRO de la app. Sin esto el <video>
             // queda en negro porque el webview no expone MediaSource.
@@ -547,6 +552,7 @@ pub fn run() {
             tmdb::tmdb_season,
             tmdb::tmdb_recommendations,
             tmdb::tmdb_genres,
+            tmdb::set_tmdb_lang,
             trailers::tmdb_videos,
             trailers::tmdb_trailer_key,
             trailers::yt_trailer_src,
