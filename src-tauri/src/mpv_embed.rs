@@ -1530,22 +1530,7 @@ fn config_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
 /// del PATH del sistema. Sin esto los trailers de YouTube no cargan en una
 /// máquina que no traiga yt-dlp instalado.
 fn ytdlp_path(app: &tauri::AppHandle) -> Option<PathBuf> {
-    use tauri::Manager;
-    #[cfg(windows)]
-    let exe = "yt-dlp.exe";
-    #[cfg(not(windows))]
-    let exe = "yt-dlp";
-    let mut cands: Vec<PathBuf> = Vec::new();
-    if let Ok(res) = app.path().resource_dir() {
-        cands.push(res.join("vendor").join(exe));
-    }
-    cands.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("vendor").join(exe));
-    if let Ok(p) = std::env::current_exe() {
-        if let Some(dir) = p.parent() {
-            cands.push(dir.join("vendor").join(exe));
-        }
-    }
-    cands.into_iter().find(|c| c.exists())
+    crate::ytdlp::path(app)
 }
 
 /// Inicializa el reproductor embebido. Debe llamarse en el hilo main (setup()).

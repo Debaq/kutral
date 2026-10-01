@@ -248,9 +248,10 @@ segunda falla no tenía salida visible, así que quedaba el QR con trailers que 
 servían. Ahora `yt_trailer_src` (`lib.rs:832`) resuelve una sola vez y entrega
 las URLs directas.
 
-Queda pendiente, sin urgencia:
+Hecho después: A y B abajo (`src-tauri/src/ytdlp.rs` y `yt_trailer_src` en
+`trailers.rs`). Se deja la descripción como referencia.
 
-## A. yt-dlp se queda viejo dentro del paquete — *medio*
+## A. yt-dlp se queda viejo dentro del paquete — *hecho*
 
 `vendor/fetch.sh:68` y `fetch-windows.ps1` bajan yt-dlp una vez y lo saltan si ya
 está; el binario que sale en el paquete es el del día del build y nunca cambia.
@@ -271,7 +272,7 @@ Trabajo:
   vendorizado. Nunca quedar sin yt-dlp por una descarga a medias.
 - Costo: ~40 MB por actualización en Linux, ~17 MB en Windows.
 
-## B. Videos que YouTube bloquea — *bajo*
+## B. Videos que YouTube bloquea — *reintento con tv/ios hecho*
 
 Age-gate, bloqueo regional y el "Sign in to confirm you're not a bot" por IP.
 Varía por video y por día, así que se ve como "a veces no funciona".

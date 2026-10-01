@@ -31,6 +31,7 @@ mod trailers;
 mod webserver;
 mod wyzie;
 mod winproc;
+mod ytdlp;
 
 // Lo de TMDb que usan los demás módulos, con la ruta de siempre.
 pub(crate) use tmdb::{
@@ -503,6 +504,9 @@ pub fn run() {
                 let h = app.handle().clone();
                 std::thread::spawn(move || cache::purgar(&h));
             }
+            // yt-dlp al día para los trailers de YouTube (una vez al día,
+            // en segundo plano; ver ytdlp.rs).
+            ytdlp::actualizar_en_segundo_plano(app.handle().clone());
             // Activa MSE en el WebKitGTK del webview para que hls.js pueda
             // reproducir HLS (IPTV) DENTRO de la app. Sin esto el <video>
             // queda en negro porque el webview no expone MediaSource.
