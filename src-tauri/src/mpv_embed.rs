@@ -506,16 +506,37 @@ struct BarGeom {
     seek: Option<SeekGeom>,
 }
 
+// Medidas verticales del bar, en unidades de diseño (720p).
+//
+// La pill es baja y su borde de ARRIBA está donde siempre estuvo (262 / 214
+// sobre el borde inferior): así deja libre la franja de abajo, que es donde
+// van los subtítulos, y no los tapa mientras el bar está en pantalla.
+/// Distancia del borde superior de la pill al borde inferior del video.
+const BAR_TOP_SEEK: f64 = 262.0;
+const BAR_TOP_LIVE: f64 = 214.0;
+/// Alto de la pill con riel y sin él (en directo no hay riel).
+const BAR_H_SEEK: f64 = 104.0;
+const BAR_H_LIVE: f64 = 80.0;
+/// Centro del riel bajo el borde superior.
+const SEEK_CY: f64 = 18.0;
+/// Banda de acierto del riel hacia cada lado: no puede llegar a los iconos.
+const SEEK_BAND: f64 = 16.0;
+/// Centro de los iconos y de la etiqueta, sobre el borde inferior de la pill.
+const ICON_CY_UP: f64 = 50.0;
+const LABEL_Y_UP: f64 = 17.0;
+
 fn bar_geom() -> BarGeom {
     let o = osd();
     let k = o.k;
     let n = PLAYER_UI.with(|u| u.borrow().bar.len());
     let si = seek_info();
-    // Anclado al borde inferior real (54 y 160 son las medidas del diseño).
-    // Con barra de progreso la pill crece hacia ARRIBA: los iconos y la
-    // etiqueta no se mueven, así que el músculo memoria del usuario se mantiene.
-    let bot = o.h - 54.0 * k;
-    let top = bot - if si.is_some() { 208.0 } else { 160.0 } * k;
+    let (top_up, alto) = if si.is_some() {
+        (BAR_TOP_SEEK, BAR_H_SEEK)
+    } else {
+        (BAR_TOP_LIVE, BAR_H_LIVE)
+    };
+    let top = o.h - top_up * k;
+    let bot = top + alto * k;
     // En ventanas angostas los iconos se juntan antes que salirse de pantalla.
     let step = if n > 0 {
         (96.0 * k).min((o.w - 48.0 * k) / n as f64)
@@ -527,8 +548,8 @@ fn bar_geom() -> BarGeom {
         step,
         top,
         bot,
-        icon_cy: bot - 100.0 * k,
-        label_y: bot - 38.0 * k,
+        icon_cy: bot - ICON_CY_UP * k,
+        label_y: bot - LABEL_Y_UP * k,
         center_x: o.w / 2.0,
         k,
         osd: o,
@@ -539,7 +560,7 @@ fn bar_geom() -> BarGeom {
         // Reserva a cada lado para los tiempos: "1:23:45" a fs 22 ≈ 80 px.
         let pad = 96.0 * k;
         g.seek = Some(SeekGeom {
-            cy: top + 34.0 * k,
+            cy: top + SEEK_CY * k,
             track_l: l + pad,
             track_r: (r - pad).max(l + pad + 20.0 * k),
             h: 6.0 * k,
@@ -621,10 +642,9 @@ fn ass_round_rect(l: i32, t: i32, r: i32, b: i32, rad: i32) -> String {
 }
 
 /// Fondo: pill inferior oscuro semi-transparente, ancha según cuántos iconos hay.
-fn build_bar_bg() -> String {
-    let g = bar_geom();
-    let (l, r) = pill_x(&g, g.seek.is_some());
-    let rad = (20.0 * g.k).round() as i32;
+fn build_bar_bg(g: &BarGeom) -> String {
+    let (l, r) = pill_x(g, g.seek.is_some());
+    let rad = (16.0 * g.k).round() as i32;
     // \1a = transparencia (00 opaco … FF transp). Dark #0A0F12 → &H120F0A&.
     format!(
         "{{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H120F0A&\\1a&H30&\\p1}}{}{{\\p0}}",
@@ -657,13 +677,13 @@ fn build_seek_ass(g: &BarGeom) -> String {
         ));
     }
     // Perilla: círculo en la punta de lo reproducido.
-    let kr = (9.0 * g.k).round().max(3.0) as i32;
+    let kr = (8.0 * g.k).round().max(3.0) as i32;
     ev.push(format!(
         "{{\\an7\\pos(0,0)\\bord0\\shad1.5\\4c&H000000&\\1c&H1673F9&\\p1}}{}{{\\p0}}",
         ass_round_rect(fill_r - kr, cy - kr, fill_r + kr, cy + kr, kr)
     ));
     // Tiempos: transcurrido pegado al inicio del riel, total al final.
-    let size = fs(g.k, 22.0);
+    let size = fs(g.k, 18.0);
     ev.push(format!(
         "{{\\an6\\pos({},{cy})\\fs{size}\\1c&HE8E0D0&\\bord0\\shad1.5\\4c&H000000&}}{}",
         (s.track_l - 14.0 * g.k) as i32,
@@ -682,7 +702,7 @@ fn build_seek_ass(g: &BarGeom) -> String {
 /// que poder apuntarlo sin precisión de cirujano.
 fn seek_hit(g: &BarGeom, px: f64, py: f64) -> Option<f64> {
     let s = g.seek?;
-    if (py - s.cy).abs() > 24.0 * g.k {
+    if (py - s.cy).abs() > SEEK_BAND * g.k {
         return None;
     }
     let w = s.track_r - s.track_l;
@@ -740,27 +760,25 @@ fn icon_drawing(act: BarAction, cx: f64, cy: f64, size: f64) -> String {
 /// Bar con ICONOS VECTORIALES: un evento ASS por icono en su posición real
 /// (ver bar_icon_cx) + la etiqueta del enfocado debajo. El enfocado va naranja
 /// y más grande; con mouse el "foco" lo pone el hover.
-fn build_bar_ass(focus: usize) -> String {
+fn build_bar_ass(g: &BarGeom, bar: &[BarAction], focus: usize) -> String {
     // Colores ASS = &HBBGGRR&. Naranja f97316 → &H1673F9&. Cream → &HE8E0D0&.
-    let g = bar_geom();
-    let bar = PLAYER_UI.with(|u| u.borrow().bar.clone());
     let mut ev: Vec<String> = Vec::with_capacity(bar.len() + 1);
     for (i, act) in bar.iter().enumerate() {
-        let cx = bar_icon_cx(&g, i) as i32;
+        let cx = bar_icon_cx(g, i) as i32;
         let cy = g.icon_cy as i32;
         // Antes eran tamaños de FUENTE; ahora son el lado de la caja del
         // dibujo. Los valores bajan porque un glifo solo ocupa ~0.8 del em.
         let (size, color) = if i == focus {
-            (56.0 * g.k, "&H1673F9&")
+            (40.0 * g.k, "&H1673F9&")
         } else {
-            (40.0 * g.k, "&HB9B3A6&")
+            (30.0 * g.k, "&HB9B3A6&")
         };
         ev.push(format!(
             "{{\\an7\\pos(0,0)\\bord0\\shad1.5\\4c&H000000&\\1c{color}\\p1}}{}{{\\p0}}",
             icon_drawing(*act, cx as f64, cy as f64, size)
         ));
     }
-    let size = fs(g.k, 26.0);
+    let size = fs(g.k, 18.0);
     let label = ellipsize(
         bar.get(focus).map(|a| a.label()).unwrap_or(""),
         g.osd.w - 40.0 * g.k,
@@ -788,8 +806,9 @@ fn put_overlay(id: &str, data: &str) {
 fn draw_bar() {
     let focus = PLAYER_UI.with(|u| u.borrow().focus);
     let g = bar_geom();
-    put_overlay(BAR_BG_ID, &build_bar_bg());
-    put_overlay(BAR_FG_ID, &build_bar_ass(focus));
+    let bar = PLAYER_UI.with(|u| u.borrow().bar.clone());
+    put_overlay(BAR_BG_ID, &build_bar_bg(&g));
+    put_overlay(BAR_FG_ID, &build_bar_ass(&g, &bar, focus));
     if g.seek.is_some() {
         put_overlay(BAR_SEEK_ID, &build_seek_ass(&g));
         start_seek_tick();
@@ -3104,17 +3123,17 @@ mod tests {
     use super::*;
 
     /// BarGeom de laboratorio: 7 iconos en 1280×720 (k = 1), con riel.
-    fn geom_con_riel(pos: f64, dur: f64) -> BarGeom {
+    pub(super) fn geom_con_riel(pos: f64, dur: f64) -> BarGeom {
         let osd = Osd { w: 1280.0, h: 720.0, k: 1.0 };
-        let bot = 720.0 - 54.0;
-        let top = bot - 208.0;
+        let top = 720.0 - BAR_TOP_SEEK;
+        let bot = top + BAR_H_SEEK;
         let mut g = BarGeom {
             n: 7,
             step: 96.0,
             top,
             bot,
-            icon_cy: bot - 100.0,
-            label_y: bot - 38.0,
+            icon_cy: bot - ICON_CY_UP,
+            label_y: bot - LABEL_Y_UP,
             center_x: 640.0,
             k: 1.0,
             osd,
@@ -3122,7 +3141,7 @@ mod tests {
         };
         let (l, r) = pill_x(&g, true);
         g.seek = Some(SeekGeom {
-            cy: top + 34.0,
+            cy: top + SEEK_CY,
             track_l: l + 96.0,
             track_r: r - 96.0,
             h: 6.0,
@@ -3196,7 +3215,7 @@ mod tests {
         assert_eq!(seek_hit(&g, s.track_l - 60.0, s.cy), Some(0.0));
         assert_eq!(seek_hit(&g, s.track_r + 60.0, s.cy), Some(1.0));
         // Fuera de la banda vertical no hay acierto: esa zona es de los iconos.
-        assert!(seek_hit(&g, s.track_l, s.cy + 40.0).is_none());
+        assert!(seek_hit(&g, s.track_l, s.cy + SEEK_BAND + 1.0).is_none());
         assert!(seek_hit(&g, s.track_l, g.icon_cy).is_none());
     }
 
@@ -3216,6 +3235,24 @@ mod tests {
         assert!(s.track_l > l, "riel se sale por la izquierda");
         assert!(s.track_r < r, "riel se sale por la derecha");
         assert!(s.cy > g.top && s.cy < g.icon_cy, "la fila pisa los iconos");
+    }
+
+    #[test]
+    fn el_bar_bajo_conserva_el_borde_de_arriba_y_no_se_encima() {
+        let g = geom_con_riel(10.0, 100.0);
+        let s = g.seek.unwrap();
+        // Mitad de alto que antes (208), mismo borde de arriba.
+        assert_eq!(g.bot - g.top, 104.0);
+        assert_eq!(g.top, 720.0 - 54.0 - 208.0);
+        // La banda del riel termina antes que el icono enfocado (40 de lado).
+        assert!(s.cy + SEEK_BAND <= g.icon_cy - 20.0);
+        // El icono enfocado termina antes que la etiqueta (fs 18).
+        assert!(g.icon_cy + 20.0 <= g.label_y - 9.0);
+        assert!(g.label_y + 9.0 <= g.bot);
+        // Sin riel: misma lógica, el icono y la etiqueta caben en 80.
+        let (top, bot) = (720.0 - BAR_TOP_LIVE, 720.0 - BAR_TOP_LIVE + BAR_H_LIVE);
+        assert!(bot - ICON_CY_UP - 20.0 >= top);
+        assert!(bot - ICON_CY_UP + 20.0 <= bot - LABEL_Y_UP - 9.0);
     }
 
     #[test]
@@ -3309,5 +3346,39 @@ mod icon_dump {
         );
         std::fs::write("/tmp/iconos.ass", doc).unwrap();
         println!("escrito /tmp/iconos.ass");
+    }
+
+    /// El bar completo (720p, con riel) sobre dos líneas de subtítulo con el
+    /// estilo de mpv.conf, para ver que no se tapan:
+    ///   cargo test --lib volcar_bar -- --ignored --nocapture
+    ///   mpv av://lavfi:testsrc2=s=1280x720 --sub-file=/tmp/bar.ass --vo=image ...
+    #[test]
+    #[ignore]
+    fn volcar_bar() {
+        let acts = [
+            BarAction::SeekBack,
+            BarAction::Resume,
+            BarAction::SeekFwd,
+            BarAction::Subs,
+            BarAction::Audio,
+            BarAction::Video,
+            BarAction::Exit,
+        ];
+        let g = super::tests::geom_con_riel(1500.0, 5025.0);
+        let ev: String = [build_bar_bg(&g), build_seek_ass(&g), build_bar_ass(&g, &acts, 1)]
+            .join("\n")
+            .lines()
+            .map(|l| format!("Dialogue: 1,0:00:00.00,0:00:05.00,D,,0,0,0,,{l}\n"))
+            .collect();
+        let doc = format!(
+            "[Script Info]\nScriptType: v4.00+\nPlayResX: 1280\nPlayResY: 720\n\n\
+             [V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n\
+             Style: D,sans-serif,40,&H00FFFFFF,&H00000000,1,0,0,7,0,0,0,1\n\
+             Style: S,sans-serif,42,&H00FFFFFF,&H00000000,1,2.4,0,2,0,0,22,1\n\n\
+             [Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n{ev}\
+             Dialogue: 0,0:00:00.00,0:00:05.00,S,,0,0,0,,Dos líneas de subtítulo, como en\\Nla mayoría de las películas y series.\n"
+        );
+        std::fs::write("/tmp/bar.ass", doc).unwrap();
+        println!("escrito /tmp/bar.ass");
     }
 }
