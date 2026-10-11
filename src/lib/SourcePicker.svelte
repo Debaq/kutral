@@ -4,7 +4,7 @@
   // Maneja su propio teclado (flechas/Enter/Esc) porque en este modo el page
   // no procesa navegación.
   import { invoke } from "@tauri-apps/api/core";
-  import { setNowPlaying } from "$lib/playerState.svelte";
+  import { player, setNowPlaying } from "$lib/playerState.svelte";
   import { esFinReal, type FinPayload } from "$lib/finVideo";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { config } from "$lib/config.svelte";
@@ -63,7 +63,7 @@
     type CastStatus,
     type ProbeTrack,
   } from "$lib/cast.svelte";
-  import { buscarSubtitulos, enlaceSub, type OpcionSub } from "$lib/subtitulos";
+  import { buscarSubtitulos, enlaceSub, mejorSubtitulo, type OpcionSub } from "$lib/subtitulos";
   import { contextoActual } from "$lib/historial.svelte";
 
   // Pista real del contenedor leída de mpv (verdad del archivo).
@@ -471,7 +471,7 @@
     resolvingMsg = "Abriendo reproductor…";
     desdeLocal = !!s.local;
     // Contexto para el buscador de subtítulos global (SubsService).
-    setNowPlaying(imdbId, title, season ?? null, episode ?? null);
+    setNowPlaying(imdbId, title, season ?? null, episode ?? null, s.title || "", url);
     // Retomar donde quedó. 5 s de colchón: caer justo en el corte desorienta,
     // un poco de contexto previo hace que se retome la escena, no el frame.
     const base = desdeSegundos ?? desdeForzado ?? retomarSegundos;
@@ -695,7 +695,10 @@
     }
     buscandoSubsTv = true;
     try {
-      const opts = await buscarSubtitulos(imdbId, { season, episode });
+      const opts = await buscarSubtitulos(imdbId, { season, episode }, {
+        release: player.nowPlaying.release,
+        videoUrl: player.nowPlaying.videoUrl,
+      });
       subsTv = opts;
       castFoco = 0;
       if (!opts.length) notify("info", "Sin alternativas", "No se encontraron subtítulos; solo puedes apagarlos.");
@@ -1312,39 +1315,25 @@
     return season != null && episode != null ? { season, episode } : {};
   }
 
-  // URL de un subtítulo externo: Wyzie si hay key, si no OpenSubtitles (cuota
-  // diaria). "" = no hay.
+  // URL de un subtítulo externo. "" = no hay. Lista Wyzie + OpenSubtitles
+  // (listar no gasta cuota), ordenada para que primero vaya el que calza con
+  // esta fuente, y solo resuelve el enlace del elegido.
   async function buscarSubUrl(): Promise<string> {
     const lang = config.subsLang || "es";
     if (lang === "off") return "";
-    let url = "";
-    if (config.wyzieKey) {
-      try {
-        const subs = await invoke<{ url: string }[]>("wyzie_search", {
-          imdbId,
-          language: lang,
-          apiKey: config.wyzieKey,
-          ...capituloSubs(),
-        });
-        if (subs.length) url = subs[0].url;
-      } catch (e) {
-        dbg(`wyzie fail: ${String(e).slice(0, 60)}`);
-      }
+    const { release, videoUrl } = player.nowPlaying;
+    const elegido = mejorSubtitulo(
+      await buscarSubtitulos(imdbId, capituloSubs(), { release, videoUrl }),
+    );
+    if (!elegido) return "";
+    try {
+      const url = await enlaceSub(elegido);
+      dbg(`sub externo: ${elegido.label.slice(0, 70)}`);
+      return url;
+    } catch (e) {
+      dbg(`sub externo fail: ${String(e).slice(0, 80)}`);
+      return "";
     }
-    if (!url) {
-      try {
-        const os = await invoke<{ url: string; remaining: number }>("os_search", {
-          imdbId,
-          language: lang,
-          ...capituloSubs(),
-        });
-        url = os.url;
-        dbg(`opensubtitles ok, quedan ${os.remaining}/día`);
-      } catch (e) {
-        dbg(`opensubtitles fail: ${String(e).slice(0, 80)}`);
-      }
-    }
-    return url;
   }
 
   // Subtítulos externos en mpv. Carga la URL directo con sub-add (no hace

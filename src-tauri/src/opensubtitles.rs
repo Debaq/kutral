@@ -191,8 +191,31 @@ struct SubAttrs {
     download_count: i64,
     #[serde(default)]
     hearing_impaired: bool,
+    /// Solo viene si la consulta llevó `moviehash`: true = subido para ese
+    /// archivo exacto.
+    #[serde(default)]
+    moviehash_match: Option<bool>,
     #[serde(default)]
     files: Vec<SubFile>,
+}
+
+impl SubAttrs {
+    /// Nombre con el que comparar contra el release del video.
+    fn nombre(&self) -> String {
+        self.release
+            .clone()
+            .or_else(|| self.files.first().and_then(|f| f.file_name.clone()))
+            .unwrap_or_default()
+    }
+
+    /// Orden: hecho para el archivo > mismo release > más descargado.
+    fn rango(&self, release: &str) -> (bool, i32, i64) {
+        (
+            self.moviehash_match == Some(true),
+            crate::subs_match::release_score(release, &self.nombre()),
+            self.download_count,
+        )
+    }
 }
 
 #[derive(Deserialize, Default, Clone)]
@@ -223,9 +246,6 @@ pub struct OsSubtitle {
     pub remaining: i64,
 }
 
-/// Busca el mejor subtítulo para `imdb_id` en `language` y devuelve su URL
-/// directa de descarga + la cuota restante. imdb_id puede venir como "tt123"
-/// o numérico (OS exige numérico).
 /// Limpia un nombre para usarlo como archivo (sin / : etc.).
 fn safe_filename(s: &str) -> String {
     let cleaned: String = s
@@ -276,94 +296,31 @@ pub async fn subtitle_save(
 /// con temporada y episodio: por `imdb_id` de la serie la API devuelve
 /// subtítulos de cualquier capítulo. Los parámetros van en orden alfabético:
 /// si no, la API responde con una redirección en vez de resultados.
-fn consulta(imdb_num: &str, lang: &str, season: Option<u32>, episode: Option<u32>, por_descargas: bool) -> String {
+fn consulta(
+    imdb_num: &str,
+    lang: &str,
+    season: Option<u32>,
+    episode: Option<u32>,
+    por_descargas: bool,
+    hash: Option<&str>,
+) -> String {
     let orden = if por_descargas { "&order_by=download_count" } else { "" };
+    // moviehash cae entre languages y order_by en el orden alfabético.
+    let h = hash.map(|h| format!("&moviehash={h}")).unwrap_or_default();
     match (season, episode) {
         (Some(t), Some(e)) => format!(
-            "episode_number={e}&languages={lang}{orden}&parent_imdb_id={imdb_num}&season_number={t}"
+            "episode_number={e}&languages={lang}{h}{orden}&parent_imdb_id={imdb_num}&season_number={t}"
         ),
-        _ => format!("imdb_id={imdb_num}&languages={lang}{orden}"),
+        _ => format!("imdb_id={imdb_num}&languages={lang}{h}{orden}"),
     }
 }
 
-#[tauri::command]
-pub async fn os_search(
-    app: tauri::AppHandle,
-    imdb_id: String,
-    language: String,
-    season: Option<u32>,
-    episode: Option<u32>,
-) -> Result<OsSubtitle, String> {
-    if OS_API_KEY.is_empty() {
-        return Err("Falta API key de OpenSubtitles.".into());
+/// moviehash del video si el frontend mandó su URL (vacío = no comparar).
+async fn hash_de(video_url: &Option<String>) -> Option<String> {
+    match video_url.as_deref() {
+        Some(u) if !u.is_empty() => crate::subs_match::movie_hash(u).await,
+        _ => None,
     }
-    let imdb_num = imdb_id.trim_start_matches("tt").trim_start_matches('0');
-    if imdb_num.is_empty() {
-        return Err("imdb_id vacío".into());
-    }
-    let lang = if language.is_empty() { "es" } else { &language };
-    let cli = client()?;
-    let token = valid_token(&app);
-
-    // 1) Búsqueda. Api-Key obligatoria; Bearer opcional (sube la cuota).
-    let url = format!("{OS_BASE}/subtitles?{}", consulta(imdb_num, lang, season, episode, false));
-    let mut req = cli.get(&url).header("Api-Key", OS_API_KEY).header("Accept", "application/json");
-    if let Some(t) = &token {
-        req = req.header("Authorization", format!("Bearer {t}"));
-    }
-    let r = req.send().await.map_err(|e| format!("search red: {e}"))?;
-    if !r.status().is_success() {
-        let st = r.status();
-        let b = r.text().await.unwrap_or_default();
-        return Err(format!("OS search {st}: {b}"));
-    }
-    let sr: SearchResp = r.json().await.map_err(|e| format!("search parse: {e}"))?;
-
-    // Mejor candidato: idioma correcto, sin hearing-impaired, con file_id,
-    // más descargado (proxy de calidad/sync).
-    let best = sr
-        .data
-        .into_iter()
-        .filter(|it| !it.attributes.hearing_impaired)
-        .filter(|it| !it.attributes.files.is_empty())
-        .max_by_key(|it| it.attributes.download_count)
-        .ok_or("Sin subtítulos para esta película.")?;
-    let label = best
-        .attributes
-        .release
-        .clone()
-        .or_else(|| best.attributes.files.first().and_then(|f| f.file_name.clone()))
-        .unwrap_or_else(|| "Subtítulos".into());
-    let sub_lang = best.attributes.language.clone().unwrap_or_else(|| lang.to_string());
-    let file_id = best.attributes.files[0].file_id;
-
-    // 2) Descarga: convierte file_id en URL temporal directa. Esto SÍ consume
-    //    cuota; la API devuelve cuánto queda.
-    let dl_body = serde_json::json!({ "file_id": file_id });
-    let mut dreq = cli
-        .post(format!("{OS_BASE}/download"))
-        .header("Api-Key", OS_API_KEY)
-        .header("Content-Type", "application/json")
-        .header("Accept", "application/json")
-        .json(&dl_body);
-    if let Some(t) = &token {
-        dreq = dreq.header("Authorization", format!("Bearer {t}"));
-    }
-    let dr = dreq.send().await.map_err(|e| format!("download red: {e}"))?;
-    if !dr.status().is_success() {
-        let st = dr.status();
-        let b = dr.text().await.unwrap_or_default();
-        // 406 típico = cuota diaria agotada.
-        return Err(format!("OS download {st}: {b}"));
-    }
-    let d: DownloadResp = dr.json().await.map_err(|e| format!("download parse: {e}"))?;
-    let link = d.link.filter(|s| !s.is_empty()).ok_or("OS sin link de descarga")?;
-    Ok(OsSubtitle {
-        url: link,
-        label: d.file_name.unwrap_or(label),
-        lang: sub_lang,
-        remaining: d.remaining,
-    })
 }
 
 /// Un candidato de la lista de OpenSubtitles (sin resolver el link aún).
@@ -374,6 +331,10 @@ pub struct OsListItem {
     pub lang: String,
     pub downloads: i64,
     pub hi: bool,
+    /// Subido para este archivo exacto (moviehash).
+    pub hash_match: bool,
+    /// Parecido con el release del video (ver subs_match::release_score).
+    pub score: i32,
 }
 
 /// Lista VARIOS subtítulos para `imdb_id` (no resuelve links → NO gasta cuota).
@@ -385,6 +346,8 @@ pub async fn os_list(
     language: String,
     season: Option<u32>,
     episode: Option<u32>,
+    release: Option<String>,
+    video_url: Option<String>,
 ) -> Result<Vec<OsListItem>, String> {
     if OS_API_KEY.is_empty() {
         return Err("Falta API key de OpenSubtitles.".into());
@@ -397,7 +360,13 @@ pub async fn os_list(
     let cli = client()?;
     let token = valid_token(&app);
 
-    let url = format!("{OS_BASE}/subtitles?{}", consulta(imdb_num, lang, season, episode, true));
+    let hash = hash_de(&video_url).await;
+    let release = release.unwrap_or_default();
+
+    let url = format!(
+        "{OS_BASE}/subtitles?{}",
+        consulta(imdb_num, lang, season, episode, true, hash.as_deref())
+    );
     let mut req = cli
         .get(&url)
         .header("Api-Key", OS_API_KEY)
@@ -418,11 +387,9 @@ pub async fn os_list(
         .filter(|it| !it.attributes.files.is_empty())
         .map(|it| {
             let file = it.attributes.files[0].clone();
-            let label = it
-                .attributes
-                .release
-                .clone()
-                .or_else(|| file.file_name.clone())
+            let (hash_match, score, _) = it.attributes.rango(&release);
+            let label = Some(it.attributes.nombre())
+                .filter(|n| !n.is_empty())
                 .unwrap_or_else(|| "Subtítulo".into());
             OsListItem {
                 file_id: file.file_id,
@@ -434,10 +401,12 @@ pub async fn os_list(
                     .unwrap_or_else(|| lang.to_string()),
                 downloads: it.attributes.download_count,
                 hi: it.attributes.hearing_impaired,
+                hash_match,
+                score,
             }
         })
         .collect();
-    items.sort_by_key(|it| std::cmp::Reverse(it.downloads));
+    items.sort_by_key(|it| std::cmp::Reverse((it.hash_match, it.score, it.downloads)));
     items.truncate(25);
     Ok(items)
 }
@@ -482,13 +451,25 @@ mod tests {
 
     #[test]
     fn consulta_por_capitulo_y_en_orden() {
-        assert_eq!(consulta("944947", "es", None, None, true), "imdb_id=944947&languages=es&order_by=download_count");
+        assert_eq!(consulta("944947", "es", None, None, true, None), "imdb_id=944947&languages=es&order_by=download_count");
         assert_eq!(
-            consulta("944947", "es", Some(1), Some(2), true),
+            consulta("944947", "es", Some(1), Some(2), true, None),
             "episode_number=2&languages=es&order_by=download_count&parent_imdb_id=944947&season_number=1"
         );
         // Temporada sin episodio: no alcanza para elegir capítulo.
-        assert_eq!(consulta("944947", "es", Some(1), None, false), "imdb_id=944947&languages=es");
+        assert_eq!(consulta("944947", "es", Some(1), None, false, None), "imdb_id=944947&languages=es");
+    }
+
+    #[test]
+    fn moviehash_va_en_orden_alfabetico() {
+        assert_eq!(
+            consulta("944947", "es", None, None, true, Some("8e245d9679d31e12")),
+            "imdb_id=944947&languages=es&moviehash=8e245d9679d31e12&order_by=download_count"
+        );
+        assert_eq!(
+            consulta("944947", "es", Some(1), Some(2), false, Some("ab")),
+            "episode_number=2&languages=es&moviehash=ab&parent_imdb_id=944947&season_number=1"
+        );
     }
 
     #[test]

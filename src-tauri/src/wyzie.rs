@@ -12,6 +12,8 @@ pub struct WyzieSubtitle {
     pub url: String,
     pub label: String,
     pub lang: String,
+    /// Parecido con el release del video (ver subs_match::release_score).
+    pub score: i32,
 }
 
 #[derive(Deserialize)]
@@ -27,6 +29,12 @@ struct WyzieItem {
     format: Option<String>,
     #[serde(default)]
     isHearingImpaired: Option<bool>,
+    // Nombre del release/archivo, si la API lo trae (no está documentado):
+    // sin él el puntaje es 0 y el orden queda como venía.
+    #[serde(default)]
+    release: Option<String>,
+    #[serde(default)]
+    fileName: Option<String>,
 }
 
 #[tauri::command]
@@ -36,7 +44,9 @@ pub async fn wyzie_search(
     api_key: String,
     season: Option<u32>,
     episode: Option<u32>,
+    release: Option<String>,
 ) -> Result<Vec<WyzieSubtitle>, String> {
+    let release = release.unwrap_or_default();
     if api_key.is_empty() {
         return Err("falta wyzie key".into());
     }
@@ -86,11 +96,18 @@ pub async fn wyzie_search(
             .or_else(|| it.language.clone())
             .unwrap_or_else(|| "Subtítulos".into());
         let lang = it.language.clone().unwrap_or_else(|| language.clone());
+        let nombre = it.release.clone().or(it.fileName.clone()).unwrap_or_default();
+        let score = crate::subs_match::release_score(&release, &nombre);
+        // Con nombre, mostrarlo: "Español" a secas no dice para qué release es.
+        let label = if nombre.is_empty() { label } else { format!("{label} · {nombre}") };
         out.push(WyzieSubtitle {
             url: u,
             label,
             lang,
+            score,
         });
     }
+    // Estable: a igual puntaje se respeta el orden de la API.
+    out.sort_by_key(|s| std::cmp::Reverse(s.score));
     Ok(out)
 }

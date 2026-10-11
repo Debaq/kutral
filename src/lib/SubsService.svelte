@@ -21,14 +21,14 @@
   const mpv = (args: unknown[]) => invoke("mpv_cmd", { args }).catch(() => {});
 
   async function onDownloadSubs() {
-    const { imdbId, title, season, episode } = player.nowPlaying;
+    const { imdbId, title, season, episode, release, videoUrl } = player.nowPlaying;
     if (!imdbId) {
       // IPTV u origen sin id: no hay con qué buscar en las APIs.
       await mpv(["show-text", "Sin subtítulos para buscar en este contenido", "2500"]);
       return;
     }
     await mpv(["show-text", "Buscando subtítulos…", "5000"]);
-    const opts = await buscarSubtitulos(imdbId, { season, episode });
+    const opts = await buscarSubtitulos(imdbId, { season, episode }, { release, videoUrl });
     if (opts.length === 0) {
       await mpv([
         "show-text",

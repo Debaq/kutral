@@ -70,6 +70,7 @@
   let screeningConc = $state(config.screeningConcurrency);
   let subsLang = $state(config.subsLang);
   let wyzieKey = $state(config.wyzieKey);
+  let subsPorFuente = $state(config.subsPorFuente);
   let showWyzie = $state(false);
   let subSize = $state(config.subSize);
   let subMode = $state<SubMode>(config.subMode);
@@ -187,6 +188,7 @@
     screeningConc = config.screeningConcurrency;
     subsLang = config.subsLang;
     wyzieKey = config.wyzieKey;
+    subsPorFuente = config.subsPorFuente;
     subSize = config.subSize;
     subMode = config.subMode;
     sourceSelect = config.sourceSelect;
@@ -229,6 +231,7 @@
     screeningConc !== config.screeningConcurrency ||
     subsLang !== config.subsLang ||
     wyzieKey !== config.wyzieKey ||
+    subsPorFuente !== config.subsPorFuente ||
     subSize !== config.subSize ||
     subMode !== config.subMode ||
     sourceSelect !== config.sourceSelect ||
@@ -258,6 +261,7 @@
     config.screeningConcurrency = conc;
     config.subsLang = subsLang;
     config.wyzieKey = wyzieKey.trim();
+    config.subsPorFuente = subsPorFuente;
     config.subSize = Math.min(200, Math.max(50, Math.round(subSize)));
     config.subMode = subMode;
     config.sourceSelect = sourceSelect;
@@ -1166,6 +1170,15 @@
               </button>
             </div>
           </label>
+          <label class="toggle-row">
+            <input data-nav type="checkbox" bind:checked={subsPorFuente} />
+            <span>Elegir subtítulos según la fuente</span>
+          </label>
+          <p class="hint">
+            Prefiere el subtítulo hecho para el archivo que estás viendo (✓) o
+            para el mismo release (≈), que suelen venir ya sincronizados. Apagado,
+            usa el más descargado.
+          </p>
           <label class="field">
             <span class="field-label">Tamaño de letra ({subSize}%)</span>
             <input data-nav

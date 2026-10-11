@@ -169,6 +169,9 @@ export const config = $state({
 	// Sin wyzieKey: el player intenta auto-buscar en OpenSubtitles (cuota limitada).
 	subsLang: "es",
 	wyzieKey: "",
+	// Elegir el subtítulo que calza con la fuente (mismo archivo por moviehash
+	// o mismo release) antes que el más descargado.
+	subsPorFuente: true,
 	// Preferencia de reproducción: "dub" = audio doblado al español primero;
 	// "sub" = audio original (VO) + subtítulos en español. Ordena las fuentes y
 	// decide qué pista auto-seleccionar en mpv.
@@ -254,6 +257,7 @@ export function loadConfig() {
 	const sl = localStorage.getItem("subs_lang") || "es";
 	config.subsLang = SUB_LANGS.some((l) => l.id === sl) ? sl : "es";
 	config.wyzieKey = localStorage.getItem("wyzie_key") || "";
+	config.subsPorFuente = localStorage.getItem("subs_por_fuente") !== "0";
 	const sm = localStorage.getItem("sub_mode");
 	config.subMode = sm === "sub" ? "sub" : "dub";
 	config.verifyEsTracks = localStorage.getItem("verify_es_tracks") === "1";
@@ -343,6 +347,7 @@ export function saveConfig() {
 	);
 	localStorage.setItem("subs_lang", config.subsLang);
 	localStorage.setItem("wyzie_key", config.wyzieKey.trim());
+	localStorage.setItem("subs_por_fuente", config.subsPorFuente ? "1" : "0");
 	localStorage.setItem("sub_mode", config.subMode);
 	localStorage.setItem("source_select", config.sourceSelect);
 	localStorage.setItem("verify_es_tracks", config.verifyEsTracks ? "1" : "0");

@@ -12,6 +12,7 @@ mod lan;
 mod net;
 mod omdb;
 mod opensubtitles;
+mod subs_match;
 mod probe;
 mod rd;
 mod player;
@@ -632,7 +633,6 @@ pub fn run() {
             opensubtitles::os_login,
             opensubtitles::os_status,
             opensubtitles::os_clear,
-            opensubtitles::os_search,
             opensubtitles::os_list,
             opensubtitles::os_download,
             opensubtitles::subtitle_save,

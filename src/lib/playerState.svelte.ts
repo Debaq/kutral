@@ -9,7 +9,16 @@ export const player = $state({
 	live: false,
 	/** Qué está cargado en mpv: lo necesita el buscador de subtítulos, que
 	 *  vive en el layout (no en el picker, que se desmonta al salir). */
-	nowPlaying: { imdbId: "", title: "", season: null as number | null, episode: null as number | null },
+	nowPlaying: {
+		imdbId: "",
+		title: "",
+		season: null as number | null,
+		episode: null as number | null,
+		/** Nombre del release y URL del video: con ellos se elige el subtítulo
+		 *  que calza con esta fuente (ver subs_match.rs). */
+		release: "",
+		videoUrl: "",
+	},
 });
 
 export function setPlaying(v: boolean) {
@@ -39,6 +48,8 @@ export function setNowPlaying(
 	title: string,
 	season: number | null = null,
 	episode: number | null = null,
+	release = "",
+	videoUrl = "",
 ) {
-	player.nowPlaying = { imdbId, title, season, episode };
+	player.nowPlaying = { imdbId, title, season, episode, release, videoUrl };
 }
