@@ -362,6 +362,8 @@ enum MenuAct {
     Vid(i64),
     SubOff,
     Download,
+    /// Entra al modo ajuste de subtítulos (ver `enter_sub_adjust`).
+    SubAdjust,
     /// Ítem de un picker provisto por el frontend: al elegir emite
     /// "player:menu-pick" con este id para que el front actúe (ej. descargar).
     Pick(String),
@@ -967,7 +969,7 @@ fn show_bar_transient() {
 fn hide_bar_transient() {
     let paused = PLAYER_UI.with(|u| u.borrow().paused);
     let menu_open = MENU.with(|m| m.borrow().is_some());
-    if paused || menu_open {
+    if paused || menu_open || sub_adj_on() {
         return;
     }
     PLAYER_UI.with(|u| u.borrow_mut().bar_visible = false);
@@ -1140,6 +1142,10 @@ fn open_sub_menu() {
     }];
     items.extend(build_track_items("sub"));
     items.push(MenuItem {
+        label: "Sincronizar y mover…".into(),
+        act: MenuAct::SubAdjust,
+    });
+    items.push(MenuItem {
         label: "⬇  Descargar subtítulos…".into(),
         act: MenuAct::Download,
     });
@@ -1200,6 +1206,7 @@ fn menu_activate() {
             mpv_cmd2("set", &["sid", "no"]);
             close_menu();
         }
+        Some(MenuAct::SubAdjust) => enter_sub_adjust(),
         Some(MenuAct::Download) => {
             if let Some(app) = APP.get() {
                 use tauri::Emitter;
@@ -1235,6 +1242,7 @@ pub fn open_picker(title: String, items: Vec<(String, String)>) {
                 return;
             }
             // Mostrar el video pausado + el picker encima.
+            SUB_ADJ.with(|a| a.set(None));
             PLAYER_UI.with(|u| u.borrow_mut().paused = true);
             if let Some(mpv) = MPV.get() {
                 let _ = mpv.set_property("pause", true);
@@ -1426,6 +1434,403 @@ fn menu_select(i: usize) {
     }
 }
 
+// ───────────────── modo ajuste de subtítulos (sin pausa) ──────────────────
+//
+// Sincronizar con el video pausado es a ciegas: no se oye la frase contra la
+// que se compara. En este modo el video sigue corriendo con un panel chico
+// ARRIBA (los subtítulos van abajo y no los tapa): ↑/↓ elige fila, ←/→ ajusta
+// y el efecto se ve al instante. Reusa los overlays 46/47 del bar, que
+// mientras tanto queda oculto.
+
+#[derive(Clone, Copy, PartialEq)]
+enum AdjRow {
+    /// Sincronía en pasos de 0.1 s.
+    Fino,
+    /// Sincronía en pasos de 1 s: los desfases entre releases suelen ser de
+    /// segundos y de a 0.1 serían decenas de pulsaciones.
+    Grueso,
+    /// `sub-step`: mueve la sincronía para que la frase anterior/siguiente
+    /// aparezca YA. Lo más rápido: se oye la frase y se pulsa.
+    Alinear,
+    Altura,
+    Restablecer,
+    Listo,
+}
+
+const ADJ_ROWS: [AdjRow; 6] = [
+    AdjRow::Fino,
+    AdjRow::Grueso,
+    AdjRow::Alinear,
+    AdjRow::Altura,
+    AdjRow::Restablecer,
+    AdjRow::Listo,
+];
+
+/// Paso de la altura en unidades de sub-pos (100 = abajo del todo).
+const SUB_POS_STEP: i64 = 2;
+
+impl AdjRow {
+    /// Texto de la fila y, si ajusta un valor, sus dos botones (◂, ▸).
+    fn parts(self) -> (&'static str, Option<(&'static str, &'static str)>) {
+        match self {
+            AdjRow::Fino => ("Sincronía ±0.1 s", Some(("◂ antes", "después ▸"))),
+            AdjRow::Grueso => ("Sincronía ±1 s", Some(("◂ antes", "después ▸"))),
+            AdjRow::Alinear => ("Mostrar ya", Some(("◂ frase anterior", "siguiente ▸"))),
+            AdjRow::Altura => ("Altura", Some(("◂ bajar", "subir ▸"))),
+            AdjRow::Restablecer => ("Restablecer", None),
+            AdjRow::Listo => ("Listo", None),
+        }
+    }
+}
+
+thread_local! {
+    /// Fila elegida del panel de ajuste. None = modo apagado.
+    static SUB_ADJ: Cell<Option<usize>> = const { Cell::new(None) };
+}
+
+fn sub_adj_on() -> bool {
+    SUB_ADJ.with(|a| a.get().is_some())
+}
+
+/// Entra al modo ajuste: cierra menú y bar y deja el video corriendo.
+fn enter_sub_adjust() {
+    MENU.with(|m| *m.borrow_mut() = None);
+    PLAYER_UI.with(|u| {
+        let mut b = u.borrow_mut();
+        b.paused = false;
+        b.bar_visible = false;
+    });
+    clear_bar();
+    if let Some(mpv) = MPV.get() {
+        let _ = mpv.set_property("pause", false);
+    }
+    let ya = sub_adj_on();
+    SUB_ADJ.with(|a| a.set(Some(0)));
+    draw_sub_adj();
+    if !ya {
+        start_sub_adj_tick();
+    }
+}
+
+/// Sale del modo. Si el usuario pausó con Espacio mientras ajustaba, se
+/// muestra el bar de pausa para que el estado quede coherente.
+fn exit_sub_adjust() {
+    if SUB_ADJ.with(|a| a.take()).is_none() {
+        return;
+    }
+    clear_bar();
+    save_sub_pos();
+    save_sub_delay();
+    if get_bool("pause") {
+        enter_paused();
+    }
+}
+
+fn sub_adj_move(delta: i32) {
+    SUB_ADJ.with(|a| {
+        if let Some(i) = a.get() {
+            let n = ADJ_ROWS.len() as i32;
+            a.set(Some((((i as i32 + delta) % n + n) % n) as usize));
+        }
+    });
+    draw_sub_adj();
+}
+
+fn sub_adj_row() -> Option<AdjRow> {
+    SUB_ADJ.with(|a| a.get()).map(|i| ADJ_ROWS[i])
+}
+
+/// ←/→ (o click en una mitad de la fila): −1 = ◂, +1 = ▸.
+fn sub_adj_step(dir: i32) {
+    match sub_adj_row() {
+        Some(AdjRow::Fino) => {
+            mpv_cmd2("add", &["sub-delay", &format!("{:.1}", 0.1 * dir as f64)])
+        }
+        Some(AdjRow::Grueso) => mpv_cmd2("add", &["sub-delay", &dir.to_string()]),
+        Some(AdjRow::Alinear) => mpv_cmd2("sub-step", &[&dir.to_string()]),
+        // sub-pos crece hacia abajo: ▸ (subir) resta.
+        Some(AdjRow::Altura) => {
+            mpv_cmd2("add", &["sub-pos", &(-SUB_POS_STEP * dir as i64).to_string()])
+        }
+        Some(AdjRow::Restablecer) => sub_adj_reset(),
+        Some(AdjRow::Listo) => {
+            exit_sub_adjust();
+            return;
+        }
+        None => return,
+    }
+    draw_sub_adj();
+}
+
+/// OK con el teclado: en Restablecer restablece; en cualquier otra fila
+/// termina (OK = "ya está").
+fn sub_adj_ok() {
+    if sub_adj_row() == Some(AdjRow::Restablecer) {
+        sub_adj_reset();
+        draw_sub_adj();
+    } else {
+        exit_sub_adjust();
+    }
+}
+
+fn sub_adj_reset() {
+    mpv_cmd2("set", &["sub-delay", "0"]);
+    mpv_cmd2("set", &["sub-pos", "100"]);
+}
+
+/// Redibuja mientras el modo está activo: el desfase también cambia por fuera
+/// del panel (teclas z/x reenviadas a mpv) y `sub-step` se resuelve en el
+/// bucle de mpv, así que el valor del título se refresca solo.
+fn start_sub_adj_tick() {
+    glib::timeout_add_local(std::time::Duration::from_millis(400), || {
+        if !sub_adj_on() {
+            return glib::ControlFlow::Break;
+        }
+        draw_sub_adj();
+        glib::ControlFlow::Continue
+    });
+}
+
+#[derive(Clone, Copy)]
+struct AdjGeom {
+    row_h: f64,
+    top: f64,
+    bot: f64,
+    l: f64,
+    r: f64,
+    cx: f64,
+    /// Centros X de los botones ◂ y ▸, y su medio ancho.
+    btn_l: f64,
+    btn_r: f64,
+    btn_half: f64,
+    k: f64,
+}
+
+/// Filas del panel: 0 = título, 1..=N = ADJ_ROWS, N+1 = pista de teclas.
+/// Cada fila de valor lleva su texto a la izquierda y dos botones a la
+/// derecha, cada uno con su propia zona de click.
+fn adj_geom() -> AdjGeom {
+    let o = osd();
+    let half = (360.0 * o.k).min(o.w / 2.0 - 12.0);
+    let row_h = 34.0 * o.k;
+    let top = 16.0 * o.k;
+    let rows = ADJ_ROWS.len() + 2;
+    let r = o.w / 2.0 + half;
+    let btn_half = 90.0 * o.k;
+    let btn_r = r - 20.0 * o.k - btn_half;
+    AdjGeom {
+        row_h,
+        top,
+        bot: top + 20.0 * o.k + rows as f64 * row_h,
+        l: o.w / 2.0 - half,
+        r,
+        cx: o.w / 2.0,
+        btn_l: btn_r - 2.0 * btn_half - 10.0 * o.k,
+        btn_r,
+        btn_half,
+        k: o.k,
+    }
+}
+
+fn adj_row_cy(g: &AdjGeom, row: usize) -> f64 {
+    g.top + 10.0 * g.k + (row as f64 + 0.5) * g.row_h
+}
+
+fn adj_in_panel(px: f64, py: f64) -> bool {
+    let g = adj_geom();
+    px >= g.l && px <= g.r && py >= g.top && py <= g.bot
+}
+
+/// ¿Qué fila hay bajo el punto y qué botón? −1 = ◂, +1 = ▸, 0 = la fila
+/// fuera de los botones (o una fila sin botones).
+fn adj_hit(px: f64, py: f64) -> Option<(usize, i32)> {
+    let g = adj_geom();
+    if px < g.l || px > g.r {
+        return None;
+    }
+    let i = (0..ADJ_ROWS.len())
+        .find(|&i| (py - adj_row_cy(&g, i + 1)).abs() <= g.row_h / 2.0)?;
+    let dir = if ADJ_ROWS[i].parts().1.is_none() {
+        0
+    } else if (px - g.btn_l).abs() <= g.btn_half {
+        -1
+    } else if (px - g.btn_r).abs() <= g.btn_half {
+        1
+    } else {
+        0
+    };
+    Some((i, dir))
+}
+
+/// Título con los valores actuales, para ver el efecto de cada paso.
+fn sub_adj_title() -> String {
+    let sid = get_string("sid");
+    if sid.is_empty() || sid == "no" {
+        return "Ajustar subtítulos  ·  no hay subtítulos activos".into();
+    }
+    let mut delay = get_f64("sub-delay");
+    if delay.abs() < 0.05 {
+        delay = 0.0; // sin esto se lee "-0.0 s" tras volver a cero
+    }
+    let pos = get_f64("sub-pos").round() as i64;
+    format!("Ajustar subtítulos  ·  {delay:+.1} s  ·  altura {pos}")
+}
+
+fn draw_sub_adj() {
+    let Some(sel) = SUB_ADJ.with(|a| a.get()) else { return };
+    let g = adj_geom();
+    let rad = (14.0 * g.k).round() as i32;
+    let mut bg = vec![format!(
+        "{{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H120F0A&\\1a&H30&\\p1}}{}{{\\p0}}",
+        ass_round_rect(g.l as i32, g.top as i32, g.r as i32, g.bot as i32, rad)
+    )];
+    let pad = 24.0 * g.k;
+    let text_at = |an: u8, x: f64, k: usize, body: String| {
+        format!(
+            "{{\\an{an}\\pos({},{})\\bord0\\shad1.2\\4c&H000000&}}{body}",
+            x as i32,
+            adj_row_cy(&g, k) as i32
+        )
+    };
+    let title_fs = fs(g.k, 24.0);
+    let mut ev = vec![text_at(
+        5,
+        g.cx,
+        0,
+        format!(
+            "{{\\fs{title_fs}\\1c&H3BA1F9&\\b1}}{}",
+            ellipsize(&sub_adj_title(), (g.r - g.l) - 2.0 * pad, title_fs)
+        ),
+    )];
+    let item_fs = fs(g.k, 22.0);
+    let btn_fs = fs(g.k, 20.0);
+    let btn_h = (g.row_h / 2.0 - 3.0 * g.k) as i32;
+    let btn_rad = (8.0 * g.k).round() as i32;
+    for (i, row) in ADJ_ROWS.iter().enumerate() {
+        let on = i == sel;
+        let (fg, b) = if on { ("&H1673F9&", "1") } else { ("&HE8E0D0&", "0") };
+        let (text, buttons) = row.parts();
+        let Some((izq, der)) = buttons else {
+            ev.push(text_at(5, g.cx, i + 1, format!("{{\\fs{item_fs}\\1c{fg}\\b{b}}}{text}")));
+            continue;
+        };
+        ev.push(text_at(
+            4,
+            g.l + pad,
+            i + 1,
+            format!("{{\\fs{item_fs}\\1c{fg}\\b{b}}}{text}"),
+        ));
+        // Fondo de cada botón: más claro en la fila elegida.
+        let cy = adj_row_cy(&g, i + 1) as i32;
+        let alpha = if on { "&H10&" } else { "&H50&" };
+        for (cx, label) in [(g.btn_l, izq), (g.btn_r, der)] {
+            let (bl, br) = ((cx - g.btn_half) as i32, (cx + g.btn_half) as i32);
+            bg.push(format!(
+                "{{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H3A3128&\\1a{alpha}\\p1}}{}{{\\p0}}",
+                ass_round_rect(bl, cy - btn_h, br, cy + btn_h, btn_rad)
+            ));
+            ev.push(text_at(
+                5,
+                cx,
+                i + 1,
+                format!(
+                    "{{\\fs{btn_fs}\\1c{fg}\\b{b}}}{}",
+                    ellipsize(label, 2.0 * g.btn_half - 8.0 * g.k, btn_fs)
+                ),
+            ));
+        }
+    }
+    ev.push(text_at(
+        5,
+        g.cx,
+        ADJ_ROWS.len() + 1,
+        format!(
+            "{{\\fs{}\\1c&H9A9488&\\b0}}↑↓ elegir  ·  ←→ ajustar  ·  Esc listo",
+            fs(g.k, 18.0)
+        ),
+    ));
+    put_overlay(BAR_BG_ID, &bg.join("\n"));
+    put_overlay(BAR_FG_ID, &ev.join("\n"));
+    hide_overlay(BAR_SEEK_ID);
+}
+
+/// La altura es gusto de quien mira: una sola para todo y se guarda entre
+/// sesiones.
+fn sub_pos_file() -> Option<PathBuf> {
+    use tauri::Manager;
+    APP.get()?.path().app_config_dir().ok().map(|d| d.join("sub-pos"))
+}
+
+/// La sincronía depende de cada release, así que se recuerda POR TÍTULO: al
+/// salir del video y volver (o reabrir la app) sigue sincronizado, y otra
+/// película arranca en 0. Clave = el título que llega a `play()`.
+static DELAY_TITLE: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// Cuántos títulos se recuerdan (los más recientes).
+const SUB_DELAY_MAX: usize = 200;
+
+fn sub_delay_file() -> Option<PathBuf> {
+    use tauri::Manager;
+    APP.get()?.path().app_config_dir().ok().map(|d| d.join("sub-delay.json"))
+}
+
+/// Lista (título, desfase), la más reciente al final.
+fn load_sub_delays() -> Vec<(String, f64)> {
+    sub_delay_file()
+        .and_then(|f| std::fs::read_to_string(f).ok())
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+fn sub_delay_for(title: &str) -> f64 {
+    load_sub_delays()
+        .into_iter()
+        .find(|(t, _)| t == title)
+        .map(|(_, d)| d)
+        .unwrap_or(0.0)
+}
+
+/// Guarda el desfase actual bajo el título en curso (0 = se olvida).
+fn save_sub_delay() {
+    let title = DELAY_TITLE.lock().map(|t| t.clone()).unwrap_or_default();
+    if title.is_empty() {
+        return; // IPTV, trailer o video sin título: no hay a qué asociarlo
+    }
+    let Some(f) = sub_delay_file() else { return };
+    let delay = (get_f64("sub-delay") * 100.0).round() / 100.0;
+    let mut list = load_sub_delays();
+    list.retain(|(t, _)| *t != title);
+    if delay != 0.0 {
+        list.push((title, delay));
+    }
+    let sobra = list.len().saturating_sub(SUB_DELAY_MAX);
+    list.drain(..sobra);
+    if let Some(d) = f.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    if let Ok(json) = serde_json::to_string(&list) {
+        let _ = std::fs::write(f, json);
+    }
+}
+
+fn save_sub_pos() {
+    let Some(f) = sub_pos_file() else { return };
+    if let Some(d) = f.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    let pos = get_f64("sub-pos").round() as i64;
+    let _ = std::fs::write(f, pos.to_string());
+}
+
+fn load_sub_pos() {
+    let pos = sub_pos_file()
+        .and_then(|f| std::fs::read_to_string(f).ok())
+        .and_then(|t| t.trim().parse::<i64>().ok());
+    if let Some(p) = pos {
+        mpv_cmd2("set", &["sub-pos", &p.clamp(0, 150).to_string()]);
+    }
+}
+
 /// Resetea el estado del bar al empezar una reproducción (hilo main).
 fn reset_player_ui() {
     PLAYER_UI.with(|u| {
@@ -1435,6 +1840,7 @@ fn reset_player_ui() {
         b.focus = 1;
     });
     MENU.with(|m| *m.borrow_mut() = None);
+    SUB_ADJ.with(|a| a.set(None));
     clear_bar();
 }
 
@@ -1583,6 +1989,7 @@ pub fn init(app: &tauri::AppHandle, window: &tauri::WebviewWindow) -> Result<(),
 
     MPV.set(mpv).map_err(|_| "mpv ya inicializado".to_string())?;
     let _ = APP.set(app.clone());
+    load_sub_pos();
 
     let vbox = window.default_vbox().map_err(|e| format!("default_vbox: {e}"))?;
     build_surface(&vbox);
@@ -1711,6 +2118,25 @@ fn build_surface(vbox: &gtk::Box) {
             }
             return glib::Propagation::Stop;
         }
+        // Modo ajuste de subtítulos: el video sigue corriendo y las flechas
+        // ajustan en vez de saltar. Esc sale del modo, no del video.
+        if sub_adj_on() {
+            match kn {
+                "Up" => sub_adj_move(-1),
+                "Down" => sub_adj_move(1),
+                "Left" => sub_adj_step(-1),
+                "Right" => sub_adj_step(1),
+                "Return" | "KP_Enter" => sub_adj_ok(),
+                "Escape" | "BackSpace" => exit_sub_adjust(),
+                "space" => mpv_cmd2("cycle", &["pause"]),
+                _ => {
+                    if let Some(k) = gdk_to_mpv_key(ev) {
+                        mpv_key("keypress", &k);
+                    }
+                }
+            }
+            return glib::Propagation::Stop;
+        }
         // Esc/Backspace: volver a los menús DEJANDO la sesión viva (pausada, o
         // sonando si es IPTV). No van a mpv → no lo matan. Cerrar del todo es
         // el botón ✕ Salir del bar.
@@ -1784,6 +2210,14 @@ fn build_surface(vbox: &gtk::Box) {
             }
             return glib::Propagation::Stop;
         }
+        if sub_adj_on() {
+            if let Some((i, _)) = adj_hit(cx, cy) {
+                if SUB_ADJ.with(|a| a.replace(Some(i))) != Some(i) {
+                    draw_sub_adj();
+                }
+            }
+            return glib::Propagation::Stop;
+        }
         show_bar_transient(); // cualquier movimiento lo muestra y reprograma
         if let Some(i) = bar_hit(cx, cy) {
             let changed = PLAYER_UI.with(|u| {
@@ -1813,6 +2247,25 @@ fn build_surface(vbox: &gtk::Box) {
                     menu_activate();
                 }
                 None => close_menu(),
+            }
+            return glib::Propagation::Stop;
+        }
+        // Panel de ajuste: click en la mitad izquierda de una fila = ◂, en la
+        // derecha = ▸. Fuera del panel lo cierra (igual que un menú).
+        if sub_adj_on() {
+            match adj_hit(cx, cy) {
+                // En una fila de valor, solo los botones ajustan; el resto de
+                // la fila la elige. Restablecer/Listo se activan enteras.
+                Some((i, dir)) => {
+                    SUB_ADJ.with(|a| a.set(Some(i)));
+                    if dir != 0 || ADJ_ROWS[i].parts().1.is_none() {
+                        sub_adj_step(dir);
+                    } else {
+                        draw_sub_adj();
+                    }
+                }
+                None if adj_in_panel(cx, cy) => {}
+                None => exit_sub_adjust(),
             }
             return glib::Propagation::Stop;
         }
@@ -1848,7 +2301,9 @@ fn build_surface(vbox: &gtk::Box) {
             menu_move(if up { -1 } else { 1 });
         } else {
             mpv_cmd2("add", &["volume", if up { "5" } else { "-5" }]);
-            show_bar_transient();
+            if !sub_adj_on() {
+                show_bar_transient();
+            }
         }
         glib::Propagation::Stop
     });
@@ -1864,6 +2319,8 @@ fn build_surface(vbox: &gtk::Box) {
         glib::idle_add_local_once(|| {
             if MENU.with(|m| m.borrow().is_some()) {
                 draw_menu();
+            } else if sub_adj_on() {
+                draw_sub_adj();
             } else if PLAYER_UI.with(|u| u.borrow().bar_visible) {
                 draw_bar();
             }
@@ -1947,11 +2404,22 @@ static NET_TIMEOUT_CONF: std::sync::OnceLock<String> = std::sync::OnceLock::new(
 /// Reproduce una URL única. Reemplaza lo que estuviera sonando.
 pub fn play(url: &str, title: Option<&str>, start_secs: Option<u64>) -> Result<(), String> {
     let mpv = MPV.get().ok_or("mpv no inicializado")?;
+    // El siguiente capítulo puede arrancar sin pasar por stop(): lo ajustado
+    // en el anterior se guarda antes de cambiar de título.
+    save_sub_delay();
     // Empezar algo nuevo descarta cualquier trailer y su sesión guardada.
     TRAILER.store(false, Ordering::SeqCst);
     clear_pending();
     // Una película no hereda la pista de audio externa de un trailer previo.
     let _ = mpv.set_property("audio-files", "");
+    // Ni la sincronía de subtítulos de otro título: cada release trae su
+    // propio desfase. Si este ya se sincronizó antes, vuelve como estaba.
+    let clave = title.unwrap_or("").trim().to_string();
+    let delay = if clave.is_empty() { 0.0 } else { sub_delay_for(&clave) };
+    let _ = mpv.set_property("sub-delay", delay);
+    if let Ok(mut t) = DELAY_TITLE.lock() {
+        *t = clave;
+    }
     if let Some(t) = title {
         let _ = mpv.set_property("force-media-title", t);
     }
@@ -2001,6 +2469,10 @@ pub fn play(url: &str, title: Option<&str>, start_secs: Option<u64>) -> Result<(
 pub fn play_iptv(playlist_path: &str, start: usize) -> Result<(), String> {
     let mpv = MPV.get().ok_or("mpv no inicializado")?;
     bump_end_gen(); // un canal en vivo no "termina": nadie debe vigilarlo
+    save_sub_delay();
+    if let Ok(mut t) = DELAY_TITLE.lock() {
+        t.clear();
+    }
     TRAILER.store(false, Ordering::SeqCst);
     clear_pending();
     let _ = mpv.set_property("playlist-start", start as i64);
@@ -2212,6 +2684,9 @@ pub fn stop() -> Result<(), String> {
 fn stop_inner() -> Result<(), String> {
     let mpv = MPV.get().ok_or("mpv no inicializado")?;
     end_loading();
+    // También cubre lo cambiado con las teclas z/x/r/t, sin pasar por el panel.
+    save_sub_pos();
+    save_sub_delay();
     let _ = mpv.command("stop", &[]);
     TRAILER.store(false, Ordering::SeqCst);
     clear_pending();
@@ -2240,6 +2715,8 @@ pub fn suspend() -> Result<(), String> {
         let _ = mpv.set_property("pause", true);
     }
     end_loading();
+    save_sub_pos();
+    save_sub_delay();
     // Overlays del bar/menú fuera antes de ocultar (viven en el hilo GTK).
     if let Some(app) = APP.get() {
         let _ = app.run_on_main_thread(reset_player_ui);
