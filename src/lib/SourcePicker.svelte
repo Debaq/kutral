@@ -63,7 +63,13 @@
     type CastStatus,
     type ProbeTrack,
   } from "$lib/cast.svelte";
-  import { buscarSubtitulos, enlaceSub, mejorSubtitulo, type OpcionSub } from "$lib/subtitulos";
+  import {
+    buscarSubtitulos,
+    claveSub,
+    enlaceSub,
+    mejorSubtitulo,
+    type OpcionSub,
+  } from "$lib/subtitulos";
   import { contextoActual } from "$lib/historial.svelte";
 
   // Pista real del contenedor leída de mpv (verdad del archivo).
@@ -467,6 +473,23 @@
   }
 
   // Lanza mpv con una URL ya resuelta y deja el picker en estado "playing".
+  // Con qué se recuerda la sincronía de subtítulos (sub_sync.rs): qué se ve,
+  // de qué fuente y con qué preferencia de Configuración.
+  function contextoSync(s: Src) {
+    // Anime puede venir sin imdb (AniList/Kitsu) y sin temporada.
+    const base = imdbId || clave || (kitsuId ? `kitsu:${kitsuId}` : "");
+    const cap = episode != null;
+    const temporada = season ?? 0;
+    return {
+      media: base ? (cap ? `${base}:${temporada}:${episode}` : base) : `t:${title}`,
+      serie: base && cap ? `${base}:${temporada}` : "",
+      fuente: s.info_hash || s.title || "",
+      release: s.title || "",
+      modo: config.syncModo,
+      capituloAnterior: config.syncCapAnterior,
+    };
+  }
+
   async function launch(url: string, s: Src, desdeSegundos?: number) {
     resolvingMsg = "Abriendo reproductor…";
     desdeLocal = !!s.local;
@@ -481,7 +504,12 @@
       await lanzarEnTv(url, s, desde);
       return;
     }
-    await invoke("mpv_play", { url, title, startSecs: desde > 0 ? desde : null });
+    await invoke("mpv_play", {
+      url,
+      title,
+      startSecs: desde > 0 ? desde : null,
+      sync: contextoSync(s),
+    });
     // El archivo del disco no pasa por la red: no hay cache que vigilar.
     if (!s.local) {
       void iniciarVigilancia({
@@ -539,7 +567,7 @@
     let subs: string | null = null;
     if (conSubs) {
       resolvingMsg = "Buscando subtítulos… 💬";
-      subs = await buscarSubUrl();
+      subs = (await buscarSubUrl()).url || null;
     }
     if (castCancel) throw new Error("TV_CORTADO: cancelado");
     resolvingMsg = `Enviando a ${tv.nombre}… 📺`;
@@ -1318,21 +1346,22 @@
   // URL de un subtítulo externo. "" = no hay. Lista Wyzie + OpenSubtitles
   // (listar no gasta cuota), ordenada para que primero vaya el que calza con
   // esta fuente, y solo resuelve el enlace del elegido.
-  async function buscarSubUrl(): Promise<string> {
+  async function buscarSubUrl(): Promise<{ url: string; key: string }> {
+    const nada = { url: "", key: "" };
     const lang = config.subsLang || "es";
-    if (lang === "off") return "";
+    if (lang === "off") return nada;
     const { release, videoUrl } = player.nowPlaying;
     const elegido = mejorSubtitulo(
       await buscarSubtitulos(imdbId, capituloSubs(), { release, videoUrl }),
     );
-    if (!elegido) return "";
+    if (!elegido) return nada;
     try {
       const url = await enlaceSub(elegido);
       dbg(`sub externo: ${elegido.label.slice(0, 70)}`);
-      return url;
+      return { url, key: claveSub(elegido) };
     } catch (e) {
       dbg(`sub externo fail: ${String(e).slice(0, 80)}`);
-      return "";
+      return nada;
     }
   }
 
@@ -1340,7 +1369,7 @@
   // falta bajar a disco).
   async function loadExternalSub(): Promise<boolean> {
     const lang = config.subsLang || "es";
-    const url = await buscarSubUrl();
+    const { url, key } = await buscarSubUrl();
     if (!url) {
       dbg("sin subtítulos ES (embebidos ni externos)");
       return false;
@@ -1358,6 +1387,9 @@
     } catch (e) {
       dbg(`no se pudo guardar sub, uso URL: ${String(e).slice(0, 60)}`);
     }
+    // Antes del sub-add: así la pista ya tiene identidad cuando el
+    // reproductor la ve aparecer y busca su sincronía recordada.
+    if (key) await invoke("mpv_sub_key", { path: toLoad, key }).catch(() => {});
     await mpv(["sub-add", toLoad, "select"]);
     await mpv(["set", "sub-visibility", "yes"]);
     return true;

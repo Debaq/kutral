@@ -108,6 +108,13 @@ export async function buscarSubtitulos(
   return opts;
 }
 
+/** Identidad estable de un subtítulo externo, para recordar su sincronía
+ *  (sub_sync.rs). La ruta en disco no sirve: se nombra por título e idioma. */
+export function claveSub(o: OpcionSub): string {
+  if (o.fileId != null) return `os:${o.fileId}`;
+  return o.url ? `wy:${o.url}` : "";
+}
+
 /** La que se carga sola cuando el release no trae español: la primera de la
  *  lista ordenada, evitando SDH si hay otra. */
 export function mejorSubtitulo(opts: OpcionSub[]): OpcionSub | undefined {

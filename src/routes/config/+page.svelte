@@ -71,6 +71,19 @@
   let subsLang = $state(config.subsLang);
   let wyzieKey = $state(config.wyzieKey);
   let subsPorFuente = $state(config.subsPorFuente);
+  let syncModo = $state(config.syncModo);
+  let syncCapAnterior = $state(config.syncCapAnterior);
+  let syncBorradas = $state(false);
+
+  async function borrarSincronias() {
+    try {
+      await invoke("sub_sync_clear");
+      syncBorradas = true;
+      setTimeout(() => (syncBorradas = false), 2500);
+    } catch (e) {
+      console.warn("[sync] borrar", e);
+    }
+  }
   let showWyzie = $state(false);
   let subSize = $state(config.subSize);
   let subMode = $state<SubMode>(config.subMode);
@@ -189,6 +202,8 @@
     subsLang = config.subsLang;
     wyzieKey = config.wyzieKey;
     subsPorFuente = config.subsPorFuente;
+    syncModo = config.syncModo;
+    syncCapAnterior = config.syncCapAnterior;
     subSize = config.subSize;
     subMode = config.subMode;
     sourceSelect = config.sourceSelect;
@@ -232,6 +247,8 @@
     subsLang !== config.subsLang ||
     wyzieKey !== config.wyzieKey ||
     subsPorFuente !== config.subsPorFuente ||
+    syncModo !== config.syncModo ||
+    syncCapAnterior !== config.syncCapAnterior ||
     subSize !== config.subSize ||
     subMode !== config.subMode ||
     sourceSelect !== config.sourceSelect ||
@@ -262,6 +279,8 @@
     config.subsLang = subsLang;
     config.wyzieKey = wyzieKey.trim();
     config.subsPorFuente = subsPorFuente;
+    config.syncModo = syncModo;
+    config.syncCapAnterior = syncCapAnterior;
     config.subSize = Math.min(200, Math.max(50, Math.round(subSize)));
     config.subMode = subMode;
     config.sourceSelect = sourceSelect;
@@ -1179,6 +1198,30 @@
             para el mismo release (≈), que suelen venir ya sincronizados. Apagado,
             usa el más descargado.
           </p>
+          <label class="field">
+            <span class="field-label">Recordar sincronía</span>
+            <select data-nav bind:value={syncModo}>
+              <option value="fuente">Misma fuente y subtítulo (recomendado)</option>
+              <option value="titulo">Por título, cualquier fuente</option>
+              <option value="no">No recordar</option>
+            </select>
+          </label>
+          <p class="hint">
+            Lo que ajustes en el reproductor vuelve la próxima vez. El desfase es
+            de cada archivo con cada subtítulo: "por título" lo aplica también
+            con otra fuente, donde suele no calzar.
+          </p>
+          <label class="toggle-row">
+            <input data-nav type="checkbox" bind:checked={syncCapAnterior} disabled={syncModo === "no"} />
+            <span>Usar el ajuste del capítulo anterior (misma fuente)</span>
+          </label>
+          <p class="hint">
+            En una serie del mismo grupo, el desfase suele repetirse entre
+            capítulos. Se avisa en pantalla al aplicarlo.
+          </p>
+          <button data-nav type="button" class="btn-ghost" onclick={borrarSincronias}>
+            {syncBorradas ? "✓ Sincronías borradas" : "Borrar sincronías guardadas"}
+          </button>
           <label class="field">
             <span class="field-label">Tamaño de letra ({subSize}%)</span>
             <input data-nav

@@ -13,6 +13,7 @@ mod net;
 mod omdb;
 mod opensubtitles;
 mod subs_match;
+mod sub_sync;
 mod probe;
 mod rd;
 mod player;
@@ -499,6 +500,13 @@ pub fn run() {
 
     tauri::Builder::default()
         .setup(|app| {
+            // Memoria de sincronía de subtítulos: vive en la carpeta de config.
+            {
+                use tauri::Manager;
+                if let Ok(dir) = app.path().app_config_dir() {
+                    sub_sync::init(dir);
+                }
+            }
             // Limpieza de páginas de catálogo vencidas. En un hilo aparte:
             // es I/O de disco y no tiene por qué demorar el arranque.
             {
@@ -630,6 +638,8 @@ pub fn run() {
             player::imp::mpv_tracks,
             player::imp::mpv_cache_stats,
             player::imp::mpv_set_cache,
+            player::imp::mpv_sub_key,
+            sub_sync::sub_sync_clear,
             opensubtitles::os_login,
             opensubtitles::os_status,
             opensubtitles::os_clear,

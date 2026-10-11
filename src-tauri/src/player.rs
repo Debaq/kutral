@@ -129,11 +129,18 @@ pub mod imp {
         url: String,
         title: Option<String>,
         start_secs: Option<u64>,
+        sync: Option<crate::sub_sync::SyncCtx>,
     ) -> Result<(), String> {
         if url.is_empty() {
             return Err("url vacía".into());
         }
-        mpv_embed::play(&url, title.as_deref(), start_secs)
+        mpv_embed::play(&url, title.as_deref(), start_secs, sync)
+    }
+
+    /// Identidad del subtítulo externo recién cargado (ver mpv_embed::SUB_KEYS).
+    #[tauri::command]
+    pub fn mpv_sub_key(path: String, key: String) {
+        mpv_embed::set_sub_key(&path, &key);
     }
 
     /// Trailer: no pisa la película que estuviera esperando y al salir no
@@ -733,10 +740,13 @@ pub mod imp {
         url: String,
         title: Option<String>,
         start_secs: Option<u64>,
+        sync: Option<crate::sub_sync::SyncCtx>,
     ) -> Result<(), String> {
         if url.is_empty() {
             return Err("url vacía".into());
         }
+        // Memoria de sincronía: por ahora solo en Linux (mpv embebido).
+        let _ = sync;
         AVISA_FIN.store(true, std::sync::atomic::Ordering::SeqCst);
         ES_TRAILER.store(false, std::sync::atomic::Ordering::SeqCst);
         EN_VIVO.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -837,6 +847,13 @@ pub mod imp {
         conn.write_all(line.as_bytes())
             .map_err(|e| format!("ipc write: {e}"))?;
         Ok(())
+    }
+
+    /// Identidad del subtítulo recién cargado. La memoria de sincronía vive
+    /// por ahora solo en el embed de Linux: acá no hay quién la use.
+    #[tauri::command]
+    pub fn mpv_sub_key(path: String, key: String) {
+        let _ = (path, key);
     }
 
     /// Lista para elegir dentro del video (subtítulos descargables). En Linux

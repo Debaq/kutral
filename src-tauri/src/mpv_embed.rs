@@ -1520,7 +1520,7 @@ fn exit_sub_adjust() {
     }
     clear_bar();
     save_sub_pos();
-    save_sub_delay();
+    guardar_sync_actual();
     if get_bool("pause") {
         enter_paused();
     }
@@ -1761,56 +1761,111 @@ fn sub_pos_file() -> Option<PathBuf> {
     APP.get()?.path().app_config_dir().ok().map(|d| d.join("sub-pos"))
 }
 
-/// La sincronía depende de cada release, así que se recuerda POR TÍTULO: al
-/// salir del video y volver (o reabrir la app) sigue sincronizado, y otra
-/// película arranca en 0. Clave = el título que llega a `play()`.
-static DELAY_TITLE: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+// ── memoria de sincronía (ver sub_sync.rs) ──
 
-/// Cuántos títulos se recuerdan (los más recientes).
-const SUB_DELAY_MAX: usize = 200;
-
-fn sub_delay_file() -> Option<PathBuf> {
-    use tauri::Manager;
-    APP.get()?.path().app_config_dir().ok().map(|d| d.join("sub-delay.json"))
+/// Sesión en curso: con qué contexto se abrió, qué pista de subtítulos está
+/// puesta y qué desfase se le aplicó al cargarla. None = no se recuerda nada
+/// (IPTV, prueba de Configuración).
+struct SyncActual {
+    ctx: crate::sub_sync::SyncCtx,
+    sub: Option<String>,
+    aplicado: f64,
 }
 
-/// Lista (título, desfase), la más reciente al final.
-fn load_sub_delays() -> Vec<(String, f64)> {
-    sub_delay_file()
-        .and_then(|f| std::fs::read_to_string(f).ok())
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default()
+static SYNC: std::sync::Mutex<Option<SyncActual>> = std::sync::Mutex::new(None);
+
+/// Ruta/URL con que se cargó un subtítulo externo → su identidad real
+/// ("os:<file_id>", "wy:<url>"). La ruta sola no sirve: al guardar en
+/// Descargas se nombra por título e idioma, y dos subtítulos distintos
+/// terminan en el mismo archivo.
+static SUB_KEYS: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// El frontend avisa la identidad del subtítulo que acaba de cargar.
+pub fn set_sub_key(path: &str, key: &str) {
+    if let Ok(mut k) = SUB_KEYS.lock() {
+        k.retain(|(p, _)| p != path);
+        k.push((path.to_string(), key.to_string()));
+        let sobra = k.len().saturating_sub(50);
+        k.drain(..sobra);
+    }
 }
 
-fn sub_delay_for(title: &str) -> f64 {
-    load_sub_delays()
-        .into_iter()
-        .find(|(t, _)| t == title)
-        .map(|(_, d)| d)
-        .unwrap_or(0.0)
+/// Identidad de la pista de subtítulos puesta. None = sin subtítulos.
+fn sub_key_actual() -> Option<String> {
+    let mpv = MPV.get()?;
+    mpv.get_property::<i64>("current-tracks/sub/id").ok()?;
+    if get_bool("current-tracks/sub/external") {
+        let path = get_string("current-tracks/sub/external-filename");
+        let conocida = SUB_KEYS
+            .lock()
+            .ok()
+            .and_then(|k| k.iter().rev().find(|(p, _)| *p == path).map(|(_, v)| v.clone()));
+        return Some(conocida.unwrap_or_else(|| {
+            let nombre = path.rsplit(['/', '\\']).next().unwrap_or(&path);
+            format!("ext:{nombre}")
+        }));
+    }
+    // Embebida: idioma + título + códec + índice la distinguen dentro del
+    // mismo archivo, que es lo único que importa (la fuente ya va en la clave).
+    Some(format!(
+        "emb:{}/{}/{}/{}",
+        get_string("current-tracks/sub/lang"),
+        get_string("current-tracks/sub/title"),
+        get_string("current-tracks/sub/codec"),
+        get_i64("current-tracks/sub/ff-index"),
+    ))
 }
 
-/// Guarda el desfase actual bajo el título en curso (0 = se olvida).
-fn save_sub_delay() {
-    let title = DELAY_TITLE.lock().map(|t| t.clone()).unwrap_or_default();
-    if title.is_empty() {
-        return; // IPTV, trailer o video sin título: no hay a qué asociarlo
+/// Guarda el desfase de la pista puesta (al salir, al cambiar de video...).
+fn guardar_sync_actual() {
+    let datos = SYNC.lock().ok().and_then(|g| {
+        g.as_ref()
+            .and_then(|s| s.sub.clone().map(|sub| (s.ctx.clone(), sub, s.aplicado)))
+    });
+    let Some((ctx, sub, aplicado)) = datos else { return };
+    let delay = get_f64("sub-delay");
+    crate::sub_sync::guardar(&ctx, &sub, delay, aplicado);
+    if let Ok(mut g) = SYNC.lock() {
+        if let Some(s) = g.as_mut() {
+            s.aplicado = delay;
+        }
     }
-    let Some(f) = sub_delay_file() else { return };
-    let delay = (get_f64("sub-delay") * 100.0).round() / 100.0;
-    let mut list = load_sub_delays();
-    list.retain(|(t, _)| *t != title);
-    if delay != 0.0 {
-        list.push((title, delay));
+}
+
+/// Cada segundo, mientras se reproduce: si cambió la pista de subtítulos
+/// (la eligió el front, se bajó una, o se cambió en el menú), lo ajustado en
+/// la anterior se guarda y a la nueva se le pone lo que tenga recordado.
+fn vigilar_pista_sub() {
+    let key = sub_key_actual();
+    let cambio = SYNC.lock().ok().and_then(|g| {
+        g.as_ref()
+            .filter(|s| s.sub != key)
+            .map(|s| (s.ctx.clone(), s.sub.clone(), s.aplicado))
+    });
+    let Some((ctx, vieja, aplicado)) = cambio else { return };
+    if let Some(v) = &vieja {
+        crate::sub_sync::guardar(&ctx, v, get_f64("sub-delay"), aplicado);
     }
-    let sobra = list.len().saturating_sub(SUB_DELAY_MAX);
-    list.drain(..sobra);
-    if let Some(d) = f.parent() {
-        let _ = std::fs::create_dir_all(d);
+    let encontrado = key.as_deref().and_then(|k| crate::sub_sync::buscar(&ctx, k));
+    let delay = encontrado.map(|(d, _)| d).unwrap_or(0.0);
+    if let Some(mpv) = MPV.get() {
+        let _ = mpv.set_property("sub-delay", delay);
     }
-    if let Ok(json) = serde_json::to_string(&list) {
-        let _ = std::fs::write(f, json);
+    if let Ok(mut g) = SYNC.lock() {
+        if let Some(s) = g.as_mut() {
+            s.sub = key;
+            s.aplicado = delay;
+        }
     }
+    use crate::sub_sync::Origen;
+    let aviso = match encontrado {
+        Some((d, Origen::CapituloAnterior)) if d != 0.0 => {
+            format!("Sincronía del capítulo anterior: {d:+.1} s  ·  z/x para corregir")
+        }
+        Some((d, _)) if d != 0.0 => format!("Sincronía recordada: {d:+.1} s"),
+        _ => return,
+    };
+    mpv_cmd2("show-text", &[&aviso, "3500"]);
 }
 
 fn save_sub_pos() {
@@ -2402,23 +2457,27 @@ pub fn is_running() -> bool {
 static NET_TIMEOUT_CONF: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
 /// Reproduce una URL única. Reemplaza lo que estuviera sonando.
-pub fn play(url: &str, title: Option<&str>, start_secs: Option<u64>) -> Result<(), String> {
+pub fn play(
+    url: &str,
+    title: Option<&str>,
+    start_secs: Option<u64>,
+    sync: Option<crate::sub_sync::SyncCtx>,
+) -> Result<(), String> {
     let mpv = MPV.get().ok_or("mpv no inicializado")?;
     // El siguiente capítulo puede arrancar sin pasar por stop(): lo ajustado
-    // en el anterior se guarda antes de cambiar de título.
-    save_sub_delay();
+    // en el anterior se guarda antes de cambiar de contexto.
+    guardar_sync_actual();
     // Empezar algo nuevo descarta cualquier trailer y su sesión guardada.
     TRAILER.store(false, Ordering::SeqCst);
     clear_pending();
     // Una película no hereda la pista de audio externa de un trailer previo.
     let _ = mpv.set_property("audio-files", "");
-    // Ni la sincronía de subtítulos de otro título: cada release trae su
-    // propio desfase. Si este ya se sincronizó antes, vuelve como estaba.
-    let clave = title.unwrap_or("").trim().to_string();
-    let delay = if clave.is_empty() { 0.0 } else { sub_delay_for(&clave) };
-    let _ = mpv.set_property("sub-delay", delay);
-    if let Ok(mut t) = DELAY_TITLE.lock() {
-        *t = clave;
+    // Ni la sincronía de subtítulos de otro video. La recordada para este se
+    // aplica cuando aparezca la pista (vigilar_pista_sub): todavía no se sabe
+    // cuál va a ser.
+    let _ = mpv.set_property("sub-delay", 0.0);
+    if let Ok(mut g) = SYNC.lock() {
+        *g = sync.map(|ctx| SyncActual { ctx, sub: None, aplicado: 0.0 });
     }
     if let Some(t) = title {
         let _ = mpv.set_property("force-media-title", t);
@@ -2469,9 +2528,9 @@ pub fn play(url: &str, title: Option<&str>, start_secs: Option<u64>) -> Result<(
 pub fn play_iptv(playlist_path: &str, start: usize) -> Result<(), String> {
     let mpv = MPV.get().ok_or("mpv no inicializado")?;
     bump_end_gen(); // un canal en vivo no "termina": nadie debe vigilarlo
-    save_sub_delay();
-    if let Ok(mut t) = DELAY_TITLE.lock() {
-        t.clear();
+    guardar_sync_actual();
+    if let Ok(mut g) = SYNC.lock() {
+        *g = None; // un canal en vivo no se sincroniza
     }
     TRAILER.store(false, Ordering::SeqCst);
     clear_pending();
@@ -2579,6 +2638,7 @@ fn watch_media_end() {
                 arranco = !get_bool("idle-active") && pos > 0.0;
                 return glib::ControlFlow::Continue;
             }
+            vigilar_pista_sub();
             if get_bool("idle-active") || get_bool("eof-reached") {
                 fin_de_archivo(ultima_pos, ultima_dur);
                 return glib::ControlFlow::Break;
@@ -2686,7 +2746,7 @@ fn stop_inner() -> Result<(), String> {
     end_loading();
     // También cubre lo cambiado con las teclas z/x/r/t, sin pasar por el panel.
     save_sub_pos();
-    save_sub_delay();
+    guardar_sync_actual();
     let _ = mpv.command("stop", &[]);
     TRAILER.store(false, Ordering::SeqCst);
     clear_pending();
@@ -2716,7 +2776,7 @@ pub fn suspend() -> Result<(), String> {
     }
     end_loading();
     save_sub_pos();
-    save_sub_delay();
+    guardar_sync_actual();
     // Overlays del bar/menú fuera antes de ocultar (viven en el hilo GTK).
     if let Some(app) = APP.get() {
         let _ = app.run_on_main_thread(reset_player_ui);

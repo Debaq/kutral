@@ -13,7 +13,7 @@
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { player } from "$lib/playerState.svelte";
   import { config } from "$lib/config.svelte";
-  import { buscarSubtitulos, enlaceSub, type OpcionSub } from "$lib/subtitulos";
+  import { buscarSubtitulos, claveSub, enlaceSub, type OpcionSub } from "$lib/subtitulos";
 
   let subOptions: OpcionSub[] = [];
   let unlisten: UnlistenFn[] = [];
@@ -75,6 +75,8 @@
     } catch (err) {
       console.warn("[subs] save fail, uso URL:", err);
     }
+    const key = claveSub(o);
+    if (key) await invoke("mpv_sub_key", { path: toLoad, key }).catch(() => {});
     await mpv(["sub-add", toLoad, "select"]);
     await mpv(["set", "sub-visibility", "yes"]);
     await mpv(["show-text", "✓ Subtítulo cargado", "2000"]);

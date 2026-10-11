@@ -74,7 +74,7 @@ fn sin_sufijos(nombre: &str) -> &str {
 }
 
 /// Grupo del release: "[SubsPlease] Show - 05" (anime) o "Show.1080p-GRUPO".
-fn grupo(nombre: &str) -> Option<String> {
+pub(crate) fn grupo(nombre: &str) -> Option<String> {
     let n = sin_sufijos(nombre);
     if let Some(rest) = n.strip_prefix('[') {
         let g = rest.split(']').next()?.trim();
