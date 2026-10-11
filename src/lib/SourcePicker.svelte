@@ -5,6 +5,7 @@
   // no procesa navegación.
   import { invoke } from "@tauri-apps/api/core";
   import { player, setNowPlaying } from "$lib/playerState.svelte";
+  import { elegirPistaSub, pistaDelIdioma } from "$lib/pistas";
   import { esFinReal, type FinPayload } from "$lib/finVideo";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { config } from "$lib/config.svelte";
@@ -79,6 +80,7 @@
     lang: string;
     title: string;
     selected: boolean;
+    forced: boolean;
   };
 
 
@@ -1299,15 +1301,12 @@
   // Manda un comando JSON-IPC a mpv (set propiedad, sub-add, etc.).
   const mpv = (args: unknown[]) => invoke("mpv_cmd", { args }).catch(() => {});
 
-  // ¿La pista es español? Mira el lang ISO (spa/es) y, de respaldo, el título.
-  function isEsTrack(t: MpvTrack): boolean {
-    const l = (t.lang || "").toLowerCase();
-    if (/^(es|spa|esp)/.test(l)) return true;
-    return /espa|spanish|latino|castellano/i.test(t.title || "");
-  }
+  // ¿La pista de audio es español? (el doblaje de "Doblado" es al español).
+  const isEsTrack = (t: MpvTrack) => pistaDelIdioma(t, "es");
 
   // NIVELES 2-3: la verdad del contenedor. Lee las pistas reales de mpv y elige
-  // según la preferencia. Solo baja subs externos si el archivo NO trae ES.
+  // según la preferencia. Solo baja subs externos si el archivo no trae una
+  // pista COMPLETA en el idioma de Configuración.
   async function applyPreferredTracks() {
     // mpv tarda un momento en demuxear y exponer las pistas tras abrir.
     let tracks: MpvTrack[] = [];
@@ -1319,7 +1318,7 @@
     const audios = tracks.filter((t) => t.kind === "audio");
     const subs = tracks.filter((t) => t.kind === "sub");
     const esAudio = audios.find(isEsTrack);
-    const esSub = subs.find(isEsTrack);
+    const lang = config.subsLang || "es";
 
     if (config.subMode === "dub" && esAudio) {
       // Audio español embebido: selecciónalo y oculta subtítulos.
@@ -1328,15 +1327,30 @@
       dbg(`audio ES embebido id=${esAudio.id}`);
       return;
     }
-    // Subtitulado (o doblado sin audio ES): audio original + subs ES.
-    if (esSub) {
-      await mpv(["set", "sid", String(esSub.id)]);
-      await mpv(["set", "sub-visibility", "yes"]);
-      dbg(`sub ES embebido id=${esSub.id}`);
+    // "Sin subtítulos": ni externos ni los que traiga el archivo (mpv puede
+    // activar uno solo, por la marca "default" del contenedor).
+    if (lang === "off") {
+      await mpv(["set", "sid", "no"]);
+      dbg("subtítulos apagados en Configuración");
       return;
     }
-    // El release no trae ES → subtítulos externos (Wyzie o OpenSubtitles).
-    await loadExternalSub();
+    // Subtitulado (o doblado sin audio ES): audio original + subs del idioma.
+    const { completa, forzada } = elegirPistaSub(subs, lang);
+    if (completa) {
+      await mpv(["set", "sid", String(completa.id)]);
+      await mpv(["set", "sub-visibility", "yes"]);
+      dbg(`sub ${lang} embebido id=${completa.id}`);
+      return;
+    }
+    // No trae una completa en el idioma → externo (Wyzie o OpenSubtitles).
+    // Una forzada solo traduce carteles: no alcanza para ver la película,
+    // pero es mejor que nada si no aparece un externo.
+    if (await loadExternalSub()) return;
+    if (forzada) {
+      await mpv(["set", "sid", String(forzada.id)]);
+      await mpv(["set", "sub-visibility", "yes"]);
+      dbg(`solo forzado ${lang} embebido id=${forzada.id}`);
+    }
   }
 
   // Series: sin capítulo, las APIs devuelven subtítulos de cualquier episodio.
@@ -1372,7 +1386,7 @@
     const lang = config.subsLang || "es";
     const { url, key } = await buscarSubUrl();
     if (!url) {
-      dbg("sin subtítulos ES (embebidos ni externos)");
+      dbg(`sin subtítulos ${lang} (embebidos ni externos)`);
       return false;
     }
     // Guardar el .srt en Descargas (para coleccionarlos) y cargar el archivo

@@ -99,6 +99,9 @@ pub struct MpvTrack {
     pub lang: String,
     pub title: String,
     pub selected: bool,
+    /// Pista "forzada": solo carteles y diálogos en otro idioma, no la
+    /// película entera.
+    pub forced: bool,
 }
 
 /// Construye el m3u temporal (común a ambos caminos): EXTINF con títulos para
@@ -238,12 +241,13 @@ pub mod imp {
     pub fn mpv_tracks(_state: tauri::State<'_, PlayerState>) -> Vec<MpvTrack> {
         mpv_embed::tracks()
             .into_iter()
-            .map(|(id, kind, lang, title, selected)| MpvTrack {
+            .map(|(id, kind, lang, title, selected, forced)| MpvTrack {
                 id,
                 kind,
                 lang,
                 title,
                 selected,
+                forced,
             })
             .collect()
     }
@@ -355,7 +359,14 @@ pub mod imp {
 #[cfg(not(target_os = "linux"))]
 pub mod imp {
     use super::*;
+
     use tauri::Emitter;
+
+    /// Controles por defecto de uosc (scripts/uosc/main.lua) sin el botón de
+    /// subtítulos, para TV en vivo.
+    const UOSC_CONTROLES_IPTV: &str = "menu,gap,<has_many_audio>audio,<has_many_video>video,\
+        <has_many_edition>editions,<stream>stream-quality,gap,space,<video,audio>speed,space,\
+        shuffle,loop-playlist,loop-file,gap,prev,items,next,gap,fullscreen";
 
     fn ipc_path() -> String {
         #[cfg(windows)]
@@ -820,6 +831,10 @@ pub mod imp {
         if let Some(cfg) = mpv_config_dir(&app) {
             extra.push(format!("--input-conf={}", cfg.join("iptv-input.conf").display()));
         }
+        // TV en vivo no lleva subtítulos: ni los del canal ni el botón de
+        // uosc (sus controles por defecto, sin `subtitles`).
+        extra.push("--sid=no".into());
+        extra.push(format!("--script-opts-append=uosc-controls={UOSC_CONTROLES_IPTV}"));
         extra.push("--load-unsafe-playlists".into());
         extra.push(format!("--playlist-start={start}"));
         extra.push(format!("--playlist={}", pl.display()));
@@ -1142,6 +1157,7 @@ pub mod imp {
                     lang: t.get("lang").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                     title: t.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                     selected: t.get("selected").and_then(|v| v.as_bool()).unwrap_or(false),
+                    forced: t.get("forced").and_then(|v| v.as_bool()).unwrap_or(false),
                 })
             })
             .collect()

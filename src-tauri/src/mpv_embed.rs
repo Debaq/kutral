@@ -335,13 +335,12 @@ fn count_tracks(kind: &str) -> i64 {
 
 /// Construye la lista de acciones del bar. "Video" solo con 2+ pistas de video.
 fn build_bar_actions() -> Vec<BarAction> {
-    let mut v = vec![
-        BarAction::SeekBack,
-        BarAction::Resume,
-        BarAction::SeekFwd,
-        BarAction::Subs,
-        BarAction::Audio,
-    ];
+    let mut v = vec![BarAction::SeekBack, BarAction::Resume, BarAction::SeekFwd];
+    // TV en vivo no lleva subtítulos (ver play_iptv).
+    if !LIVE.load(Ordering::SeqCst) {
+        v.push(BarAction::Subs);
+    }
+    v.push(BarAction::Audio);
     if count_tracks("video") >= 2 {
         v.push(BarAction::Video);
     }
@@ -2410,7 +2409,9 @@ fn build_surface(vbox: &gtk::Box) {
         // Atajos directos a los menús propios (antes los servía uosc).
         match kn {
             "c" => {
-                open_sub_menu();
+                if !LIVE.load(Ordering::SeqCst) {
+                    open_sub_menu();
+                }
                 return glib::Propagation::Stop;
             }
             "a" => {
@@ -2675,6 +2676,9 @@ pub fn play(
     clear_pending();
     // Una película no hereda la pista de audio externa de un trailer previo.
     let _ = mpv.set_property("audio-files", "");
+    // Ni los subtítulos apagados de TV en vivo: `sid` queda puesto entre
+    // archivos.
+    let _ = mpv.set_property("sid", "auto");
     // Ni la sincronía de subtítulos de otro video. La recordada para este se
     // aplica cuando aparezca la pista (vigilar_pista_sub): todavía no se sabe
     // cuál va a ser.
@@ -2735,6 +2739,9 @@ pub fn play_iptv(playlist_path: &str, start: usize) -> Result<(), String> {
     if let Ok(mut g) = SYNC.lock() {
         *g = None; // un canal en vivo no se sincroniza
     }
+    // TV en vivo no lleva subtítulos: ni los que traiga el canal (DVB,
+    // teletexto) ni los del menú, que en vivo no está.
+    let _ = mpv.set_property("sid", "no");
     TRAILER.store(false, Ordering::SeqCst);
     clear_pending();
     let _ = mpv.set_property("playlist-start", start as i64);
@@ -2780,6 +2787,7 @@ pub fn play_trailer(url: &str, title: Option<&str>, audio: Option<&str>) -> Resu
     // stream DASH y se carga como pista externa. Si no viene audio, la URL es
     // la de YouTube y de juntar los streams se encarga ytdl_hook.
     let _ = mpv.set_property("audio-files", audio.unwrap_or(""));
+    let _ = mpv.set_property("sid", "auto");
     let _ = mpv.set_property("start", "none");
     let _ = mpv.set_property("pause", false);
     begin_loading(title);
@@ -2903,6 +2911,7 @@ fn end_trailer() -> Result<(), String> {
     };
     // Un canal IPTV vuelve sonando; una película vuelve pausada en su minuto.
     let _ = mpv.set_property("pause", !p.live);
+    let _ = mpv.set_property("sid", if p.live { "no" } else { "auto" });
     let _ = mpv.set_property("force-media-title", p.title.as_str());
     if p.live || p.pos <= 0.0 {
         let _ = mpv.set_property("start", "none");
@@ -3068,7 +3077,7 @@ fn get_i64(name: &str) -> i64 {
 }
 
 /// Pistas reales (audio/sub) leídas de track-list/N/* con tipos simples.
-pub fn tracks() -> Vec<(i64, String, String, String, bool)> {
+pub fn tracks() -> Vec<(i64, String, String, String, bool, bool)> {
     let mpv = match MPV.get() {
         Some(m) => m,
         None => return Vec::new(),
@@ -3084,7 +3093,8 @@ pub fn tracks() -> Vec<(i64, String, String, String, bool)> {
         let lang = get_string(&format!("track-list/{i}/lang"));
         let title = get_string(&format!("track-list/{i}/title"));
         let selected = get_bool(&format!("track-list/{i}/selected"));
-        out.push((id, kind, lang, title, selected));
+        let forced = get_bool(&format!("track-list/{i}/forced"));
+        out.push((id, kind, lang, title, selected, forced));
     }
     out
 }
