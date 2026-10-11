@@ -487,6 +487,7 @@
       release: s.title || "",
       modo: config.syncModo,
       capituloAnterior: config.syncCapAnterior,
+      auto: config.syncAuto,
     };
   }
 

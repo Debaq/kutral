@@ -1452,19 +1452,28 @@ enum AdjRow {
     /// `sub-step`: mueve la sincronía para que la frase anterior/siguiente
     /// aparezca YA. Lo más rápido: se oye la frase y se pulsa.
     Alinear,
+    /// Sincronizar por audio (sub_autosync.rs). Oculta si en Configuración
+    /// la sincronía automática está apagada.
+    Auto,
     Altura,
     Restablecer,
     Listo,
 }
 
-const ADJ_ROWS: [AdjRow; 6] = [
-    AdjRow::Fino,
-    AdjRow::Grueso,
-    AdjRow::Alinear,
-    AdjRow::Altura,
-    AdjRow::Restablecer,
-    AdjRow::Listo,
-];
+/// Filas del panel, según lo elegido en Configuración.
+fn adj_rows() -> Vec<AdjRow> {
+    let auto = SYNC
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|s| s.ctx.auto != "no"))
+        .unwrap_or(false);
+    let mut v = vec![AdjRow::Fino, AdjRow::Grueso, AdjRow::Alinear];
+    if auto {
+        v.push(AdjRow::Auto);
+    }
+    v.extend([AdjRow::Altura, AdjRow::Restablecer, AdjRow::Listo]);
+    v
+}
 
 /// Paso de la altura en unidades de sub-pos (100 = abajo del todo).
 const SUB_POS_STEP: i64 = 2;
@@ -1476,6 +1485,7 @@ impl AdjRow {
             AdjRow::Fino => ("Sincronía ±0.1 s", Some(("◂ antes", "después ▸"))),
             AdjRow::Grueso => ("Sincronía ±1 s", Some(("◂ antes", "después ▸"))),
             AdjRow::Alinear => ("Mostrar ya", Some(("◂ frase anterior", "siguiente ▸"))),
+            AdjRow::Auto => ("Sincronizar automáticamente", None),
             AdjRow::Altura => ("Altura", Some(("◂ bajar", "subir ▸"))),
             AdjRow::Restablecer => ("Restablecer", None),
             AdjRow::Listo => ("Listo", None),
@@ -1529,7 +1539,7 @@ fn exit_sub_adjust() {
 fn sub_adj_move(delta: i32) {
     SUB_ADJ.with(|a| {
         if let Some(i) = a.get() {
-            let n = ADJ_ROWS.len() as i32;
+            let n = adj_rows().len() as i32;
             a.set(Some((((i as i32 + delta) % n + n) % n) as usize));
         }
     });
@@ -1537,7 +1547,8 @@ fn sub_adj_move(delta: i32) {
 }
 
 fn sub_adj_row() -> Option<AdjRow> {
-    SUB_ADJ.with(|a| a.get()).map(|i| ADJ_ROWS[i])
+    let rows = adj_rows();
+    SUB_ADJ.with(|a| a.get()).and_then(|i| rows.get(i).copied())
 }
 
 /// ←/→ (o click en una mitad de la fila): −1 = ◂, +1 = ▸.
@@ -1552,6 +1563,7 @@ fn sub_adj_step(dir: i32) {
         Some(AdjRow::Altura) => {
             mpv_cmd2("add", &["sub-pos", &(-SUB_POS_STEP * dir as i64).to_string()])
         }
+        Some(AdjRow::Auto) => autosync_iniciar(),
         Some(AdjRow::Restablecer) => sub_adj_reset(),
         Some(AdjRow::Listo) => {
             exit_sub_adjust();
@@ -1565,11 +1577,16 @@ fn sub_adj_step(dir: i32) {
 /// OK con el teclado: en Restablecer restablece; en cualquier otra fila
 /// termina (OK = "ya está").
 fn sub_adj_ok() {
-    if sub_adj_row() == Some(AdjRow::Restablecer) {
-        sub_adj_reset();
-        draw_sub_adj();
-    } else {
-        exit_sub_adjust();
+    match sub_adj_row() {
+        Some(AdjRow::Restablecer) => {
+            sub_adj_reset();
+            draw_sub_adj();
+        }
+        Some(AdjRow::Auto) => {
+            autosync_iniciar();
+            draw_sub_adj();
+        }
+        _ => exit_sub_adjust(),
     }
 }
 
@@ -1606,7 +1623,7 @@ struct AdjGeom {
     k: f64,
 }
 
-/// Filas del panel: 0 = título, 1..=N = ADJ_ROWS, N+1 = pista de teclas.
+/// Filas del panel: 0 = título, 1..=N = adj_rows(), N+1 = pista de teclas.
 /// Cada fila de valor lleva su texto a la izquierda y dos botones a la
 /// derecha, cada uno con su propia zona de click.
 fn adj_geom() -> AdjGeom {
@@ -1614,7 +1631,7 @@ fn adj_geom() -> AdjGeom {
     let half = (360.0 * o.k).min(o.w / 2.0 - 12.0);
     let row_h = 34.0 * o.k;
     let top = 16.0 * o.k;
-    let rows = ADJ_ROWS.len() + 2;
+    let rows = adj_rows().len() + 2;
     let r = o.w / 2.0 + half;
     let btn_half = 90.0 * o.k;
     let btn_r = r - 20.0 * o.k - btn_half;
@@ -1648,9 +1665,10 @@ fn adj_hit(px: f64, py: f64) -> Option<(usize, i32)> {
     if px < g.l || px > g.r {
         return None;
     }
-    let i = (0..ADJ_ROWS.len())
+    let rows = adj_rows();
+    let i = (0..rows.len())
         .find(|&i| (py - adj_row_cy(&g, i + 1)).abs() <= g.row_h / 2.0)?;
-    let dir = if ADJ_ROWS[i].parts().1.is_none() {
+    let dir = if rows[i].parts().1.is_none() {
         0
     } else if (px - g.btn_l).abs() <= g.btn_half {
         -1
@@ -1706,10 +1724,14 @@ fn draw_sub_adj() {
     let btn_fs = fs(g.k, 20.0);
     let btn_h = (g.row_h / 2.0 - 3.0 * g.k) as i32;
     let btn_rad = (8.0 * g.k).round() as i32;
-    for (i, row) in ADJ_ROWS.iter().enumerate() {
+    let rows = adj_rows();
+    for (i, row) in rows.iter().enumerate() {
         let on = i == sel;
         let (fg, b) = if on { ("&H1673F9&", "1") } else { ("&HE8E0D0&", "0") };
-        let (text, buttons) = row.parts();
+        let (mut text, buttons) = row.parts();
+        if *row == AdjRow::Auto && AUTOSYNC.load(Ordering::SeqCst) {
+            text = "Analizando el audio…";
+        }
         let Some((izq, der)) = buttons else {
             ev.push(text_at(5, g.cx, i + 1, format!("{{\\fs{item_fs}\\1c{fg}\\b{b}}}{text}")));
             continue;
@@ -1743,7 +1765,7 @@ fn draw_sub_adj() {
     ev.push(text_at(
         5,
         g.cx,
-        ADJ_ROWS.len() + 1,
+        rows.len() + 1,
         format!(
             "{{\\fs{}\\1c&H9A9488&\\b0}}↑↓ elegir  ·  ←→ ajustar  ·  Esc listo",
             fs(g.k, 18.0)
@@ -1752,6 +1774,181 @@ fn draw_sub_adj() {
     put_overlay(BAR_BG_ID, &bg.join("\n"));
     put_overlay(BAR_FG_ID, &ev.join("\n"));
     hide_overlay(BAR_SEEK_ID);
+}
+
+// ── sincronía automática por audio (ver sub_autosync.rs) ──
+
+/// Hay un análisis en curso (uno a la vez: baja minutos del stream).
+static AUTOSYNC: AtomicBool = AtomicBool::new(false);
+
+/// Decodifica `len` s de audio desde `start` a s16 mono 16 kHz con una
+/// SEGUNDA instancia de libmpv: sin video, sin subtítulos y con la salida de
+/// audio a un archivo (`ao=pcm`) tan rápido como dé la red (`untimed`).
+/// Así no hace falta ffmpeg, y lee lo mismo que lee el reproductor.
+fn extraer_audio(url: &str, start: f64, len: f64, aid: i64) -> Result<Vec<i16>, String> {
+    let tmp = std::env::temp_dir().join(format!("kutral-sync-{}.pcm", std::process::id()));
+    let _ = std::fs::remove_file(&tmp);
+    let ruta = tmp.to_string_lossy().into_owned();
+    let m = Mpv::with_initializer(|i| {
+        i.set_option("config", "no")?;
+        i.set_option("load-scripts", "no")?;
+        i.set_option("terminal", "no")?;
+        i.set_option("idle", "yes")?;
+        i.set_option("vid", "no")?;
+        i.set_option("sid", "no")?;
+        i.set_option("vo", "null")?;
+        i.set_option("ao", "pcm")?;
+        i.set_option("ao-pcm-file", ruta.as_str())?;
+        i.set_option("ao-pcm-waveheader", "no")?;
+        i.set_option("audio-samplerate", crate::sub_autosync::SAMPLE_RATE as i64)?;
+        i.set_option("audio-channels", "mono")?;
+        i.set_option("audio-format", "s16")?;
+        i.set_option("untimed", "yes")?;
+        i.set_option("network-timeout", "20")?;
+        i.set_option("start", format!("{start:.2}").as_str())?;
+        i.set_option("length", format!("{len:.2}").as_str())?;
+        if aid > 0 {
+            // La misma pista que se oye (la línea de tiempo es la misma en
+            // todas, pero así no se baja otra si son streams separados).
+            i.set_option("aid", aid)?;
+        }
+        Ok(())
+    })
+    .map_err(|e| format!("mpv de análisis: {e}"))?;
+    m.command("loadfile", &[url])
+        .map_err(|e| format!("loadfile análisis: {e}"))?;
+    // Arranca (idle-active pasa a false) y termina (vuelve a true).
+    let t = std::time::Instant::now();
+    let mut arranco = false;
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        let idle = m.get_property::<bool>("idle-active").unwrap_or(true);
+        if !idle {
+            arranco = true;
+        } else if arranco {
+            break;
+        }
+        if !arranco && t.elapsed().as_secs() > 30 {
+            return Err("no se pudo abrir el video para analizar".into());
+        }
+        if t.elapsed().as_secs() > 180 {
+            return Err("el análisis tardó demasiado (red lenta)".into());
+        }
+    }
+    drop(m); // cierra el ao y vacía el archivo
+    let bytes = std::fs::read(&tmp).map_err(|e| format!("leer audio: {e}"))?;
+    let _ = std::fs::remove_file(&tmp);
+    Ok(bytes
+        .chunks_exact(2)
+        .map(|c| i16::from_le_bytes([c[0], c[1]]))
+        .collect())
+}
+
+/// Texto del subtítulo externo puesto (archivo local o URL).
+fn leer_subtitulo(ruta: &str) -> Result<String, String> {
+    if ruta.starts_with("http://") || ruta.starts_with("https://") {
+        let url = ruta.to_string();
+        return tauri::async_runtime::block_on(async move {
+            let r = reqwest::get(&url).await.map_err(|e| format!("bajar subtítulo: {e}"))?;
+            r.text().await.map_err(|e| format!("bajar subtítulo: {e}"))
+        });
+    }
+    let bytes = std::fs::read(ruta).map_err(|e| format!("leer subtítulo: {e}"))?;
+    // Muchos .srt viejos vienen en Latin-1: los tiempos son ASCII igual.
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn aviso_osd(texto: &str, ms: u32) {
+    mpv_cmd2("show-text", &[texto, &ms.to_string()]);
+}
+
+/// Sincroniza por audio la pista puesta. Corre en un hilo aparte (baja ~4
+/// minutos del stream) y aplica el resultado solo si es confiable y si la
+/// pista sigue siendo la misma.
+fn autosync_iniciar() {
+    if !get_bool("current-tracks/sub/external") {
+        let hay = MPV
+            .get()
+            .is_some_and(|m| m.get_property::<i64>("current-tracks/sub/id").is_ok());
+        aviso_osd(
+            if hay {
+                "Los subtítulos incluidos en el video ya vienen sincronizados con él"
+            } else {
+                "No hay subtítulos puestos"
+            },
+            3000,
+        );
+        return;
+    }
+    if AUTOSYNC.swap(true, Ordering::SeqCst) {
+        return; // ya hay uno en curso
+    }
+    let url = get_string("path");
+    let sub = get_string("current-tracks/sub/external-filename");
+    let clave = sub_key_actual();
+    let aid = get_i64("aid");
+    let (pos, dur) = (get_f64("time-pos"), get_f64("duration"));
+    // Ventana alrededor de donde se está viendo: esa parte del stream el
+    // reproductor la necesita igual (en un torrent, ya está o está por bajar).
+    let ventana = crate::sub_autosync::VENTANA_S;
+    let mut inicio = (pos - 30.0).max(0.0);
+    if dur > ventana {
+        inicio = inicio.min(dur - ventana);
+    }
+    aviso_osd("Sincronizando: analizando el audio…", 4000);
+    std::thread::spawn(move || {
+        let r = leer_subtitulo(&sub).and_then(|texto| {
+            use crate::sub_autosync::sincronizar;
+            let mut audios = vec![(inicio, extraer_audio(&url, inicio, ventana, aid)?)];
+            let mut res = sincronizar(&audios, &texto);
+            // Una ventana puede no alcanzar (música, poca conversación): se
+            // suma otra antes de rendirse. La siguiente, o la anterior si ya
+            // no queda video.
+            if !res.is_some_and(|r| r.confiable()) {
+                let otra = if dur <= 0.0 || inicio + 2.0 * ventana <= dur {
+                    inicio + ventana
+                } else {
+                    (inicio - ventana).max(0.0)
+                };
+                if (otra - inicio).abs() >= ventana - 1.0 {
+                    aviso_osd("Sincronizando: analizando un poco más…", 4000);
+                    audios.push((otra, extraer_audio(&url, otra, ventana, aid)?));
+                    res = sincronizar(&audios, &texto);
+                }
+            }
+            res.ok_or_else(|| "no hay suficiente audio o subtítulos en esta parte".to_string())
+        });
+        let Some(app) = APP.get() else {
+            AUTOSYNC.store(false, Ordering::SeqCst);
+            return;
+        };
+        let _ = app.run_on_main_thread(move || {
+            AUTOSYNC.store(false, Ordering::SeqCst);
+            // Cambió de pista o de video mientras tanto: el resultado ya no
+            // corresponde a lo que está puesto.
+            if sub_key_actual() != clave {
+                return;
+            }
+            match r {
+                Ok(res) if res.confiable() => {
+                    let delay = -res.desfase;
+                    if let Some(mpv) = MPV.get() {
+                        let _ = mpv.set_property("sub-delay", delay);
+                    }
+                    aviso_osd(&format!("Sincronizado automáticamente: {delay:+.1} s"), 3500);
+                }
+                Ok(res) => {
+                    eprintln!("[autosync] poco confiable: {res:?}");
+                    aviso_osd("No pude sincronizar con seguridad. Ajusta a mano (z/x)", 4000);
+                }
+                Err(e) => {
+                    eprintln!("[autosync] {e}");
+                    aviso_osd(&format!("No pude sincronizar: {e}"), 4000);
+                }
+            }
+            draw_sub_adj();
+        });
+    });
 }
 
 /// La altura es gusto de quien mira: una sola para todo y se guarda entre
@@ -1848,6 +2045,8 @@ fn vigilar_pista_sub() {
     }
     let encontrado = key.as_deref().and_then(|k| crate::sub_sync::buscar(&ctx, k));
     let delay = encontrado.map(|(d, _)| d).unwrap_or(0.0);
+    let externa = key.as_deref().is_some_and(|k| !k.starts_with("emb:"));
+    let auto = encontrado.is_none() && externa && ctx.auto == "siempre";
     if let Some(mpv) = MPV.get() {
         let _ = mpv.set_property("sub-delay", delay);
     }
@@ -1856,6 +2055,10 @@ fn vigilar_pista_sub() {
             s.sub = key;
             s.aplicado = delay;
         }
+    }
+    if auto {
+        autosync_iniciar();
+        return;
     }
     use crate::sub_sync::Origen;
     let aviso = match encontrado {
@@ -2313,7 +2516,7 @@ fn build_surface(vbox: &gtk::Box) {
                 // la fila la elige. Restablecer/Listo se activan enteras.
                 Some((i, dir)) => {
                     SUB_ADJ.with(|a| a.set(Some(i)));
-                    if dir != 0 || ADJ_ROWS[i].parts().1.is_none() {
+                    if dir != 0 || adj_rows()[i].parts().1.is_none() {
                         sub_adj_step(dir);
                     } else {
                         draw_sub_adj();
@@ -2917,6 +3120,41 @@ mod tests {
             dur,
         });
         g
+    }
+
+    /// Punta a punta con red: libmpv baja y decodifica la ventana de audio
+    /// por HTTP y la sincronización encuentra el desfase puesto a propósito.
+    ///   TOS_SRT=TOS-es.srt cargo test --release -- --ignored extraer_y_sincronizar
+    #[test]
+    #[ignore]
+    fn extraer_y_sincronizar() {
+        let url = "https://download.blender.org/demo/movies/ToS/tears_of_steel_720p.mov";
+        let ventana = crate::sub_autosync::VENTANA_S;
+        let t = std::time::Instant::now();
+        let pcm = extraer_audio(url, 330.0, ventana, 0).expect("audio");
+        eprintln!("audio: {} muestras en {:?}", pcm.len(), t.elapsed());
+        let esperadas = (ventana * crate::sub_autosync::SAMPLE_RATE as f64) as usize;
+        assert!(pcm.len().abs_diff(esperadas) < 16_000, "{} vs {esperadas}", pcm.len());
+        let srt = std::fs::read_to_string(std::env::var("TOS_SRT").expect("TOS_SRT")).unwrap();
+        // Corre todo el .srt 3.7 s más tarde.
+        let corrido: String = srt
+            .lines()
+            .map(|l| match l.split_once(" --> ") {
+                Some((a, b)) => {
+                    let f = |x: &str| {
+                        let v = x.replace(',', ".");
+                        let p: Vec<f64> = v.split(':').map(|n| n.parse().unwrap()).collect();
+                        let s = p[0] * 3600.0 + p[1] * 60.0 + p[2] + 3.7;
+                        format!("{:02}:{:02}:{:06.3}", (s / 3600.0) as u32, ((s % 3600.0) / 60.0) as u32, s % 60.0)
+                    };
+                    format!("{} --> {}\n", f(a), f(b))
+                }
+                None => format!("{l}\n"),
+            })
+            .collect();
+        let r = crate::sub_autosync::sincronizar(&[(330.0, pcm)], &corrido).expect("resultado");
+        eprintln!("{r:?}");
+        assert!(r.confiable() && (r.desfase - 3.7).abs() < 0.3, "{r:?}");
     }
 
     #[test]

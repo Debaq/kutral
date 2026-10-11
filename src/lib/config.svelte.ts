@@ -9,6 +9,7 @@ export type SubMode = "dub" | "sub";
 // "auto" = reproduce la mejor al instante; "manual" = siempre muestra el selector.
 export type SourceSelect = "auto" | "manual";
 export type SyncModo = "fuente" | "titulo" | "no";
+export type SyncAuto = "boton" | "siempre" | "no";
 
 export const LANGS: { id: Lang; label: string }[] = [
 	{ id: "es-CL", label: "Español (Chile)" },
@@ -178,6 +179,10 @@ export const config = $state({
 	syncModo: "fuente" as SyncModo,
 	// Sin ajuste propio, usar el del capítulo anterior de la misma fuente.
 	syncCapAnterior: true,
+	// Sincronía por audio (sub_autosync.rs): "boton" = desde el panel de
+	// ajuste; "siempre" = al cargar un subtítulo externo sin sincronía
+	// recordada; "no" = sin la opción.
+	syncAuto: "boton" as SyncAuto,
 	// Preferencia de reproducción: "dub" = audio doblado al español primero;
 	// "sub" = audio original (VO) + subtítulos en español. Ordena las fuentes y
 	// decide qué pista auto-seleccionar en mpv.
@@ -267,6 +272,8 @@ export function loadConfig() {
 	const sync = localStorage.getItem("sub_sync_modo");
 	config.syncModo = sync === "titulo" || sync === "no" ? sync : "fuente";
 	config.syncCapAnterior = localStorage.getItem("sub_sync_cap_anterior") !== "0";
+	const sa = localStorage.getItem("sub_sync_auto");
+	config.syncAuto = sa === "siempre" || sa === "no" ? sa : "boton";
 	const sm = localStorage.getItem("sub_mode");
 	config.subMode = sm === "sub" ? "sub" : "dub";
 	config.verifyEsTracks = localStorage.getItem("verify_es_tracks") === "1";
@@ -359,6 +366,7 @@ export function saveConfig() {
 	localStorage.setItem("subs_por_fuente", config.subsPorFuente ? "1" : "0");
 	localStorage.setItem("sub_sync_modo", config.syncModo);
 	localStorage.setItem("sub_sync_cap_anterior", config.syncCapAnterior ? "1" : "0");
+	localStorage.setItem("sub_sync_auto", config.syncAuto);
 	localStorage.setItem("sub_mode", config.subMode);
 	localStorage.setItem("source_select", config.sourceSelect);
 	localStorage.setItem("verify_es_tracks", config.verifyEsTracks ? "1" : "0");

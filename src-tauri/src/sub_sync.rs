@@ -28,6 +28,10 @@ pub struct SyncCtx {
     pub modo: String,
     /// Sin dato exacto, usar el del capítulo anterior de la misma fuente.
     pub capitulo_anterior: bool,
+    /// Sincronía por audio (sub_autosync.rs): "boton" (en el panel de
+    /// ajuste), "siempre" (al cargar un subtítulo externo sin sincronía
+    /// recordada) o "no".
+    pub auto: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -198,6 +202,7 @@ mod tests {
             release: "Show.S01.1080p.WEB-DL-GRP".into(),
             modo: "fuente".into(),
             capitulo_anterior: true,
+            auto: "boton".into(),
         }
     }
 

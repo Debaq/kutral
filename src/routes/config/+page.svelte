@@ -73,6 +73,7 @@
   let subsPorFuente = $state(config.subsPorFuente);
   let syncModo = $state(config.syncModo);
   let syncCapAnterior = $state(config.syncCapAnterior);
+  let syncAuto = $state(config.syncAuto);
   let syncBorradas = $state(false);
 
   async function borrarSincronias() {
@@ -204,6 +205,7 @@
     subsPorFuente = config.subsPorFuente;
     syncModo = config.syncModo;
     syncCapAnterior = config.syncCapAnterior;
+    syncAuto = config.syncAuto;
     subSize = config.subSize;
     subMode = config.subMode;
     sourceSelect = config.sourceSelect;
@@ -249,6 +251,7 @@
     subsPorFuente !== config.subsPorFuente ||
     syncModo !== config.syncModo ||
     syncCapAnterior !== config.syncCapAnterior ||
+    syncAuto !== config.syncAuto ||
     subSize !== config.subSize ||
     subMode !== config.subMode ||
     sourceSelect !== config.sourceSelect ||
@@ -281,6 +284,7 @@
     config.subsPorFuente = subsPorFuente;
     config.syncModo = syncModo;
     config.syncCapAnterior = syncCapAnterior;
+    config.syncAuto = syncAuto;
     config.subSize = Math.min(200, Math.max(50, Math.round(subSize)));
     config.subMode = subMode;
     config.sourceSelect = sourceSelect;
@@ -1218,6 +1222,22 @@
           <p class="hint">
             En una serie del mismo grupo, el desfase suele repetirse entre
             capítulos. Se avisa en pantalla al aplicarlo.
+          </p>
+          <label class="field">
+            <span class="field-label">Sincronía automática por audio</span>
+            <select data-nav bind:value={syncAuto}>
+              <option value="boton">Con el botón del reproductor (recomendado)</option>
+              <option value="siempre">Siempre al cargar subtítulos externos</option>
+              <option value="no">Desactivada</option>
+            </select>
+          </label>
+          <p class="hint">
+            Compara dónde se habla con dónde aparecen los subtítulos y corrige el
+            desfase. Analiza unos 4 minutos alrededor de donde vas (a veces 8),
+            así que baja esa parte del video otra vez: en 1080p son unos
+            200–400 MB. Si no está seguro, no cambia nada. Solo subtítulos
+            externos: los incluidos en el video ya vienen sincronizados. En el
+            reproductor: Subtítulos → Sincronizar y mover….
           </p>
           <button data-nav type="button" class="btn-ghost" onclick={borrarSincronias}>
             {syncBorradas ? "✓ Sincronías borradas" : "Borrar sincronías guardadas"}

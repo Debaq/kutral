@@ -12,7 +12,10 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-/// Desde este puntaje se considera "mismo release" (grupo + origen).
+/// Desde este puntaje se considera "mismo release" (grupo + origen). Lo usa
+/// el frontend para marcar "≈" (subtitulos.ts lleva el mismo valor); acá
+/// queda como referencia y para los tests.
+#[allow(dead_code)]
 pub const MISMO_RELEASE: i32 = 65;
 
 /// Origen del video. Dos releases de la misma familia suelen compartir

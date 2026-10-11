@@ -52,6 +52,9 @@ mdns-sd = { version = "0.21", default-features = false }
 # debe coincidir con la que usa wry para que los tipos sean compatibles.
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "=2.0.2"
+# VAD de WebRTC (libfvad, BSD-3) para sincronizar subtítulos por audio. Solo
+# Linux mientras la sincronización automática viva en el mpv embebido.
+webrtc-vad = "0.4"
 # GTK3 para embeber el GtkGLArea (render de libmpv) en el mismo toplevel del
 # webview → una sola ventana. Versiones EXACTAS a las que usa tauri/wry para
 # compartir tipos (gtk 0.18.2, glib 0.18.5).
