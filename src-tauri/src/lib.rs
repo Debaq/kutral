@@ -5,6 +5,7 @@ mod awards;
 mod cache;
 mod cast;
 mod creds;
+mod cuenta;
 mod dlna;
 mod kitsu;
 mod kodios;
@@ -498,6 +499,13 @@ pub fn run() {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 10,
+            description: "sincronizacion con cuenta",
+            // Vive en cuenta.rs para que sus tests usen el mismo SQL.
+            sql: cuenta::MIGRACION_SQL,
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -586,6 +594,11 @@ pub fn run() {
             creds::rd_creds_save,
             creds::rd_creds_clear,
             creds::rd_creds_status,
+            cuenta::cuenta_estado,
+            cuenta::cuenta_probar,
+            cuenta::cuenta_entrar,
+            cuenta::cuenta_salir,
+            cuenta::cuenta_sincronizar,
             sistema::audio_get,
             sistema::audio_set,
             sistema::audio_set_mute,

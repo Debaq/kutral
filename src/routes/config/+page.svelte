@@ -60,6 +60,14 @@
   import { navegar, enfocarPrimero } from "$lib/nav";
   import { resetOnboarding } from "$lib/onboarding";
   import RemoteQr from "$lib/RemoteQr.svelte";
+  import {
+    cuenta,
+    cargarCuenta,
+    entrarCuenta,
+    probarServidor,
+    salirCuenta,
+    sincronizarCuenta,
+  } from "$lib/cuenta.svelte";
   import type { RdDeviceStart, WebStatus } from "$lib/tipos";
   let tmdb = $state("");
   // Token pegado a mano (avanzado). NO se persiste en localStorage: se manda al
@@ -508,6 +516,74 @@
     rdOk = false;
   }
 
+  // Cuenta de Kutral (opcional): servidor propio para sincronizar entre equipos.
+  let ctaServidor = $state("");
+  let ctaNombre = $state("");
+  let ctaClave = $state("");
+  let ctaInvitacion = $state("");
+  let ctaCrear = $state(false);
+  let ctaBusy = $state(false);
+  let ctaErr = $state("");
+  let ctaOk = $state("");
+
+  onMount(() => {
+    void cargarCuenta().then(() => (ctaServidor = cuenta.servidor));
+  });
+
+  async function probarCta() {
+    ctaErr = "";
+    ctaOk = "";
+    ctaBusy = true;
+    try {
+      const v = await probarServidor(ctaServidor);
+      ctaOk = `Servidor de Kutral encontrado (versión ${v}).`;
+    } catch (e) {
+      ctaErr = String(e);
+    } finally {
+      ctaBusy = false;
+    }
+  }
+
+  async function entrarCta() {
+    ctaErr = "";
+    ctaOk = "";
+    if (!ctaServidor.trim() || !ctaNombre.trim() || !ctaClave) {
+      ctaErr = "Completa servidor, nombre y contraseña.";
+      return;
+    }
+    if (ctaCrear && !ctaInvitacion.trim()) {
+      ctaErr = "Para crear una cuenta necesitas un código de invitación.";
+      return;
+    }
+    ctaBusy = true;
+    try {
+      await entrarCuenta(ctaServidor, ctaNombre, ctaClave, ctaCrear ? ctaInvitacion : undefined);
+      ctaClave = "";
+      ctaInvitacion = "";
+    } catch (e) {
+      ctaErr = String(e);
+    } finally {
+      ctaBusy = false;
+    }
+  }
+
+  async function salirCta() {
+    ctaBusy = true;
+    try {
+      await salirCuenta();
+    } finally {
+      ctaBusy = false;
+    }
+  }
+
+  function haceCuanto(ms: number): string {
+    if (!ms) return "todavía no";
+    const min = Math.round((Date.now() - ms) / 60_000);
+    if (min < 1) return "hace un momento";
+    if (min < 60) return `hace ${min} min`;
+    return new Date(ms).toLocaleString();
+  }
+
   // OpenSubtitles: vincular / desvincular cuenta gratis (cuota 20/día).
   async function loginOs() {
     osErr = "";
@@ -893,6 +969,59 @@
               <pre class="test-log">{testLog.join("\n")}</pre>
             {/if}
           </div>
+        </section>
+
+        <section class="block">
+          <h2>Cuenta de Kutral <span class="badge-opt">opcional</span></h2>
+          <p class="hint">
+            Sincroniza tus favoritos entre tus equipos usando tu propio servidor.
+            Sin cuenta, Kutral funciona igual, solo en este equipo.
+          </p>
+
+          {#if cuenta.usuario}
+            <div class="rd-linked">
+              <span class="dot ok"></span>
+              <span>Conectado como <strong>{cuenta.usuario}</strong></span>
+              <button data-nav class="btn-sec" onclick={salirCta} disabled={ctaBusy}>Cerrar sesión</button>
+            </div>
+            <p class="hint" style="margin: 10px 0 8px;">
+              {cuenta.servidor} · sincronizado {haceCuanto(cuenta.ultimaSync)}
+            </p>
+            <button data-nav class="btn-sec" onclick={() => void sincronizarCuenta()} disabled={cuenta.sincronizando}>
+              {cuenta.sincronizando ? "Sincronizando…" : "Sincronizar ahora"}
+            </button>
+            {#if cuenta.error}<p class="err">{cuenta.error}</p>{/if}
+          {:else}
+            {#if cuenta.error}<p class="err" style="margin: 0 0 10px;">{cuenta.error}</p>{/if}
+            <div class="key-row">
+              <input data-nav
+                bind:value={ctaServidor}
+                placeholder="https://mi-servidor.cl/kutral"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <button data-nav class="btn-sec" onclick={probarCta} disabled={ctaBusy || !ctaServidor.trim()}>
+                Probar
+              </button>
+            </div>
+            <div class="key-row" style="margin-top: 8px;">
+              <input data-nav bind:value={ctaNombre} placeholder="nombre" autocomplete="off" spellcheck="false" />
+              <input data-nav type="password" bind:value={ctaClave} placeholder="contraseña" autocomplete="off" />
+            </div>
+            {#if ctaCrear}
+              <div class="key-row" style="margin-top: 8px;">
+                <input data-nav bind:value={ctaInvitacion} placeholder="código de invitación (XXXXX-XXXXX)" autocomplete="off" spellcheck="false" />
+              </div>
+            {/if}
+            <button data-nav class="btn-link" style="margin-top: 10px;" onclick={entrarCta} disabled={ctaBusy}>
+              {ctaBusy ? "Conectando…" : ctaCrear ? "Crear cuenta" : "Entrar"}
+            </button>
+            <button data-nav class="link-tiny" onclick={() => (ctaCrear = !ctaCrear)}>
+              {ctaCrear ? "Ya tengo cuenta" : "Tengo una invitación: crear cuenta"}
+            </button>
+          {/if}
+          {#if ctaErr}<p class="err">{ctaErr}</p>{/if}
+          {#if ctaOk}<p class="ok">{ctaOk}</p>{/if}
         </section>
 
         <section class="block">

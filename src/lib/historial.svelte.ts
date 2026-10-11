@@ -366,6 +366,12 @@ export async function borrarProgreso(
   }
 }
 
+// Con cuenta, avisa que hay algo para subir (cuenta.svelte.ts escucha). Es un
+// evento y no un import para no atar el historial a la cuenta.
+function avisarCambio(): void {
+  window.dispatchEvent(new Event("kutral:cambio-local"));
+}
+
 export function esFavorito(clave: string): boolean {
   return !!clave && clave in historial.favoritos;
 }
@@ -382,6 +388,7 @@ export async function alternarFavorito(meta: MediaMeta): Promise<boolean> {
       const copia = { ...historial.favoritos };
       delete copia[meta.clave];
       historial.favoritos = copia;
+      avisarCambio();
       return false;
     }
     const fila: FilaFavorito = {
@@ -399,6 +406,7 @@ export async function alternarFavorito(meta: MediaMeta): Promise<boolean> {
       [fila.imdb_id, fila.tmdb_id, fila.media_type, fila.title, fila.poster_path, fila.added_at],
     );
     historial.favoritos = { ...historial.favoritos, [fila.imdb_id]: fila };
+    avisarCambio();
     return true;
   } catch (e) {
     console.warn("[historial] error en favorito:", e);

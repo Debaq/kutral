@@ -17,6 +17,7 @@
   import { initTorrentSession, startQueuePoll, stopQueuePoll } from "$lib/torrents.svelte";
   import { setConcurrenciaScreening } from "$lib/screening.svelte";
   import { cargarHistorial } from "$lib/historial.svelte";
+  import { iniciarCuenta } from "$lib/cuenta.svelte";
   import { cargarDescargas } from "$lib/descargas.svelte";
   import { cola, cargarCola, arrancarMotor } from "$lib/colaDescargas.svelte";
   import { ayuda } from "$lib/atajos/store.svelte";
@@ -128,7 +129,8 @@
     cargarCast();
     initDetection();
     // Historial + favoritos a memoria: el grid pinta ticks sin query por card.
-    void cargarHistorial();
+    // Después, con la DB ya migrada, la sincronización con la cuenta (si hay).
+    void cargarHistorial().then(iniciarCuenta);
     // Qué películas ya están bajadas en este equipo: la ficha lo muestra y
     // Descubrir las reproduce sin salir a la red.
     void cargarDescargas();
