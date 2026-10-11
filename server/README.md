@@ -1,6 +1,7 @@
 # Servidor de cuentas de Kutral
 
-API JSON (sin páginas web) para sincronizar Kutral entre equipos. Es opcional:
+API JSON para sincronizar Kutral entre equipos, más un panel web del
+administrador en `/admin`. Es opcional:
 Kutral funciona sin cuenta. Hoy sincroniza los favoritos; historial, listas,
 perfiles, amigos y llavero compartido vienen después.
 
@@ -12,13 +13,16 @@ perfiles, amigos y llavero compartido vienen después.
 ## Instalar
 
 1. Copia la carpeta `server/` al servidor, por ejemplo en `/srv/kutral`.
-2. Solo `public/` debe quedar expuesta a la web. `lib.php`, `admin.php`,
-   `config.php` y `datos/` quedan fuera.
+2. Solo `public/` debe quedar expuesta a la web. `lib.php`, `panel.php`,
+   `admin.php`, `config.php` y `datos/` quedan fuera.
 3. Opcional: `cp config.example.php config.php` y ajusta.
 4. El usuario de PHP (`www-data`, `http`…) necesita escribir en `datos/`:
    `mkdir datos && chown www-data: datos && chmod 700 datos`.
-5. Crea una invitación: `sudo -u www-data php admin.php invitar`.
-6. En Kutral: Configuración → Cuenta de Kutral → URL del servidor → **Probar**,
+5. Abre `https://tu-servidor/kutral/admin` y elige la contraseña del
+   administrador. **Hazlo apenas lo publiques**: mientras no tenga contraseña,
+   el primero que abra esa página se queda con el panel.
+6. En el panel, crea una invitación.
+7. En Kutral: Configuración → Cuenta de Kutral → URL del servidor → **Probar**,
    y después "Tengo una invitación: crear cuenta".
 
 ### nginx
@@ -48,12 +52,20 @@ Funciona igual poniendo en Kutral la URL hasta `index.php`:
 
 ## Administrar
 
+Desde el panel web (`/admin`): crear y anular invitaciones, crear usuarios sin
+invitación, cambiarles la contraseña, cerrar su sesión en todos sus equipos y
+borrarlos. La sesión del panel vence tras 2 horas sin uso.
+
+Lo mismo por consola, que además sirve para recuperar el panel si se olvida
+su contraseña:
+
 ```
 php admin.php invitar [cantidad]   códigos de registro de un solo uso
 php admin.php invitaciones         pendientes y usadas
 php admin.php usuarios             usuarios con sus equipos
 php admin.php clave <nombre>       cambia la contraseña y cierra todas sus sesiones
 php admin.php borrar <nombre>      borra el usuario y todos sus datos
+php admin.php clave-admin          cambia la contraseña del panel web
 ```
 
 Respaldo: copiar `datos/kutral.sqlite` (con el servidor quieto, o con

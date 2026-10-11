@@ -6,6 +6,10 @@
 //   php admin.php usuarios             usuarios con sus equipos
 //   php admin.php clave <nombre>       cambia la contraseña (la pide por consola)
 //   php admin.php borrar <nombre>      borra el usuario y todos sus datos
+//   php admin.php clave-admin          cambia la contraseña del panel web
+//
+// Lo mismo se hace desde el panel web en /admin; esto sirve para recuperar
+// el acceso al panel si se olvida su contraseña.
 
 declare(strict_types=1);
 
@@ -15,11 +19,6 @@ if (PHP_SAPI !== 'cli') {
 }
 
 require __DIR__ . '/lib.php';
-
-function fecha(?int $ms): string
-{
-    return $ms ? date('Y-m-d H:i', intdiv($ms, 1000)) : '-';
-}
 
 function pedir_clave(): string
 {
@@ -36,11 +35,7 @@ $cmd = $argv[1] ?? '';
 
 switch ($cmd) {
     case 'invitar':
-        $n = max(1, (int) ($argv[2] ?? 1));
-        $st = $pdo->prepare('INSERT INTO invitaciones (codigo, creada) VALUES (?, ?)');
-        for ($i = 0; $i < $n; $i++) {
-            $codigo = nuevo_codigo();
-            $st->execute([$codigo, ahora_ms()]);
+        foreach (crear_invitaciones($pdo, max(1, (int) ($argv[2] ?? 1))) as $codigo) {
             echo $codigo, "\n";
         }
         break;
@@ -73,26 +68,29 @@ switch ($cmd) {
             fwrite(STDERR, "Mínimo 8 caracteres.\n");
             exit(1);
         }
-        $st = $pdo->prepare('UPDATE usuarios SET pass_hash = ? WHERE nombre = ?');
-        $st->execute([password_hash($clave, PASSWORD_DEFAULT), $nombre]);
-        if ($st->rowCount() === 0) {
+        if (!cambiar_clave($pdo, $nombre, $clave)) {
             fwrite(STDERR, "No existe '$nombre'.\n");
             exit(1);
         }
-        // Cambiar la contraseña cierra la sesión en todos sus equipos.
-        $pdo->prepare('DELETE FROM equipos WHERE usuario_id = (SELECT id FROM usuarios WHERE nombre = ?)')
-            ->execute([$nombre]);
         echo "Listo. Se cerró la sesión en todos sus equipos.\n";
         break;
 
     case 'borrar':
         $nombre = strtolower($argv[2] ?? '');
-        $st = $pdo->prepare('DELETE FROM usuarios WHERE nombre = ?');
-        $st->execute([$nombre]);
-        echo $st->rowCount() ? "Borrado '$nombre'.\n" : "No existe '$nombre'.\n";
+        echo borrar_usuario($pdo, $nombre) ? "Borrado '$nombre'.\n" : "No existe '$nombre'.\n";
+        break;
+
+    case 'clave-admin':
+        $clave = pedir_clave();
+        if (largo($clave) < 8) {
+            fwrite(STDERR, "Mínimo 8 caracteres.\n");
+            exit(1);
+        }
+        guardar_clave_admin($pdo, $clave);
+        echo "Listo. Se cerraron las sesiones abiertas del panel.\n";
         break;
 
     default:
-        fwrite(STDERR, "Uso: php admin.php invitar [n] | invitaciones | usuarios | clave <nombre> | borrar <nombre>\n");
+        fwrite(STDERR, "Uso: php admin.php invitar [n] | invitaciones | usuarios | clave <nombre> | borrar <nombre> | clave-admin\n");
         exit(1);
 }

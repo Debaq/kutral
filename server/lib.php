@@ -109,6 +109,20 @@ function migrar(PDO $pdo): void
             );
             CREATE INDEX idx_intentos ON intentos(ip, momento);
         ",
+        2 => "
+            -- Valores sueltos del servidor. Hoy: 'admin_hash', la contraseña
+            -- del panel web (sin fila = falta la instalación inicial).
+            CREATE TABLE ajustes (
+                clave TEXT PRIMARY KEY,
+                valor TEXT NOT NULL
+            );
+
+            -- Sesiones del panel web, igual que equipos: solo el sha256.
+            CREATE TABLE admin_sesiones (
+                token_hash TEXT PRIMARY KEY,
+                ultimo_uso INTEGER NOT NULL
+            );
+        ",
     ];
     $actual = (int) $pdo->query('PRAGMA user_version')->fetchColumn();
     foreach ($migraciones as $version => $sql) {
@@ -164,4 +178,62 @@ function nuevo_codigo(): string
 function largo(string $s): int
 {
     return preg_match_all('/./su', $s) ?: strlen($s);
+}
+
+function fecha(?int $ms): string
+{
+    return $ms ? date('Y-m-d H:i', intdiv($ms, 1000)) : '-';
+}
+
+/** @return list<string> */
+function crear_invitaciones(PDO $pdo, int $n): array
+{
+    $st = $pdo->prepare('INSERT INTO invitaciones (codigo, creada) VALUES (?, ?)');
+    $codigos = [];
+    for ($i = 0; $i < $n; $i++) {
+        $codigos[] = $codigo = nuevo_codigo();
+        $st->execute([$codigo, ahora_ms()]);
+    }
+    return $codigos;
+}
+
+// Cambiar la contraseña cierra la sesión en todos sus equipos.
+function cambiar_clave(PDO $pdo, string $nombre, string $clave): bool
+{
+    $st = $pdo->prepare('UPDATE usuarios SET pass_hash = ? WHERE nombre = ?');
+    $st->execute([password_hash($clave, PASSWORD_DEFAULT), $nombre]);
+    if ($st->rowCount() === 0) {
+        return false;
+    }
+    cerrar_sesiones($pdo, $nombre);
+    return true;
+}
+
+function cerrar_sesiones(PDO $pdo, string $nombre): void
+{
+    $pdo->prepare('DELETE FROM equipos WHERE usuario_id = (SELECT id FROM usuarios WHERE nombre = ?)')
+        ->execute([$nombre]);
+}
+
+function borrar_usuario(PDO $pdo, string $nombre): bool
+{
+    $st = $pdo->prepare('DELETE FROM usuarios WHERE nombre = ?');
+    $st->execute([$nombre]);
+    return $st->rowCount() > 0;
+}
+
+function clave_admin(PDO $pdo): ?string
+{
+    $v = $pdo->query("SELECT valor FROM ajustes WHERE clave = 'admin_hash'")->fetchColumn();
+    return $v === false ? null : $v;
+}
+
+// También cierra todas las sesiones del panel.
+function guardar_clave_admin(PDO $pdo, string $clave): void
+{
+    $pdo->prepare(
+        "INSERT INTO ajustes (clave, valor) VALUES ('admin_hash', ?)
+         ON CONFLICT (clave) DO UPDATE SET valor = excluded.valor"
+    )->execute([password_hash($clave, PASSWORD_DEFAULT)]);
+    $pdo->exec('DELETE FROM admin_sesiones');
 }

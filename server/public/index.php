@@ -1,5 +1,6 @@
 <?php
-// API JSON de cuentas de Kutral. Único punto de entrada.
+// API JSON de cuentas de Kutral. Único punto de entrada; /admin es el panel
+// web del administrador (panel.php).
 //
 // Funciona con o sin reescritura de URLs:
 //   https://servidor/kutral/sync            (con rewrite, ver README.md)
@@ -336,6 +337,10 @@ try {
         responder(200, ping());
     }
     $pdo = db();
+    if ($r === '/admin') {
+        require __DIR__ . '/../panel.php';
+        panel($pdo, $metodo);
+    }
     $res = match (true) {
         $metodo === 'POST' && $r === '/registro' => registro($pdo, cuerpo()),
         $metodo === 'POST' && $r === '/login' => login($pdo, cuerpo()),
