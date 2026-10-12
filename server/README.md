@@ -7,7 +7,7 @@ perfiles, amigos y llavero compartido vienen después.
 
 ## Requisitos
 
-- PHP 8.1 o superior con `pdo_sqlite` (en Debian/Ubuntu: `php-sqlite3`; en Arch: `php-sqlite`).
+- PHP 7.4 o superior (también 8.x) con `pdo_sqlite` (en Debian/Ubuntu: `php-sqlite3`; en Arch: `php-sqlite`).
 - HTTPS. Kutral solo acepta `http://` para IPs de la red local.
 
 ## Instalar
@@ -50,8 +50,6 @@ URL en Kutral: `https://tu-servidor/kutral`.
 Si no puedes dejar nada fuera de la carpeta web, sube `server/` entera, por
 ejemplo como `public_html/kutral/`. El `.htaccess` de la raíz manda todo a
 `public/index.php`, así `lib.php`, `config.php` y `datos/` no se sirven.
-Elige **PHP 8.1 o superior** para el dominio en el panel del hosting
-("Select PHP Version" / "MultiPHP Manager"); con 7.4 da "Parse error".
 
 URL en Kutral: `https://tu-servidor/kutral`.
 

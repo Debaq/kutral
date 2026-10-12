@@ -1,12 +1,26 @@
 <?php
 // Servidor de cuentas de Kutral: base de datos, esquema y utilidades.
 //
-// Sin frameworks ni Composer: PHP 8.1+ con pdo_sqlite. Kutral habla con esto
+// Sin frameworks ni Composer: PHP 7.4+ con pdo_sqlite. Kutral habla con esto
 // por JSON; no hay frontend. Ver README.md para instalarlo.
 
 declare(strict_types=1);
 
 const VERSION_API = 1;
+
+// PHP 7.4 no las trae (son de 8.0).
+if (!function_exists('str_starts_with')) {
+    function str_starts_with(string $s, string $inicio): bool
+    {
+        return strncmp($s, $inicio, strlen($inicio)) === 0;
+    }
+}
+if (!function_exists('str_ends_with')) {
+    function str_ends_with(string $s, string $fin): bool
+    {
+        return $fin === '' || substr($s, -strlen($fin)) === $fin;
+    }
+}
 
 function config(): array
 {
@@ -232,8 +246,7 @@ function clave_admin(PDO $pdo): ?string
 function guardar_clave_admin(PDO $pdo, string $clave): void
 {
     $pdo->prepare(
-        "INSERT INTO ajustes (clave, valor) VALUES ('admin_hash', ?)
-         ON CONFLICT (clave) DO UPDATE SET valor = excluded.valor"
+        "INSERT OR REPLACE INTO ajustes (clave, valor) VALUES ('admin_hash', ?)"
     )->execute([password_hash($clave, PASSWORD_DEFAULT)]);
     $pdo->exec('DELETE FROM admin_sesiones');
 }

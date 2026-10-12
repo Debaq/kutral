@@ -23,7 +23,7 @@ const PANEL_AVISOS = [
     'mi_clave' => 'Tu contraseña cambió. Las demás sesiones del panel se cerraron.',
 ];
 
-function h(mixed $s): string
+function h($s): string
 {
     return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
 }
@@ -211,7 +211,7 @@ function panel_post(PDO $pdo, string $accion): string
 
 // ─── Páginas ────────────────────────────────────────────────────────────────
 
-function panel(PDO $pdo, string $metodo): never
+function panel(PDO $pdo, string $metodo): void
 {
     $error = null;
     if ($metodo === 'POST') {
@@ -226,7 +226,7 @@ function panel(PDO $pdo, string $metodo): never
         throw new Fallo(405, "no existe $metodo /admin");
     }
 
-    $estado = $error?->estado ?? 200;
+    $estado = $error ? $error->estado : 200;
     $mensaje = $error ? ucfirst($error->getMessage()) : null;
     if (clave_admin($pdo) === null) {
         panel_html($estado, 'Instalar', vista_instalar($mensaje));
@@ -240,7 +240,7 @@ function panel(PDO $pdo, string $metodo): never
     panel_html($estado, 'Administrar', vista_panel($pdo, $token, $mensaje, $aviso));
 }
 
-function panel_html(int $estado, string $titulo, string $cuerpo): never
+function panel_html(int $estado, string $titulo, string $cuerpo): void
 {
     http_response_code($estado);
     header('Content-Type: text/html; charset=utf-8');

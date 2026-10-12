@@ -12,13 +12,17 @@ require __DIR__ . '/../lib.php';
 
 final class Fallo extends Exception
 {
-    public function __construct(public int $estado, string $mensaje)
+    /** @var int */
+    public $estado;
+
+    public function __construct(int $estado, string $mensaje)
     {
         parent::__construct($mensaje);
+        $this->estado = $estado;
     }
 }
 
-function responder(int $estado, array $cuerpo): never
+function responder(int $estado, array $cuerpo): void
 {
     http_response_code($estado);
     header('Content-Type: application/json; charset=utf-8');
@@ -120,7 +124,7 @@ function autenticar(PDO $pdo): array
     return ['usuario' => (int) $fila['usuario_id'], 'equipo' => (int) $fila['id']];
 }
 
-function perfil_propio(PDO $pdo, int $usuario, mixed $perfil): int
+function perfil_propio(PDO $pdo, int $usuario, $perfil): int
 {
     $st = $pdo->prepare('SELECT id FROM perfiles WHERE id = ? AND usuario_id = ?');
     $st->execute([(int) $perfil, $usuario]);
@@ -283,11 +287,8 @@ function subir(PDO $pdo, array $s, array $b): array
     }
     $actual = $pdo->prepare('SELECT * FROM registros WHERE perfil_id = ? AND coleccion = ? AND clave = ?');
     $guardar = $pdo->prepare(
-        'INSERT INTO registros (perfil_id, coleccion, clave, datos, borrado, actualizado, seq)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (perfil_id, coleccion, clave) DO UPDATE SET
-           datos = excluded.datos, borrado = excluded.borrado,
-           actualizado = excluded.actualizado, seq = excluded.seq'
+        'INSERT OR REPLACE INTO registros (perfil_id, coleccion, clave, datos, borrado, actualizado, seq)
+         VALUES (?, ?, ?, ?, ?, ?, ?)'
     );
     $resultados = [];
     $pdo->exec('BEGIN IMMEDIATE');
@@ -346,17 +347,24 @@ try {
         require __DIR__ . '/../panel.php';
         panel($pdo, $metodo);
     }
-    $res = match (true) {
-        $metodo === 'POST' && $r === '/registro' => registro($pdo, cuerpo()),
-        $metodo === 'POST' && $r === '/login' => login($pdo, cuerpo()),
-        $metodo === 'POST' && $r === '/salir' => quitar_equipo($pdo, $s = autenticar($pdo), $s['equipo']),
-        $metodo === 'GET' && $r === '/yo' => yo($pdo, autenticar($pdo)),
-        $metodo === 'DELETE' && preg_match('#^/equipos/(\d+)$#', $r, $m) === 1
-            => quitar_equipo($pdo, autenticar($pdo), (int) $m[1]),
-        $metodo === 'GET' && $r === '/sync' => bajar($pdo, autenticar($pdo)),
-        $metodo === 'POST' && $r === '/sync' => subir($pdo, autenticar($pdo), cuerpo()),
-        default => throw new Fallo(404, "no existe $metodo $r"),
-    };
+    if ($metodo === 'POST' && $r === '/registro') {
+        $res = registro($pdo, cuerpo());
+    } elseif ($metodo === 'POST' && $r === '/login') {
+        $res = login($pdo, cuerpo());
+    } elseif ($metodo === 'POST' && $r === '/salir') {
+        $s = autenticar($pdo);
+        $res = quitar_equipo($pdo, $s, $s['equipo']);
+    } elseif ($metodo === 'GET' && $r === '/yo') {
+        $res = yo($pdo, autenticar($pdo));
+    } elseif ($metodo === 'DELETE' && preg_match('#^/equipos/(\d+)$#', $r, $m) === 1) {
+        $res = quitar_equipo($pdo, autenticar($pdo), (int) $m[1]);
+    } elseif ($metodo === 'GET' && $r === '/sync') {
+        $res = bajar($pdo, autenticar($pdo));
+    } elseif ($metodo === 'POST' && $r === '/sync') {
+        $res = subir($pdo, autenticar($pdo), cuerpo());
+    } else {
+        throw new Fallo(404, "no existe $metodo $r");
+    }
     responder(200, $res);
 } catch (Fallo $e) {
     responder($e->estado, ['error' => $e->getMessage()]);
