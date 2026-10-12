@@ -34,6 +34,11 @@ function ruta(): string
     }
     $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
     $base = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '')), '/');
+    // Con server/.htaccess el script es /kutral/public/index.php pero la URL
+    // pedida es /kutral/admin: la base es la carpeta de arriba.
+    if (str_ends_with($base, '/public') && !str_starts_with($path, $base . '/')) {
+        $base = substr($base, 0, -strlen('/public'));
+    }
     if ($base !== '' && str_starts_with($path, $base)) {
         $path = substr($path, strlen($base));
     }

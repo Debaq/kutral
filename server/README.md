@@ -45,6 +45,16 @@ URL en Kutral: `https://tu-servidor/kutral`.
 `public/.htaccess` ya redirige todo a `index.php` y conserva el header
 `Authorization`. Necesita `mod_rewrite` y `AllowOverride All` en esa carpeta.
 
+### Hosting compartido (cPanel, LiteSpeed)
+
+Si no puedes dejar nada fuera de la carpeta web, sube `server/` entera, por
+ejemplo como `public_html/kutral/`. El `.htaccess` de la raíz manda todo a
+`public/index.php`, así `lib.php`, `config.php` y `datos/` no se sirven.
+Elige **PHP 8.1 o superior** para el dominio en el panel del hosting
+("Select PHP Version" / "MultiPHP Manager"); con 7.4 da "Parse error".
+
+URL en Kutral: `https://tu-servidor/kutral`.
+
 ### Sin reescritura de URLs
 
 Funciona igual poniendo en Kutral la URL hasta `index.php`:

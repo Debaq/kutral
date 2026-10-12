@@ -1,0 +1,9 @@
+# Apache/LiteSpeed cuando se sube la carpeta server/ entera bajo la web
+# (hosting compartido): todo va a public/index.php, así lib.php, config.php,
+# panel.php y datos/ nunca se sirven directo.
+Options -Indexes
+RewriteEngine On
+RewriteCond %{HTTP:Authorization} .
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+RewriteRule ^public/index\.php$ - [L]
+RewriteRule ^ public/index.php [QSA,L]
