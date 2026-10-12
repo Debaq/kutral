@@ -1046,6 +1046,50 @@ pub async fn cuenta_recomendacion_quitar(app: tauri::AppHandle, id: i64) -> Resu
     con_sesion(&app, reqwest::Method::DELETE, &format!("/recomendaciones/{id}"), None).await
 }
 
+// ─── Listas compartidas ─────────────────────────────────────────────────────
+
+fn codigo_valido(codigo: &str) -> Result<String, String> {
+    let c = codigo.trim().to_uppercase();
+    let ok = c.len() == 11
+        && c.char_indices().all(|(i, ch)| if i == 5 { ch == '-' } else { ch.is_ascii_alphanumeric() });
+    if ok {
+        Ok(c)
+    } else {
+        Err("el código tiene la forma XXXXX-XXXXX".into())
+    }
+}
+
+/// Las listas que esta cuenta comparte: `{publicas: [{codigo, lista_id, nombre, actualizada}]}`.
+#[tauri::command]
+pub async fn cuenta_mis_publicas(app: tauri::AppHandle) -> Result<Value, String> {
+    con_sesion(&app, reqwest::Method::GET, "/listas-publicas", None).await
+}
+
+/// Publica o actualiza una lista; el código se mantiene.
+#[tauri::command]
+pub async fn cuenta_publicar_lista(
+    app: tauri::AppHandle,
+    lista_id: String,
+    nombre: String,
+    items: Value,
+) -> Result<Value, String> {
+    let cuerpo = json!({ "lista_id": lista_id, "nombre": nombre, "items": items });
+    con_sesion(&app, reqwest::Method::POST, "/listas-publicas", Some(&cuerpo)).await
+}
+
+#[tauri::command]
+pub async fn cuenta_despublicar_lista(app: tauri::AppHandle, codigo: String) -> Result<Value, String> {
+    let c = codigo_valido(&codigo)?;
+    con_sesion(&app, reqwest::Method::DELETE, &format!("/listas-publicas/{c}"), None).await
+}
+
+/// Lista compartida por código: `{codigo, nombre, de, items}`.
+#[tauri::command]
+pub async fn cuenta_lista_publica(app: tauri::AppHandle, codigo: String) -> Result<Value, String> {
+    let c = codigo_valido(&codigo)?;
+    con_sesion(&app, reqwest::Method::GET, &format!("/listas-publicas/{c}"), None).await
+}
+
 // Prueba de punta a punta contra un servidor real (server/ del repo):
 //
 //   php -S 127.0.0.1:18790 -t server/public server/public/index.php
@@ -1238,6 +1282,14 @@ mod tests {
         fav(&a, "tt1", "Uno");
         quitar(&a, "tt1");
         assert_eq!(pendientes_de(&a), 0);
+    }
+
+    #[test]
+    fn codigos_de_lista() {
+        assert_eq!(codigo_valido(" r9nal-npjdr ").unwrap(), "R9NAL-NPJDR");
+        assert!(codigo_valido("R9NAL/NPJDR").is_err());
+        assert!(codigo_valido("R9NAL-NPJD").is_err());
+        assert!(codigo_valido("../../admin").is_err());
     }
 
     #[test]

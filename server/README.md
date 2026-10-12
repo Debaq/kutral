@@ -87,7 +87,7 @@ Los errores responden `{"error": "mensaje"}` con su código HTTP.
 
 | Ruta | Qué hace |
 |---|---|
-| `GET /ping` | `{"servicio":"kutral-cuentas","version":3}` |
+| `GET /ping` | `{"servicio":"kutral-cuentas","version":4}` |
 | `POST /registro` | `{invitacion, nombre, clave, equipo}` → `{token, usuario, perfiles}` |
 | `POST /login` | `{nombre, clave, equipo}` → `{token, usuario, perfiles}` |
 | 🔒 `POST /salir` | Cierra la sesión de este equipo |
@@ -99,9 +99,13 @@ Los errores responden `{"error": "mensaje"}` con su código HTTP.
 | 🔒 `POST /amigos` | `{nombre}`: pide la amistad, o la acepta si el otro ya la pidió |
 | 🔒 `DELETE /amigos/{nombre}` | Rechaza, cancela o deja de ser amigos |
 | 🔒 `GET /recomendaciones` | Bandeja (últimas 100): `[{id, de, datos, nota, creada, vista}]` |
-| 🔒 `POST /recomendaciones` | `{para: [nombres], datos: {tmdb_id, media_type, title, ...}, nota}`; solo a amigos |
+| 🔒 `POST /recomendaciones` | `{para: [nombres], datos: {tmdb_id, media_type, title, ...}, nota}`; solo a amigos. Una lista viaja como `datos: {tipo: "lista", codigo, nombre, cantidad}` |
 | 🔒 `POST /recomendaciones/vistas` | Marca toda la bandeja como vista |
 | 🔒 `DELETE /recomendaciones/{id}` | Quita una de tu bandeja |
+| 🔒 `GET /listas-publicas` | Las listas que compartes: `{publicas: [{codigo, lista_id, nombre, actualizada}]}` |
+| 🔒 `POST /listas-publicas` | `{lista_id, nombre, items: [{clave, tmdb_id, media_type, title, poster_path}]}` → `{codigo, ...}`; volver a subirla conserva el código |
+| 🔒 `GET /listas-publicas/{codigo}` | Cualquier usuario: `{codigo, nombre, de, items}`. Los códigos fallidos cuentan para el freno de intentos |
+| 🔒 `DELETE /listas-publicas/{codigo}` | Deja de compartirla (solo el dueño) |
 | 🔒 `GET /llavero` | `{mias: {rd: {creada, prestada_a}}, prestadas: [{servicio, de, desde}]}` |
 | 🔒 `POST /llavero/rd` | `{client_id, client_secret, refresh_token, access_token, expira}`: la vinculación para prestar |
 | 🔒 `DELETE /llavero/rd` | Borra esa vinculación y todos sus préstamos |

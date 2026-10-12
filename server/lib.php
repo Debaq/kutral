@@ -6,7 +6,7 @@
 
 declare(strict_types=1);
 
-const VERSION_API = 3;
+const VERSION_API = 4;
 
 // PHP 7.4 no las trae (son de 8.0).
 if (!function_exists('str_starts_with')) {
@@ -194,6 +194,20 @@ function migrar(PDO $pdo): void
                 PRIMARY KEY (llave, para)
             );
             CREATE INDEX idx_prestamos_para ON prestamos(para);
+        ",
+        5 => "
+            -- Listas compartidas: una copia de la lista del dueño, que su
+            -- equipo vuelve a subir cuando la lista cambia. Quien tenga el
+            -- código (y cuenta en este servidor) puede importarla.
+            CREATE TABLE listas_publicas (
+                codigo TEXT PRIMARY KEY,
+                dueno INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+                lista_id TEXT NOT NULL,
+                nombre TEXT NOT NULL,
+                items TEXT NOT NULL,
+                actualizada INTEGER NOT NULL,
+                UNIQUE (dueno, lista_id)
+            );
         ",
     ];
     $actual = (int) $pdo->query('PRAGMA user_version')->fetchColumn();

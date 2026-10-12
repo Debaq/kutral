@@ -8,7 +8,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { cargarHistorial } from "$lib/historial.svelte";
-import { cargarListas } from "$lib/listas.svelte";
+import { cargarListas, crearLista, agregarALista, itemsDe, nombreDe, listas } from "$lib/listas.svelte";
 import { notify } from "$lib/notifStore.svelte";
 import { refreshRdLinked } from "$lib/config.svelte";
 import type { RdDeviceStart } from "$lib/tipos";
@@ -34,10 +34,30 @@ export type TituloRecomendado = {
   year?: number | null;
 };
 
+/** Una lista compartida que llega a la bandeja: viaja como su código. */
+export type ListaRecomendada = {
+  tipo: "lista";
+  codigo: string;
+  nombre: string;
+  cantidad: number;
+  poster_path?: string | null;
+};
+
+export type ListaCompartida = { codigo: string; lista_id: string; nombre: string; actualizada: number };
+
+export type ListaPublica = ListaCompartida & {
+  de: string;
+  items: { clave: string; tmdb_id: number; media_type: string; title: string; poster_path: string | null }[];
+};
+
+export function esLista(d: TituloRecomendado | ListaRecomendada): d is ListaRecomendada {
+  return (d as ListaRecomendada).tipo === "lista";
+}
+
 export type Recomendacion = {
   id: number;
   de: string;
-  datos: TituloRecomendado;
+  datos: TituloRecomendado | ListaRecomendada;
   nota: string | null;
   creada: number;
   vista: boolean;
@@ -66,6 +86,8 @@ export const social = $state({
   recibidas: [] as Amigo[],
   enviadas: [] as Amigo[],
   recomendaciones: [] as Recomendacion[],
+  /** Las listas propias que se comparten por código. */
+  publicas: [] as ListaCompartida[],
   error: "",
 });
 
@@ -112,8 +134,10 @@ export async function cargarCuenta(): Promise<void> {
 export async function sincronizarCuenta(): Promise<void> {
   if (!cuenta.usuario || cuenta.sincronizando) return;
   cuenta.sincronizando = true;
+  let ok = false;
   try {
     const r = await invoke<ResultadoSync>("cuenta_sincronizar");
+    ok = true;
     cuenta.error = "";
     if (r.bajados > 0) {
       await cargarHistorial();
@@ -127,6 +151,9 @@ export async function sincronizarCuenta(): Promise<void> {
     await cargarCuenta();
   }
   await cargarSocial();
+  // Solo recién sincronizado: así las listas de aquí están al día y no se
+  // publica una versión vieja encima de la de otro equipo.
+  if (ok) await actualizarPublicadas();
 }
 
 // ─── Amigos y recomendaciones ───────────────────────────────────────────────
@@ -140,6 +167,7 @@ function vaciarSocial(): void {
   social.recibidas = [];
   social.enviadas = [];
   social.recomendaciones = [];
+  social.publicas = [];
   social.error = "";
 }
 
@@ -156,7 +184,8 @@ function avisarNuevas(recs: Recomendacion[]): void {
   localStorage.setItem(ULTIMA_AVISADA, String(Math.max(...nuevas.map((r) => r.id))));
   if (nuevas.length === 1) {
     const r = nuevas[0];
-    notify("info", `${r.de} te recomendó ${r.datos.title}`, r.nota ?? "Está en Lo que viste → De amigos.");
+    const que = esLista(r.datos) ? `la lista «${r.datos.nombre}»` : r.datos.title;
+    notify("info", `${r.de} te recomendó ${que}`, r.nota ?? "Está en Lo que viste → De amigos.");
   } else {
     notify("info", `Tienes ${nuevas.length} recomendaciones nuevas`, "Están en Lo que viste → De amigos.");
   }
@@ -171,12 +200,128 @@ export async function cargarSocial(): Promise<void> {
     aplicarAmigos(await invoke<Amigos>("cuenta_amigos"));
     const r = await invoke<{ recomendaciones: Recomendacion[] }>("cuenta_recomendaciones");
     social.recomendaciones = r.recomendaciones;
+    social.publicas = (await invoke<{ publicas: ListaCompartida[] }>("cuenta_mis_publicas")).publicas;
     social.error = "";
     avisarNuevas(r.recomendaciones);
   } catch (e) {
     social.error = String(e);
   }
   await cargarLlavero();
+}
+
+// ─── Listas compartidas ─────────────────────────────────────────────────────
+
+// lista_id → huella (nombre + títulos en orden) de lo último que se publicó
+// desde este equipo. Si la lista cambió, se vuelve a publicar al sincronizar.
+const HUELLAS = "kutral_listas_publicadas";
+
+function huella(listaId: string): string {
+  return JSON.stringify([nombreDe(listaId), ...itemsDe(listaId).map((it) => it.clave)]);
+}
+
+function huellas(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(HUELLAS) ?? "{}");
+  } catch {
+    return {};
+  }
+}
+
+function anotarHuella(listaId: string, h: string | null): void {
+  const hs = huellas();
+  if (h === null) delete hs[listaId];
+  else hs[listaId] = h;
+  localStorage.setItem(HUELLAS, JSON.stringify(hs));
+}
+
+export function codigoDe(listaId: string): string | null {
+  return social.publicas.find((p) => p.lista_id === listaId)?.codigo ?? null;
+}
+
+async function publicar(listaId: string): Promise<ListaCompartida> {
+  const items = itemsDe(listaId).map((it) => ({
+    clave: it.clave,
+    tmdb_id: it.tmdb_id,
+    media_type: it.media_type,
+    title: it.title,
+    poster_path: it.poster_path,
+  }));
+  const p = await invoke<ListaCompartida>("cuenta_publicar_lista", {
+    listaId,
+    nombre: nombreDe(listaId),
+    items,
+  });
+  anotarHuella(listaId, huella(listaId));
+  social.publicas = [...social.publicas.filter((x) => x.lista_id !== listaId), p];
+  return p;
+}
+
+/** Comparte la lista: devuelve su código (el mismo si ya estaba compartida). */
+export async function compartirLista(listaId: string): Promise<string> {
+  return (await publicar(listaId)).codigo;
+}
+
+export async function dejarDeCompartir(listaId: string): Promise<void> {
+  const codigo = codigoDe(listaId);
+  if (!codigo) return;
+  const r = await invoke<{ publicas: ListaCompartida[] }>("cuenta_despublicar_lista", { codigo });
+  social.publicas = r.publicas;
+  anotarHuella(listaId, null);
+}
+
+// Las listas compartidas que cambiaron aquí se vuelven a subir. Una que aquí
+// no existe no se toca: puede ser de otro equipo y todavía no haber llegado
+// (borrar una lista la deja de compartir explícitamente, ver historial).
+async function actualizarPublicadas(): Promise<void> {
+  if (!listas.cargadas) return;
+  const hs = huellas();
+  for (const p of social.publicas) {
+    try {
+      if (listas.todas.some((l) => l.id === p.lista_id) && hs[p.lista_id] !== huella(p.lista_id)) {
+        await publicar(p.lista_id);
+      }
+    } catch (e) {
+      console.warn("[cuenta] actualizar lista compartida:", e);
+    }
+  }
+}
+
+export async function verListaPublica(codigo: string): Promise<ListaPublica> {
+  return invoke<ListaPublica>("cuenta_lista_publica", { codigo });
+}
+
+/** Copia una lista compartida a las propias. Devuelve el id de la copia. */
+export async function importarLista(codigo: string): Promise<string> {
+  const l = await verListaPublica(codigo);
+  const id = await crearLista(l.nombre);
+  if (!id) throw new Error("no se pudo crear la lista");
+  for (const it of l.items) {
+    await agregarALista(id, {
+      clave: it.clave,
+      tmdbId: it.tmdb_id,
+      mediaType: it.media_type,
+      title: it.title,
+      posterPath: it.poster_path,
+    });
+  }
+  return id;
+}
+
+/** Comparte la lista (si hacía falta) y se la manda a la bandeja de cada amigo. */
+export async function enviarLista(listaId: string, para: string[], nota: string): Promise<void> {
+  const codigo = await compartirLista(listaId);
+  const its = itemsDe(listaId);
+  await recomendar(
+    para,
+    {
+      tipo: "lista",
+      codigo,
+      nombre: nombreDe(listaId),
+      cantidad: its.length,
+      poster_path: its.find((it) => it.poster_path)?.poster_path ?? null,
+    },
+    nota,
+  );
 }
 
 // ─── Llavero ────────────────────────────────────────────────────────────────
@@ -232,7 +377,11 @@ export async function quitarAmigo(nombre: string): Promise<void> {
   aplicarAmigos(await invoke<Amigos>("cuenta_amigo_quitar", { nombre }));
 }
 
-export async function recomendar(para: string[], datos: TituloRecomendado, nota: string): Promise<void> {
+export async function recomendar(
+  para: string[],
+  datos: TituloRecomendado | ListaRecomendada,
+  nota: string,
+): Promise<void> {
   await invoke("cuenta_recomendar", { para, datos, nota: nota.trim() || null });
 }
 

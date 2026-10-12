@@ -430,7 +430,10 @@ function recomendar(PDO $pdo, array $s, array $b): array
         throw new Fallo(400, "'para' debe ser una lista de amigos");
     }
     $datos = $b['datos'] ?? null;
-    if (!is_array($datos) || !isset($datos['tmdb_id'], $datos['media_type'], $datos['title'])) {
+    // Un título, o una lista compartida (que viaja como su código).
+    $es_lista = is_array($datos) && ($datos['tipo'] ?? '') === 'lista';
+    if ($es_lista ? !isset($datos['codigo'], $datos['nombre'])
+                  : (!is_array($datos) || !isset($datos['tmdb_id'], $datos['media_type'], $datos['title']))) {
         throw new Fallo(400, "faltan los 'datos' del título");
     }
     $json = json_encode($datos, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -476,6 +479,83 @@ function quitar_recomendacion(PDO $pdo, array $s, int $id): array
 {
     $pdo->prepare('DELETE FROM recomendaciones WHERE id = ? AND para = ?')->execute([$id, $s['usuario']]);
     return ['ok' => true];
+}
+
+// ─── Listas compartidas ─────────────────────────────────────────────────────
+
+const LISTA_MAX_ITEMS = 500;
+
+function fila_publica(array $f): array
+{
+    return [
+        'codigo' => $f['codigo'],
+        'lista_id' => $f['lista_id'],
+        'nombre' => $f['nombre'],
+        'actualizada' => (int) $f['actualizada'],
+    ];
+}
+
+function mis_publicas(PDO $pdo, array $s): array
+{
+    $st = $pdo->prepare('SELECT codigo, lista_id, nombre, actualizada FROM listas_publicas WHERE dueno = ?');
+    $st->execute([$s['usuario']]);
+    return ['publicas' => array_map('fila_publica', $st->fetchAll())];
+}
+
+// Publica (o actualiza) una lista. El código se mantiene entre
+// actualizaciones: el que ya se compartió sigue sirviendo.
+function publicar_lista(PDO $pdo, array $s, array $b): array
+{
+    $lista_id = texto($b, 'lista_id', 64);
+    $nombre = texto($b, 'nombre', 60);
+    $items = $b['items'] ?? null;
+    if (!is_array($items) || count($items) > LISTA_MAX_ITEMS) {
+        throw new Fallo(400, "'items' debe ser una lista de hasta " . LISTA_MAX_ITEMS);
+    }
+    foreach ($items as $it) {
+        if (!is_array($it) || !isset($it['clave'], $it['tmdb_id'], $it['media_type'], $it['title'])) {
+            throw new Fallo(400, 'ítem inválido');
+        }
+    }
+    $json = json_encode(array_values($items), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (strlen($json) > 256 * 1024) {
+        throw new Fallo(413, 'lista demasiado grande');
+    }
+    $st = $pdo->prepare(
+        'UPDATE listas_publicas SET nombre = ?, items = ?, actualizada = ? WHERE dueno = ? AND lista_id = ?'
+    );
+    $st->execute([$nombre, $json, ahora_ms(), $s['usuario'], $lista_id]);
+    if ($st->rowCount() === 0) {
+        $pdo->prepare(
+            'INSERT INTO listas_publicas (codigo, dueno, lista_id, nombre, items, actualizada) VALUES (?, ?, ?, ?, ?, ?)'
+        )->execute([nuevo_codigo(), $s['usuario'], $lista_id, $nombre, $json, ahora_ms()]);
+    }
+    $st = $pdo->prepare('SELECT * FROM listas_publicas WHERE dueno = ? AND lista_id = ?');
+    $st->execute([$s['usuario'], $lista_id]);
+    return fila_publica($st->fetch());
+}
+
+function despublicar_lista(PDO $pdo, array $s, string $codigo): array
+{
+    $pdo->prepare('DELETE FROM listas_publicas WHERE codigo = ? AND dueno = ?')->execute([$codigo, $s['usuario']]);
+    return mis_publicas($pdo, $s);
+}
+
+// Cualquier usuario con el código. Los códigos fallidos cuentan para el freno
+// de intentos, como el login: no se pueden probar al azar.
+function lista_publica(PDO $pdo, string $codigo): array
+{
+    frenar_si_abusa($pdo);
+    $st = $pdo->prepare(
+        'SELECT l.*, u.nombre AS de FROM listas_publicas l JOIN usuarios u ON u.id = l.dueno WHERE l.codigo = ?'
+    );
+    $st->execute([strtoupper($codigo)]);
+    $f = $st->fetch();
+    if (!$f) {
+        anotar_fallo($pdo);
+        throw new Fallo(404, 'no hay ninguna lista con ese código (o su dueño dejó de compartirla)');
+    }
+    return fila_publica($f) + ['de' => $f['de'], 'items' => json_decode($f['items'], true)];
 }
 
 // ─── Llavero ────────────────────────────────────────────────────────────────
@@ -767,6 +847,14 @@ try {
         $res = marcar_vistas($pdo, autenticar($pdo));
     } elseif ($metodo === 'DELETE' && preg_match('#^/recomendaciones/(\d+)$#', $r, $m) === 1) {
         $res = quitar_recomendacion($pdo, autenticar($pdo), (int) $m[1]);
+    } elseif ($metodo === 'GET' && $r === '/listas-publicas') {
+        $res = mis_publicas($pdo, autenticar($pdo));
+    } elseif ($metodo === 'POST' && $r === '/listas-publicas') {
+        $res = publicar_lista($pdo, autenticar($pdo), cuerpo());
+    } elseif (preg_match('#^/listas-publicas/([A-Za-z0-9]{5}-[A-Za-z0-9]{5})$#', $r, $m) === 1
+        && ($metodo === 'GET' || $metodo === 'DELETE')) {
+        $s = autenticar($pdo);
+        $res = $metodo === 'GET' ? lista_publica($pdo, $m[1]) : despublicar_lista($pdo, $s, strtoupper($m[1]));
     } elseif ($metodo === 'GET' && $r === '/llavero') {
         $res = llavero($pdo, autenticar($pdo));
     } elseif (preg_match('#^/llavero/([a-z]{1,16})(/.*)?$#', $r, $m) === 1) {

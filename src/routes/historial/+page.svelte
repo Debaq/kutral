@@ -31,6 +31,12 @@
     recomendacionesSinVer,
     marcarRecomendacionesVistas,
     quitarRecomendacion,
+    esLista,
+    codigoDe,
+    compartirLista,
+    dejarDeCompartir,
+    enviarLista,
+    importarLista,
   } from "$lib/cuenta.svelte";
   import {
     QUIERO_VER,
@@ -165,6 +171,10 @@
     abierta = id;
     renombrando = false;
     avisoLista = "";
+    compartirAbierto = false;
+    compartirErr = "";
+    enviado = "";
+    enviarA = [];
     setTimeout(() => enfocarPrimero(document.querySelector(".galeria") ?? document), 40);
   }
 
@@ -184,6 +194,9 @@
     const l = borrarListaConfirm;
     borrarListaConfirm = null;
     if (!l) return;
+    // Compartida: deja de estarlo. Sin red, el código sigue sirviendo con el
+    // último contenido publicado.
+    if (codigoDe(l.id)) await dejarDeCompartir(l.id).catch((e) => console.warn("[historial] dejar de compartir:", e));
     await borrarLista(l.id);
     abrirLista(null);
   }
@@ -198,6 +211,72 @@
     }
     enOrden.listaId = listaId;
     reproducir(it);
+  }
+
+  // --- Compartir e importar (con cuenta) ----------------------------------
+  let compartirAbierto = $state(false);
+  let compartirBusy = $state(false);
+  let compartirErr = $state("");
+  let copiado = $state(false);
+  let enviarA = $state<string[]>([]);
+  let enviado = $state("");
+  let codigoImportar = $state("");
+  let importarBusy = $state(false);
+  let importarErr = $state("");
+
+  async function accionCompartir(fn: () => Promise<unknown>) {
+    compartirErr = "";
+    compartirBusy = true;
+    try {
+      await fn();
+    } catch (e) {
+      compartirErr = String(e);
+    } finally {
+      compartirBusy = false;
+    }
+  }
+
+  async function copiarCodigo(codigo: string) {
+    try {
+      await navigator.clipboard.writeText(codigo);
+      copiado = true;
+      setTimeout(() => (copiado = false), 2000);
+    } catch {
+      /* sin portapapeles: el código igual está a la vista */
+    }
+  }
+
+  function enviarAAmigos(listaId: string) {
+    const para = [...enviarA];
+    if (!para.length) return;
+    void accionCompartir(async () => {
+      await enviarLista(listaId, para, "");
+      enviado = para.length === 1 ? `Se la enviaste a ${para[0]}.` : `Se la enviaste a ${para.length} amigos.`;
+      enviarA = [];
+    });
+  }
+
+  async function importar(codigo: string): Promise<boolean> {
+    importarErr = "";
+    importarBusy = true;
+    try {
+      const id = await importarLista(codigo);
+      codigoImportar = "";
+      pestana = "listas";
+      abrirLista(id);
+      avisoLista = "Lista guardada en las tuyas: es una copia, puedes cambiarla sin tocar la original.";
+      return true;
+    } catch (e) {
+      importarErr = String(e);
+      return false;
+    } finally {
+      importarBusy = false;
+    }
+  }
+
+  async function importarRecomendada(codigo: string) {
+    avisoLista = "";
+    if (!(await importar(codigo))) avisoLista = importarErr;
   }
 
   function portadas(listaId: string): string[] {
@@ -577,6 +656,30 @@
             <button data-nav class="btn-lista principal" onclick={crearNueva} disabled={!nuevaLista.trim()}>Crear</button>
             <span class="sub">También puedes crearlas desde la ficha de un título, con "≡ Listas".</span>
           </div>
+          {#if cuenta.usuario}
+            <div class="card nueva-lista">
+              <span class="nueva-tit">⇩ Importar con código</span>
+              <input
+                data-nav
+                bind:value={codigoImportar}
+                maxlength="11"
+                placeholder="XXXXX-XXXXX"
+                spellcheck="false"
+                onkeydown={(e) => e.key === "Enter" && void importar(codigoImportar)}
+              />
+              <button
+                data-nav
+                class="btn-lista principal"
+                onclick={() => void importar(codigoImportar)}
+                disabled={importarBusy || !codigoImportar.trim()}
+              >
+                {importarBusy ? "Importando…" : "Importar"}
+              </button>
+              {#if importarErr}<span class="sub err-lista">{importarErr}</span>{:else}
+                <span class="sub">Una lista que alguien de tu servidor compartió. Se guarda una copia tuya.</span>
+              {/if}
+            </div>
+          {/if}
         </div>
       {:else}
         <div class="acciones-lista">
@@ -610,10 +713,73 @@
             >
               Renombrar
             </button>
+            {#if cuenta.usuario}
+              <button data-nav class="btn-lista" class:activo={compartirAbierto} onclick={() => (compartirAbierto = !compartirAbierto)}>
+                {codigoDe(listaAbierta.id) ? "Compartida" : "Compartir"}
+              </button>
+            {/if}
             <button data-nav class="btn-lista" onclick={() => (borrarListaConfirm = listaAbierta)}>Borrar lista</button>
           {/if}
           {#if avisoLista}<span class="aviso-lista">{avisoLista}</span>{/if}
         </div>
+        {#if compartirAbierto && cuenta.usuario}
+          {@const codigo = codigoDe(listaAbierta.id)}
+          <div class="panel-compartir">
+            {#if !codigo}
+              <p class="sub-panel">
+                Al compartirla, cualquiera de tu servidor que tenga el código puede guardar una copia.
+                Si después la cambias, quien la importe desde entonces recibe la versión nueva.
+              </p>
+              <button
+                data-nav
+                class="btn-lista principal"
+                onclick={() => accionCompartir(() => compartirLista(listaAbierta.id))}
+                disabled={compartirBusy}
+              >
+                {compartirBusy ? "Compartiendo…" : "Compartir con código"}
+              </button>
+            {:else}
+              <div class="fila-codigo">
+                <span class="codigo">{codigo}</span>
+                <button data-nav class="btn-lista" onclick={() => copiarCodigo(codigo)}>{copiado ? "✓ Copiado" : "Copiar"}</button>
+                <button
+                  data-nav
+                  class="btn-lista"
+                  onclick={() => accionCompartir(() => dejarDeCompartir(listaAbierta.id))}
+                  disabled={compartirBusy}
+                >
+                  Dejar de compartir
+                </button>
+              </div>
+            {/if}
+            {#if social.amigos.length}
+              <p class="sub-panel">Enviársela a:</p>
+              <div class="fila-codigo">
+                {#each social.amigos as a (a.nombre)}
+                  {@const elegido = enviarA.includes(a.nombre)}
+                  <button
+                    data-nav
+                    class="btn-lista"
+                    class:activo={elegido}
+                    onclick={() => (enviarA = elegido ? enviarA.filter((n) => n !== a.nombre) : [...enviarA, a.nombre])}
+                  >
+                    {elegido ? "✓ " : ""}{a.nombre}
+                  </button>
+                {/each}
+                <button
+                  data-nav
+                  class="btn-lista principal"
+                  onclick={() => enviarAAmigos(listaAbierta.id)}
+                  disabled={compartirBusy || !enviarA.length}
+                >
+                  Enviar
+                </button>
+              </div>
+            {/if}
+            {#if enviado}<p class="sub-panel ok-lista">{enviado}</p>{/if}
+            {#if compartirErr}<p class="sub-panel err-lista">{compartirErr}</p>{/if}
+          </div>
+        {/if}
         {#if !itemsAbierta.length}
           <p class="vacio">
             Lista vacía. En la ficha de una película o serie, "≡ Listas" la agrega aquí.
@@ -635,29 +801,33 @@
       {:else}
         <div class="grid">
           {#each recomendaciones as r, i (r.id)}
+            {@const d = r.datos}
+            {@const nombre = esLista(d) ? d.nombre : d.title}
             <button
               data-nav
               data-idx={i}
               class="card"
-              onclick={() => reproducir(r.datos)}
-              title={r.nota ? `${r.datos.title}: "${r.nota}"` : r.datos.title}
+              onclick={() => (esLista(d) ? void importarRecomendada(d.codigo) : reproducir(d))}
+              title={r.nota ? `${nombre}: "${r.nota}"` : nombre}
             >
               <span class="poster">
-                {#if img(r.datos.poster_path, "w342")}
-                  <img src={img(r.datos.poster_path, "w342")} alt="" loading="lazy" />
+                {#if img(d.poster_path, "w342")}
+                  <img src={img(d.poster_path, "w342")} alt="" loading="lazy" />
                 {:else}
-                  <span class="sin-poster">{r.datos.title}</span>
+                  <span class="sin-poster">{nombre}</span>
                 {/if}
                 {#if !r.vista || nuevas.has(r.id)}<span class="badge-cap">nueva</span>{/if}
+                {#if esLista(d)}<span class="badge-lista">≡ lista · {d.cantidad}</span>{/if}
               </span>
               <span class="pie">
-                <span class="titulo">{r.datos.title}</span>
+                <span class="titulo">{esLista(d) ? `«${nombre}»` : nombre}</span>
                 <span class="sub">de {r.de} · {haceDias(r.creada)}</span>
                 {#if r.nota}<span class="sub nota">"{r.nota}"</span>{/if}
               </span>
             </button>
           {/each}
         </div>
+        {#if avisoLista}<p class="aviso-lista" style="padding: 0 20px;">{avisoLista}</p>{/if}
       {/if}
     {:else if !favoritos.length}
       <p class="vacio">
@@ -1040,6 +1210,59 @@
   .aviso-lista {
     font-size: 12.5px;
     color: #9a9aa4;
+  }
+  .btn-lista.activo {
+    border-color: #f5c518;
+    color: #fff;
+  }
+  .panel-compartir {
+    margin: 14px 20px 0;
+    padding: 14px 16px;
+    background: #15151c;
+    border: 1px solid #2a2a35;
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .sub-panel {
+    margin: 0;
+    font-size: 12.5px;
+    color: #9a9aa4;
+    line-height: 1.5;
+  }
+  .fila-codigo {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .codigo {
+    font-family: ui-monospace, monospace;
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: 2px;
+    color: #f5c518;
+    margin-right: 6px;
+  }
+  .ok-lista {
+    color: #7ee094;
+  }
+  .err-lista {
+    color: #ff7373;
+    white-space: normal;
+  }
+  .badge-lista {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    background: rgba(13, 13, 18, 0.85);
+    color: #f5c518;
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 11px;
+    font-weight: 800;
   }
   .mosaico {
     display: grid;
