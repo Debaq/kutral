@@ -5,6 +5,7 @@
   import { borrarProgreso, type FilaHistorial, type EstadoMedio } from "$lib/historial.svelte";
   import { seasonLabel } from "$lib/inicio/util";
   import Recomendar from "$lib/inicio/Recomendar.svelte";
+  import GuardarEnLista from "$lib/inicio/GuardarEnLista.svelte";
   import type { Detail } from "$lib/tipos";
 
   let {
@@ -77,6 +78,7 @@
       >
         {favorito ? "★ Quitar de favoritos" : "☆ Agregar a favoritos"}
       </button>
+      <GuardarEnLista {titulo} {clave} />
       {#if enCurso}
         {@const ec = enCurso}
         <button

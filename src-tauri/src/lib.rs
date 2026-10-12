@@ -507,6 +507,39 @@ pub fn run() {
             sql: cuenta::MIGRACION_SQL,
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 11,
+            description: "listas y quiero ver",
+            // Ids de texto (uuid) y no autoincrementales: cuando las listas se
+            // sincronicen, dos equipos podrán crear listas sin chocar. "Quiero
+            // ver" es una lista más, con id fijo, que no se puede borrar.
+            // `posicion` es REAL para poder meter un ítem entre otros dos.
+            sql: "CREATE TABLE IF NOT EXISTS listas (
+                    id TEXT PRIMARY KEY,
+                    nombre TEXT NOT NULL,
+                    creada INTEGER NOT NULL,
+                    actualizada INTEGER NOT NULL
+                );
+
+                INSERT OR IGNORE INTO listas (id, nombre, creada, actualizada)
+                VALUES ('quiero-ver', 'Quiero ver',
+                        CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
+                        CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER));
+
+                CREATE TABLE IF NOT EXISTS lista_items (
+                    lista_id TEXT NOT NULL,
+                    clave TEXT NOT NULL,
+                    tmdb_id INTEGER NOT NULL,
+                    media_type TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    poster_path TEXT,
+                    posicion REAL NOT NULL,
+                    agregado INTEGER NOT NULL,
+                    PRIMARY KEY (lista_id, clave)
+                );
+            ",
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

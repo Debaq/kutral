@@ -6,7 +6,14 @@ import { estadoDe, claveMedio } from "$lib/historial.svelte";
 import type { ListItem, ListResp } from "$lib/tipos";
 
 export type SugerenciaFin = { id: number; title: string; posterUrl: string | null; year: string };
-export type SiguienteFin = { season: number; episode: number; nombre: string; stillUrl: string | null };
+export type SiguienteFin = {
+  season: number;
+  episode: number;
+  nombre: string;
+  stillUrl: string | null;
+  /** Rótulo en vez de "Siguiente capítulo" (ej.: lo que sigue en una lista). */
+  etiqueta?: string;
+};
 
 const MAX_SUGERENCIAS = 8;
 

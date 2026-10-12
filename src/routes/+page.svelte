@@ -82,6 +82,7 @@
     type FilaHistorial,
     type MediaMeta,
   } from "$lib/historial.svelte";
+  import { enOrden, estaEnLista, siguienteEnOrden, nombreDe, type ItemLista } from "$lib/listas.svelte";
   import type {
     OmdbDetail,
     ListItem,
@@ -2081,6 +2082,9 @@
   const finItems = new Map<number, ListItem>();
   // Episodio al que apunta finSiguiente (para el contexto del historial).
   let finSiguienteEp: EpisodeMini | null = null;
+  // Lo que sigue en la lista que se está descubriendo en orden (si el
+  // "siguiente" de la pantalla de fin es eso y no un capítulo).
+  let finSiguienteLista: ItemLista | null = null;
 
   // Un trailer lanzado desde la ficha marca "reproduciendo" sin cambiar de
   // modo, así que el efecto de arriba no vuelve a correr al terminar: el
@@ -2120,6 +2124,7 @@
     finBackdrop = selected.backdrop_path ? art(selected.backdrop_path, "w1280", 1280) : null;
     finSiguiente = null;
     finSiguienteEp = null;
+    finSiguienteLista = null;
     finSugerencias = [];
     finItems.clear();
     finCargando = true;
@@ -2141,6 +2146,22 @@
         };
       }
     }
+    // Descubriendo una lista en orden: si no hay capítulo que siga, lo que
+    // sigue es el próximo título sin ver de la lista.
+    const lista = enOrden.listaId;
+    if (!finSiguiente && lista && estaEnLista(lista, claveSel)) {
+      const prox = siguienteEnOrden(lista, claveSel);
+      if (prox) {
+        finSiguienteLista = prox;
+        finSiguiente = {
+          season: -1,
+          episode: -1,
+          nombre: prox.title,
+          stillUrl: prox.poster_path ? art(prox.poster_path, "w342", 342) : null,
+          etiqueta: `Siguiente en «${nombreDe(lista)}»`,
+        };
+      }
+    }
     finSugerencias = await sugerenciasDe();
     finCargando = false;
     // Nada que ofrecer (sin capítulo siguiente y sin red): no dejamos al user
@@ -2152,6 +2173,11 @@
   function verSiguienteCapitulo() {
     const sig = finSiguiente;
     if (!sig) return;
+    if (finSiguienteLista) {
+      const it = finSiguienteLista;
+      void handoffPlay(String(it.tmdb_id), it.media_type);
+      return;
+    }
     sourcesSeason = sig.season;
     sourcesEpisode = sig.episode;
     // El capítulo nuevo arranca desde el principio aunque el título tuviera
@@ -2905,11 +2931,11 @@
                 </div>
               </a>
 
-              <a class="card lista-card" data-nav href="/historial" title="Lo que viste y tus favoritos">
+              <a class="card lista-card" data-nav href="/historial" title="Lo que viste, tus favoritos y tus listas">
                 <div class="lista-poster">
                   <div class="vera-title-poster">
                     <span class="lista-marca">Vistos</span>
-                    <em class="lista-em">y favoritos</em>
+                    <em class="lista-em">y listas</em>
                   </div>
                 </div>
               </a>

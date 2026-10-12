@@ -3,9 +3,9 @@
   // (evento "mpv:fin"). Antes acá había un corte seco al catálogo.
   //
   // Dos cosas, en este orden:
-  //   1. Siguiente capítulo (series/anime). SIEMPRE con Enter: nada arranca
-  //      solo, encadenar capítulos sin pedirlos es justo lo que molesta de
-  //      otros reproductores.
+  //   1. Siguiente capítulo (series/anime), o lo que sigue en la lista que se
+  //      está descubriendo en orden. SIEMPRE con Enter: nada arranca solo,
+  //      encadenar sin pedirlo es justo lo que molesta de otros reproductores.
   //   2. "Porque viste X": qué ver después. En películas es lo único que hay.
   //
   // Teclado propio (el page no navega en este modo): ←→ dentro de la fila,
@@ -23,6 +23,7 @@
     episode: number;
     nombre: string;
     stillUrl: string | null;
+    etiqueta?: string;
   };
 
   let {
@@ -167,8 +168,8 @@
           <div class="pc-next-img pc-next-sinimg">▶</div>
         {/if}
         <span class="pc-next-txt">
-          <span class="pc-next-label">Siguiente capítulo</span>
-          <span class="pc-next-ep">{epLabel(siguiente)}</span>
+          <span class="pc-next-label">{siguiente.etiqueta ?? "Siguiente capítulo"}</span>
+          <span class="pc-next-ep">{siguiente.etiqueta ? siguiente.nombre : epLabel(siguiente)}</span>
         </span>
       </button>
     {/if}
