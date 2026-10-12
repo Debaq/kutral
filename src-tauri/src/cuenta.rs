@@ -1,11 +1,12 @@
 // Cuenta de Kutral en un servidor propio (ver server/ en la raíz del repo).
 //
 // Opcional: sin cuenta todo sigue funcionando igual, solo en este equipo.
-// Con cuenta, lo sincronizable (hoy: favoritos) se sube y se baja de un
-// servidor PHP cuya URL pone el usuario en Configuración.
+// Con cuenta, lo sincronizable (favoritos, historial con el minuto donde
+// quedaste, listas y sus títulos) se sube y se baja de un servidor PHP cuya
+// URL pone el usuario en Configuración.
 //
-// Cómo se sabe qué subir: triggers de SQLite (migración v10) anotan en
-// `sync_salida` cada favorito que cambia, sin importar quién lo escribió
+// Cómo se sabe qué subir: triggers de SQLite (migraciones v10 y v12) anotan
+// en `sync_salida` cada fila que cambia, sin importar quién la escribió
 // (el front vía plugin-sql). Al sincronizar se sube lo anotado y se baja lo
 // que otros equipos cambiaron desde el último cursor. Si dos equipos tocan lo
 // mismo gana el cambio más reciente (`actualizado`, ms).
@@ -245,7 +246,104 @@ pub const MIGRACION_SQL: &str = "CREATE TABLE IF NOT EXISTS sync_estado (
                 END;
 ";
 
+/// Migración v12 (después de la v11, que crea las listas): lo mismo que la v10
+/// para el historial y las listas. Si la cuenta ya estaba activa, anota todo
+/// lo que había para que suba en la próxima sincronización.
+pub const MIGRACION_SQL_V12: &str = "
+                CREATE TRIGGER IF NOT EXISTS sync_hist_ins AFTER INSERT ON watch_history
+                WHEN (SELECT activa AND NOT aplicando FROM sync_estado WHERE id = 1)
+                BEGIN
+                    INSERT OR REPLACE INTO sync_salida (coleccion, clave, cambiado)
+                    VALUES ('historial', NEW.imdb_id || '|' || NEW.season || '|' || NEW.episode,
+                            CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER));
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS sync_hist_upd AFTER UPDATE ON watch_history
+                WHEN (SELECT activa AND NOT aplicando FROM sync_estado WHERE id = 1)
+                BEGIN
+                    INSERT OR REPLACE INTO sync_salida (coleccion, clave, cambiado)
+                    VALUES ('historial', NEW.imdb_id || '|' || NEW.season || '|' || NEW.episode,
+                            CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER));
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS sync_hist_del AFTER DELETE ON watch_history
+                WHEN (SELECT activa AND NOT aplicando FROM sync_estado WHERE id = 1)
+                BEGIN
+                    INSERT OR REPLACE INTO sync_salida (coleccion, clave, cambiado)
+                    VALUES ('historial', OLD.imdb_id || '|' || OLD.season || '|' || OLD.episode,
+                            CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER));
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS sync_lista_ins AFTER INSERT ON listas
+                WHEN (SELECT activa AND NOT aplicando FROM sync_estado WHERE id = 1)
+                BEGIN
+                    INSERT OR REPLACE INTO sync_salida (coleccion, clave, cambiado)
+                    VALUES ('listas', NEW.id, CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER));
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS sync_lista_upd AFTER UPDATE ON listas
+                WHEN (SELECT activa AND NOT aplicando FROM sync_estado WHERE id = 1)
+                BEGIN
+                    INSERT OR REPLACE INTO sync_salida (coleccion, clave, cambiado)
+                    VALUES ('listas', NEW.id, CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER));
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS sync_lista_del AFTER DELETE ON listas
+                WHEN (SELECT activa AND NOT aplicando FROM sync_estado WHERE id = 1)
+                BEGIN
+                    INSERT OR REPLACE INTO sync_salida (coleccion, clave, cambiado)
+                    VALUES ('listas', OLD.id, CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER));
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS sync_item_ins AFTER INSERT ON lista_items
+                WHEN (SELECT activa AND NOT aplicando FROM sync_estado WHERE id = 1)
+                BEGIN
+                    INSERT OR REPLACE INTO sync_salida (coleccion, clave, cambiado)
+                    VALUES ('lista_items', NEW.lista_id || '|' || NEW.clave,
+                            CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER));
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS sync_item_upd AFTER UPDATE ON lista_items
+                WHEN (SELECT activa AND NOT aplicando FROM sync_estado WHERE id = 1)
+                BEGIN
+                    INSERT OR REPLACE INTO sync_salida (coleccion, clave, cambiado)
+                    VALUES ('lista_items', NEW.lista_id || '|' || NEW.clave,
+                            CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER));
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS sync_item_del AFTER DELETE ON lista_items
+                WHEN (SELECT activa AND NOT aplicando FROM sync_estado WHERE id = 1)
+                BEGIN
+                    INSERT OR REPLACE INTO sync_salida (coleccion, clave, cambiado)
+                    VALUES ('lista_items', OLD.lista_id || '|' || OLD.clave,
+                            CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER));
+                END;
+
+                INSERT OR REPLACE INTO sync_salida (coleccion, clave, cambiado)
+                  SELECT 'historial', imdb_id || '|' || season || '|' || episode, last_watched
+                    FROM watch_history WHERE (SELECT activa FROM sync_estado WHERE id = 1);
+                INSERT OR REPLACE INTO sync_salida (coleccion, clave, cambiado)
+                  SELECT 'listas', id, actualizada
+                    FROM listas WHERE (SELECT activa FROM sync_estado WHERE id = 1);
+                INSERT OR REPLACE INTO sync_salida (coleccion, clave, cambiado)
+                  SELECT 'lista_items', lista_id || '|' || clave, agregado
+                    FROM lista_items WHERE (SELECT activa FROM sync_estado WHERE id = 1);
+";
+
+/// Anota para subir todo lo sincronizable que no son favoritos. Con su propia
+/// fecha (no "ahora"): si otro equipo tiene algo más nuevo, gana ese.
+const ANOTAR_RESTO: &str = "
+         INSERT OR REPLACE INTO sync_salida (coleccion, clave, cambiado)
+           SELECT 'historial', imdb_id || '|' || season || '|' || episode, last_watched FROM watch_history;
+         INSERT OR REPLACE INTO sync_salida (coleccion, clave, cambiado)
+           SELECT 'listas', id, actualizada FROM listas;
+         INSERT OR REPLACE INTO sync_salida (coleccion, clave, cambiado)
+           SELECT 'lista_items', lista_id || '|' || clave, agregado FROM lista_items;";
+
 const FAVORITOS: &str = "favoritos";
+const HISTORIAL: &str = "historial";
+const LISTAS: &str = "listas";
+const LISTA_ITEMS: &str = "lista_items";
 
 #[derive(Serialize, Deserialize)]
 struct Cambio {
@@ -268,11 +366,89 @@ fn set_activa(db: &Connection, activa: bool) -> Result<(), String> {
 /// lo de la cuenta en vez de pisarlo (si la cuenta tiene un borrado más nuevo,
 /// ese gana al sincronizar).
 fn anotar_todo(db: &Connection) -> Result<(), String> {
-    db.execute_batch(
+    db.execute_batch(&format!(
         "DELETE FROM sync_salida;
          INSERT OR REPLACE INTO sync_salida (coleccion, clave, cambiado)
-           SELECT 'favoritos', imdb_id, added_at FROM favorites;",
+           SELECT 'favoritos', imdb_id, added_at FROM favorites;
+         {ANOTAR_RESTO}"
+    ))
+    .map_err(|e| e.to_string())
+}
+
+/// `imdb|season|episode` → partes. La clave de anime (`anilist:5`) no lleva `|`.
+fn partir_historial(clave: &str) -> Option<(&str, i64, i64)> {
+    let mut it = clave.rsplitn(3, '|');
+    let episode = it.next()?.parse().ok()?;
+    let season = it.next()?.parse().ok()?;
+    Some((it.next()?, season, episode))
+}
+
+/// `lista_id|clave` → partes. El id de la lista (uuid) no lleva `|`.
+fn partir_item(clave: &str) -> Option<(&str, &str)> {
+    clave.split_once('|')
+}
+
+fn datos_historial(db: &Connection, clave: &str) -> Result<Option<Value>, String> {
+    let Some((imdb, season, episode)) = partir_historial(clave) else { return Ok(None) };
+    db.query_row(
+        "SELECT tmdb_id, media_type, title, poster_path, still_path, episode_title,
+                watched_seconds, runtime_seconds, progress_real, completed, last_watched
+           FROM watch_history WHERE imdb_id = ?1 AND season = ?2 AND episode = ?3",
+        params![imdb, season, episode],
+        |r| {
+            Ok(json!({
+                "tmdb_id": r.get::<_, i64>(0)?,
+                "media_type": r.get::<_, String>(1)?,
+                "title": r.get::<_, String>(2)?,
+                "poster_path": r.get::<_, Option<String>>(3)?,
+                "still_path": r.get::<_, Option<String>>(4)?,
+                "episode_title": r.get::<_, Option<String>>(5)?,
+                "watched_seconds": r.get::<_, i64>(6)?,
+                "runtime_seconds": r.get::<_, Option<i64>>(7)?,
+                "progress_real": r.get::<_, Option<f64>>(8)?,
+                "completed": r.get::<_, i64>(9)?,
+                "last_watched": r.get::<_, i64>(10)?,
+            }))
+        },
     )
+    .optional()
+    .map_err(|e| e.to_string())
+}
+
+fn datos_lista(db: &Connection, id: &str) -> Result<Option<Value>, String> {
+    db.query_row(
+        "SELECT nombre, creada, actualizada FROM listas WHERE id = ?1",
+        params![id],
+        |r| {
+            Ok(json!({
+                "nombre": r.get::<_, String>(0)?,
+                "creada": r.get::<_, i64>(1)?,
+                "actualizada": r.get::<_, i64>(2)?,
+            }))
+        },
+    )
+    .optional()
+    .map_err(|e| e.to_string())
+}
+
+fn datos_item(db: &Connection, clave: &str) -> Result<Option<Value>, String> {
+    let Some((lista, item)) = partir_item(clave) else { return Ok(None) };
+    db.query_row(
+        "SELECT tmdb_id, media_type, title, poster_path, posicion, agregado
+           FROM lista_items WHERE lista_id = ?1 AND clave = ?2",
+        params![lista, item],
+        |r| {
+            Ok(json!({
+                "tmdb_id": r.get::<_, i64>(0)?,
+                "media_type": r.get::<_, String>(1)?,
+                "title": r.get::<_, String>(2)?,
+                "poster_path": r.get::<_, Option<String>>(3)?,
+                "posicion": r.get::<_, f64>(4)?,
+                "agregado": r.get::<_, i64>(5)?,
+            }))
+        },
+    )
+    .optional()
     .map_err(|e| e.to_string())
 }
 
@@ -307,6 +483,9 @@ fn pendientes(db: &Connection) -> Result<Vec<Cambio>, String> {
                 })
                 .optional()
                 .map_err(|e| e.to_string())?,
+            HISTORIAL => datos_historial(db, &clave)?,
+            LISTAS => datos_lista(db, &clave)?,
+            LISTA_ITEMS => datos_item(db, &clave)?,
             // Colección que esta versión no conoce: no se sube.
             _ => continue,
         };
@@ -353,10 +532,7 @@ fn aplicar(db: &mut Connection, cambios: &[Cambio]) -> Result<usize, String> {
         if local.is_some_and(|l| l > c.actualizado) {
             continue;
         }
-        let tocadas = match c.coleccion.as_str() {
-            FAVORITOS => aplicar_favorito(&tx, c)?,
-            _ => 0,
-        };
+        // Antes de aplicar: aplicar_historial puede volver a anotarlo.
         if local.is_some() {
             tx.execute(
                 "DELETE FROM sync_salida WHERE coleccion = ?1 AND clave = ?2",
@@ -364,6 +540,13 @@ fn aplicar(db: &mut Connection, cambios: &[Cambio]) -> Result<usize, String> {
             )
             .map_err(|e| e.to_string())?;
         }
+        let tocadas = match c.coleccion.as_str() {
+            FAVORITOS => aplicar_favorito(&tx, c)?,
+            HISTORIAL => aplicar_historial(&tx, c)?,
+            LISTAS => aplicar_lista(&tx, c)?,
+            LISTA_ITEMS => aplicar_item(&tx, c)?,
+            _ => 0,
+        };
         n += tocadas;
     }
     tx.execute("UPDATE sync_estado SET aplicando = 0 WHERE id = 1", [])
@@ -409,6 +592,165 @@ fn aplicar_favorito(tx: &rusqlite::Transaction, c: &Cambio) -> Result<usize, Str
            title = excluded.title, poster_path = excluded.poster_path,
            added_at = excluded.added_at",
         params![c.clave, tmdb_id, media_type, title, s("poster_path"), added_at],
+    )
+    .map_err(|e| e.to_string())
+}
+
+fn aplicar_historial(tx: &rusqlite::Transaction, c: &Cambio) -> Result<usize, String> {
+    let Some((imdb, season, episode)) = partir_historial(&c.clave) else { return Ok(0) };
+    if c.borrado {
+        return tx
+            .execute(
+                "DELETE FROM watch_history WHERE imdb_id = ?1 AND season = ?2 AND episode = ?3",
+                params![imdb, season, episode],
+            )
+            .map_err(|e| e.to_string());
+    }
+    let Some(d) = &c.datos else { return Ok(0) };
+    let s = |k: &str| d.get(k).and_then(|v| v.as_str()).map(String::from);
+    let i = |k: &str| d.get(k).and_then(|v| v.as_i64());
+    let (Some(tmdb_id), Some(media_type), Some(title)) = (i("tmdb_id"), s("media_type"), s("title"))
+    else {
+        return Ok(0);
+    };
+    let watched = i("watched_seconds").unwrap_or(0);
+    let runtime = i("runtime_seconds");
+    let real = d.get("progress_real").and_then(|v| v.as_f64());
+    let completed = i("completed").unwrap_or(0);
+    let last_watched = i("last_watched").unwrap_or(c.actualizado);
+    let previo: Option<(i64, i64, i64)> = tx
+        .query_row(
+            "SELECT completed, watched_seconds, last_watched FROM watch_history
+              WHERE imdb_id = ?1 AND season = ?2 AND episode = ?3",
+            params![imdb, season, episode],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    // "Terminado" no retrocede (la misma regla del front): si aquí ya estaba
+    // terminado y lo bajado no, se conserva y se vuelve a subir para que el
+    // otro equipo también lo tenga.
+    let local_completo = previo.is_some_and(|p| p.0 == 1);
+    let completed_final = completed.max(previo.map_or(0, |p| p.0));
+    if previo == Some((completed_final, watched, last_watched)) {
+        return Ok(0); // el eco de lo propio
+    }
+    tx.execute(
+        "INSERT INTO watch_history
+           (imdb_id, season, episode, tmdb_id, media_type, title, poster_path, still_path,
+            episode_title, watched_seconds, runtime_seconds, progress_real, completed, last_watched)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)
+         ON CONFLICT(imdb_id, season, episode) DO UPDATE SET
+           tmdb_id = excluded.tmdb_id, media_type = excluded.media_type, title = excluded.title,
+           poster_path = COALESCE(excluded.poster_path, watch_history.poster_path),
+           still_path = COALESCE(excluded.still_path, watch_history.still_path),
+           episode_title = COALESCE(excluded.episode_title, watch_history.episode_title),
+           watched_seconds = excluded.watched_seconds,
+           runtime_seconds = COALESCE(excluded.runtime_seconds, watch_history.runtime_seconds),
+           progress_real = excluded.progress_real,
+           completed = excluded.completed,
+           last_watched = excluded.last_watched",
+        params![
+            imdb,
+            season,
+            episode,
+            tmdb_id,
+            media_type,
+            title,
+            s("poster_path"),
+            s("still_path"),
+            s("episode_title"),
+            watched,
+            runtime,
+            real,
+            completed_final,
+            last_watched
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    if local_completo && completed == 0 {
+        tx.execute(
+            "INSERT OR REPLACE INTO sync_salida (coleccion, clave, cambiado) VALUES (?1, ?2, ?3)",
+            params![HISTORIAL, c.clave, ahora_ms()],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(1)
+}
+
+fn aplicar_lista(tx: &rusqlite::Transaction, c: &Cambio) -> Result<usize, String> {
+    if c.borrado {
+        // "Quiero ver" existe en todos los equipos y no se borra.
+        if c.clave == "quiero-ver" {
+            return Ok(0);
+        }
+        return tx
+            .execute("DELETE FROM listas WHERE id = ?1", params![c.clave])
+            .map_err(|e| e.to_string());
+    }
+    let Some(d) = &c.datos else { return Ok(0) };
+    let Some(nombre) = d.get("nombre").and_then(|v| v.as_str()) else { return Ok(0) };
+    let creada = d.get("creada").and_then(|v| v.as_i64()).unwrap_or(c.actualizado);
+    let actualizada = d.get("actualizada").and_then(|v| v.as_i64()).unwrap_or(c.actualizado);
+    let igual: bool = tx
+        .query_row(
+            "SELECT 1 FROM listas WHERE id = ?1 AND nombre = ?2 AND actualizada = ?3",
+            params![c.clave, nombre, actualizada],
+            |_| Ok(true),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .unwrap_or(false);
+    if igual {
+        return Ok(0);
+    }
+    tx.execute(
+        "INSERT INTO listas (id, nombre, creada, actualizada) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(id) DO UPDATE SET nombre = excluded.nombre, actualizada = excluded.actualizada",
+        params![c.clave, nombre, creada, actualizada],
+    )
+    .map_err(|e| e.to_string())
+}
+
+fn aplicar_item(tx: &rusqlite::Transaction, c: &Cambio) -> Result<usize, String> {
+    let Some((lista, item)) = partir_item(&c.clave) else { return Ok(0) };
+    if c.borrado {
+        return tx
+            .execute(
+                "DELETE FROM lista_items WHERE lista_id = ?1 AND clave = ?2",
+                params![lista, item],
+            )
+            .map_err(|e| e.to_string());
+    }
+    let Some(d) = &c.datos else { return Ok(0) };
+    let s = |k: &str| d.get(k).and_then(|v| v.as_str()).map(String::from);
+    let i = |k: &str| d.get(k).and_then(|v| v.as_i64());
+    let (Some(tmdb_id), Some(media_type), Some(title)) = (i("tmdb_id"), s("media_type"), s("title"))
+    else {
+        return Ok(0);
+    };
+    let posicion = d.get("posicion").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let agregado = i("agregado").unwrap_or(c.actualizado);
+    let igual: bool = tx
+        .query_row(
+            "SELECT 1 FROM lista_items WHERE lista_id = ?1 AND clave = ?2 AND posicion = ?3
+               AND title = ?4 AND poster_path IS ?5",
+            params![lista, item, posicion, title, s("poster_path")],
+            |_| Ok(true),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .unwrap_or(false);
+    if igual {
+        return Ok(0);
+    }
+    tx.execute(
+        "INSERT INTO lista_items (lista_id, clave, tmdb_id, media_type, title, poster_path, posicion, agregado)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(lista_id, clave) DO UPDATE SET
+           tmdb_id = excluded.tmdb_id, media_type = excluded.media_type, title = excluded.title,
+           poster_path = excluded.poster_path, posicion = excluded.posicion",
+        params![lista, item, tmdb_id, media_type, title, s("poster_path"), posicion, agregado],
     )
     .map_err(|e| e.to_string())
 }
@@ -709,6 +1051,7 @@ pub async fn cuenta_recomendacion_quitar(app: tauri::AppHandle, id: i64) -> Resu
 //   php -S 127.0.0.1:18790 -t server/public server/public/index.php
 //   KUTRAL_TEST_SERVIDOR=http://127.0.0.1:18790 \
 //   KUTRAL_TEST_INVITACION=$(php server/admin.php invitar) \
+//   KUTRAL_TEST_INVITACION_2=$(php server/admin.php invitar) \
 //     cargo test cuenta -- --ignored
 //
 // Dos carpetas = dos equipos de la misma cuenta. Lo que haría el front se
@@ -717,6 +1060,7 @@ pub async fn cuenta_recomendacion_quitar(app: tauri::AppHandle, id: i64) -> Resu
 mod tests {
     use super::*;
 
+    // Las tablas que crean las migraciones v7 y v11 de lib.rs.
     const FAVORITES: &str = "CREATE TABLE favorites (
         imdb_id TEXT PRIMARY KEY,
         tmdb_id INTEGER NOT NULL,
@@ -724,6 +1068,40 @@ mod tests {
         title TEXT NOT NULL,
         poster_path TEXT,
         added_at INTEGER NOT NULL
+    );
+    CREATE TABLE watch_history (
+        imdb_id TEXT NOT NULL,
+        season INTEGER NOT NULL DEFAULT -1,
+        episode INTEGER NOT NULL DEFAULT -1,
+        tmdb_id INTEGER NOT NULL,
+        media_type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        poster_path TEXT,
+        still_path TEXT,
+        episode_title TEXT,
+        watched_seconds INTEGER NOT NULL DEFAULT 0,
+        runtime_seconds INTEGER,
+        progress_real REAL,
+        completed INTEGER NOT NULL DEFAULT 0,
+        last_watched INTEGER NOT NULL,
+        PRIMARY KEY (imdb_id, season, episode)
+    );
+    CREATE TABLE listas (
+        id TEXT PRIMARY KEY,
+        nombre TEXT NOT NULL,
+        creada INTEGER NOT NULL,
+        actualizada INTEGER NOT NULL
+    );
+    CREATE TABLE lista_items (
+        lista_id TEXT NOT NULL,
+        clave TEXT NOT NULL,
+        tmdb_id INTEGER NOT NULL,
+        media_type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        poster_path TEXT,
+        posicion REAL NOT NULL,
+        agregado INTEGER NOT NULL,
+        PRIMARY KEY (lista_id, clave)
     );";
 
     fn equipo(nombre: &str) -> PathBuf {
@@ -732,7 +1110,65 @@ mod tests {
         let db = abrir_db(&dir).unwrap();
         db.execute_batch(FAVORITES).unwrap();
         db.execute_batch(MIGRACION_SQL).unwrap();
+        db.execute_batch(MIGRACION_SQL_V12).unwrap();
         dir
+    }
+
+    // Lo que hace guardarProgreso en el front (mismo UPSERT con MAX(completed)).
+    fn progreso(dir: &Path, clave: &str, season: i64, episode: i64, segundos: i64, completo: bool) {
+        abrir_db(dir)
+            .unwrap()
+            .execute(
+                "INSERT INTO watch_history (imdb_id, season, episode, tmdb_id, media_type, title,
+                    watched_seconds, runtime_seconds, completed, last_watched)
+                 VALUES (?1, ?2, ?3, 1, 'tv', 'Serie', ?4, 3000, ?5, ?6)
+                 ON CONFLICT(imdb_id, season, episode) DO UPDATE SET
+                   watched_seconds = excluded.watched_seconds,
+                   completed = MAX(excluded.completed, watch_history.completed),
+                   last_watched = excluded.last_watched",
+                params![clave, season, episode, segundos, completo as i64, ahora_ms()],
+            )
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    fn historial_de(dir: &Path) -> Vec<(String, i64, i64, i64, i64)> {
+        let db = abrir_db(dir).unwrap();
+        let mut st = db
+            .prepare(
+                "SELECT imdb_id, season, episode, watched_seconds, completed FROM watch_history
+                  ORDER BY imdb_id, season, episode",
+            )
+            .unwrap();
+        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    }
+
+    fn sql(dir: &Path, q: &str) {
+        abrir_db(dir).unwrap().execute_batch(q).unwrap();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    fn items_de(dir: &Path, lista: &str) -> Vec<(String, f64)> {
+        let db = abrir_db(dir).unwrap();
+        let mut st = db
+            .prepare("SELECT clave, posicion FROM lista_items WHERE lista_id = ?1 ORDER BY posicion")
+            .unwrap();
+        st.query_map(params![lista], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    }
+
+    fn listas_de(dir: &Path) -> Vec<(String, String)> {
+        let db = abrir_db(dir).unwrap();
+        let mut st = db.prepare("SELECT id, nombre FROM listas ORDER BY id").unwrap();
+        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
     }
 
     fn fav(dir: &Path, clave: &str, title: &str) {
@@ -802,6 +1238,109 @@ mod tests {
         fav(&a, "tt1", "Uno");
         quitar(&a, "tt1");
         assert_eq!(pendientes_de(&a), 0);
+    }
+
+    #[test]
+    fn claves_compuestas() {
+        assert_eq!(partir_historial("tt1|-1|-1"), Some(("tt1", -1, -1)));
+        assert_eq!(partir_historial("anilist:5|1|12"), Some(("anilist:5", 1, 12)));
+        assert_eq!(partir_historial("tt1"), None);
+        assert_eq!(partir_item("abc-123|anilist:5"), Some(("abc-123", "anilist:5")));
+    }
+
+    #[test]
+    fn migracion_v12_anota_lo_previo_solo_con_cuenta() {
+        for activa in [false, true] {
+            let dir = std::env::temp_dir().join(format!("kutral-cuenta-v12-{activa}-{}", ahora_ms()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let db = abrir_db(&dir).unwrap();
+            db.execute_batch(FAVORITES).unwrap();
+            db.execute_batch(MIGRACION_SQL).unwrap();
+            set_activa(&db, activa).unwrap();
+            db.execute_batch(
+                "INSERT INTO watch_history (imdb_id, tmdb_id, media_type, title, last_watched)
+                 VALUES ('tt1', 1, 'movie', 'Uno', 5)",
+            )
+            .unwrap();
+            db.execute_batch(MIGRACION_SQL_V12).unwrap();
+            let n: i64 = db.query_row("SELECT COUNT(*) FROM sync_salida", [], |r| r.get(0)).unwrap();
+            assert_eq!(n, if activa { 1 } else { 0 }, "el historial previo, solo con cuenta");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "necesita el servidor PHP corriendo (ver arriba)"]
+    async fn historial_y_listas_entre_equipos() {
+        let servidor = std::env::var("KUTRAL_TEST_SERVIDOR").expect("KUTRAL_TEST_SERVIDOR");
+        let inv = std::env::var("KUTRAL_TEST_INVITACION_2").expect("KUTRAL_TEST_INVITACION_2");
+        let usuario = format!("listas{}", ahora_ms() % 1_000_000);
+        let (a, b) = (equipo("ha"), equipo("hb"));
+        // Lo que crea la migración v11 en cada equipo.
+        for e in [&a, &b] {
+            sql(e, "INSERT INTO listas VALUES ('quiero-ver', 'Quiero ver', 1, 1)");
+        }
+
+        // A tenía historial antes de la cuenta; al entrar se sube.
+        progreso(&a, "tt9", 1, 1, 600, false);
+        entrar(&a, &servidor, &usuario, "contraseña-larga", Some(inv)).await.unwrap();
+        entrar(&b, &servidor, &usuario, "contraseña-larga", None).await.unwrap();
+        sync(&a).await;
+        sync(&b).await;
+        assert_eq!(historial_de(&b), vec![("tt9".into(), 1, 1, 600, 0)], "el minuto viaja");
+
+        // Sigue en B, termina el capítulo; A lo recibe.
+        progreso(&b, "tt9", 1, 1, 2900, true);
+        sync(&b).await;
+        sync(&a).await;
+        assert_eq!(historial_de(&a), vec![("tt9".into(), 1, 1, 2900, 1)]);
+
+        // A, sin sincronizar, había retrocedido (avance más nuevo pero sin
+        // terminar): "terminado" no se pierde en ningún lado.
+        progreso(&a, "tt9", 1, 1, 100, false);
+        assert_eq!(historial_de(&a)[0].4, 1, "en el propio equipo ya no retrocedía");
+        sync(&a).await;
+        sync(&b).await;
+        assert_eq!(historial_de(&b)[0].4, 1);
+        assert_eq!(historial_de(&b)[0].3, 100, "el minuto más nuevo sí gana");
+
+        // Borrar del historial viaja.
+        sql(&b, "DELETE FROM watch_history WHERE imdb_id = 'tt9'");
+        sync(&b).await;
+        sync(&a).await;
+        assert!(historial_de(&a).is_empty());
+
+        // Listas: crear, agregar y reordenar en A; renombrar en B.
+        sql(
+            &a,
+            "INSERT INTO listas VALUES ('l1', 'Nolan', 10, 10);
+             INSERT INTO lista_items VALUES ('l1', 'tt1', 1, 'movie', 'Memento', NULL, 1, 10);
+             INSERT INTO lista_items VALUES ('l1', 'tt2', 2, 'movie', 'Tenet', NULL, 2, 11);
+             INSERT INTO lista_items VALUES ('quiero-ver', 'anilist:5', 5, 'anime', 'Bebop', NULL, 1, 12);",
+        );
+        sync(&a).await;
+        sync(&b).await;
+        assert_eq!(items_de(&b, "l1"), vec![("tt1".into(), 1.0), ("tt2".into(), 2.0)]);
+        assert_eq!(items_de(&b, "quiero-ver"), vec![("anilist:5".into(), 1.0)]);
+        sql(&a, "UPDATE lista_items SET posicion = 3 WHERE lista_id = 'l1' AND clave = 'tt1'");
+        sql(&b, "UPDATE listas SET nombre = 'Maratón Nolan', actualizada = 20 WHERE id = 'l1'");
+        sync(&a).await;
+        sync(&b).await;
+        sync(&a).await;
+        assert_eq!(items_de(&b, "l1"), vec![("tt2".into(), 2.0), ("tt1".into(), 3.0)]);
+        assert!(listas_de(&a).contains(&("l1".into(), "Maratón Nolan".into())));
+
+        // Borrar la lista viaja; Quiero ver nunca se borra.
+        sql(&b, "DELETE FROM lista_items WHERE lista_id = 'l1'; DELETE FROM listas WHERE id = 'l1';");
+        sync(&b).await;
+        sync(&a).await;
+        assert_eq!(listas_de(&a), vec![("quiero-ver".into(), "Quiero ver".into())]);
+        assert!(items_de(&a, "l1").is_empty());
+        assert_eq!(pendientes_de(&a), 0);
+        assert_eq!(pendientes_de(&b), 0);
+
+        let _ = std::fs::remove_dir_all(&a);
+        let _ = std::fs::remove_dir_all(&b);
     }
 
     #[tokio::test]

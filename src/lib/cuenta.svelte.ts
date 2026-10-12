@@ -1,11 +1,14 @@
 // Cuenta opcional en un servidor propio (server/ del repo, ver cuenta.rs).
 //
-// Sin cuenta Kutral funciona igual. Con cuenta, los favoritos se sincronizan
-// entre equipos: al abrir la app, cada 5 minutos y unos segundos después de
-// cada cambio local. El token nunca pasa por aquí: lo guarda Rust.
+// Sin cuenta Kutral funciona igual. Con cuenta, favoritos, historial (con el
+// minuto donde quedaste) y listas se sincronizan entre equipos: al abrir la
+// app, cada 5 minutos y unos segundos después de cada cambio local (en una
+// reproducción, al detenerla: no en cada guardado de progreso). El token
+// nunca pasa por aquí: lo guarda Rust.
 
 import { invoke } from "@tauri-apps/api/core";
 import { cargarHistorial } from "$lib/historial.svelte";
+import { cargarListas } from "$lib/listas.svelte";
 import { notify } from "$lib/notifStore.svelte";
 import { refreshRdLinked } from "$lib/config.svelte";
 import type { RdDeviceStart } from "$lib/tipos";
@@ -40,7 +43,8 @@ export type Recomendacion = {
   vista: boolean;
 };
 
-// Lo despacha quien cambia algo sincronizable (hoy: historial.svelte.ts).
+// Lo despachan quienes cambian algo sincronizable: historial.svelte.ts,
+// listas.svelte.ts y HistorialTracker (al detener la reproducción).
 const EVENTO_CAMBIO_LOCAL = "kutral:cambio-local";
 
 const CADA = 5 * 60_000;
@@ -111,7 +115,10 @@ export async function sincronizarCuenta(): Promise<void> {
   try {
     const r = await invoke<ResultadoSync>("cuenta_sincronizar");
     cuenta.error = "";
-    if (r.bajados > 0) await cargarHistorial();
+    if (r.bajados > 0) {
+      await cargarHistorial();
+      await cargarListas();
+    }
   } catch (e) {
     cuenta.error = String(e);
   } finally {

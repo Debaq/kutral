@@ -1095,7 +1095,8 @@
         <section class="block">
           <h2>Cuenta de Kutral <span class="badge-opt">opcional</span></h2>
           <p class="hint">
-            Sincroniza tus favoritos entre tus equipos usando tu propio servidor.
+            Sincroniza tus favoritos, lo que viste (con el minuto donde quedaste) y
+            tus listas entre tus equipos, usando tu propio servidor.
             Sin cuenta, Kutral funciona igual, solo en este equipo.
           </p>
 

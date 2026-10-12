@@ -10,7 +10,7 @@
 // el siguiente sin ver (ver siguienteEnOrden y alTerminar en +page.svelte).
 
 import { getDb } from "$lib/vera/db";
-import { estadoDe, type MediaMeta } from "$lib/historial.svelte";
+import { estadoDe, avisarCambio, type MediaMeta } from "$lib/historial.svelte";
 
 export const QUIERO_VER = "quiero-ver";
 
@@ -81,8 +81,10 @@ export function estaEnLista(listaId: string, clave: string): boolean {
   return !!clave && itemsDe(listaId).some((it) => it.clave === clave);
 }
 
-// Marca la lista como tocada: sube en el orden de la pestaña Listas.
+// Marca la lista como tocada: sube en el orden de la pestaña Listas. Todo
+// cambio a una lista pasa por aquí, así que también avisa para sincronizar.
 async function tocar(listaId: string): Promise<void> {
+  avisarCambio();
   const db = await getDb();
   if (!db) return;
   const ahora = Date.now();
@@ -117,6 +119,7 @@ export async function crearLista(nombre: string): Promise<string | null> {
   }
   listas.todas = ordenarListas([...listas.todas, { id, nombre: n, creada: ahora, actualizada: ahora }]);
   listas.items = { ...listas.items, [id]: [] };
+  avisarCambio();
   return id;
 }
 
@@ -127,6 +130,7 @@ export async function renombrarLista(listaId: string, nombre: string): Promise<v
   if (!db) return;
   await db.execute("UPDATE listas SET nombre = $1, actualizada = $2 WHERE id = $3", [n, Date.now(), listaId]);
   listas.todas = listas.todas.map((l) => (l.id === listaId ? { ...l, nombre: n } : l));
+  avisarCambio();
 }
 
 export async function borrarLista(listaId: string): Promise<void> {
@@ -140,6 +144,7 @@ export async function borrarLista(listaId: string): Promise<void> {
   delete copia[listaId];
   listas.items = copia;
   if (enOrden.listaId === listaId) enOrden.listaId = null;
+  avisarCambio();
 }
 
 /** Agrega al final de la lista. */
@@ -216,6 +221,7 @@ export async function moverEnLista(listaId: string, clave: string, delta: -1 | 1
   its[j] = a;
   its[i] = b;
   listas.items = { ...listas.items, [listaId]: its };
+  avisarCambio();
 }
 
 /** Listas (sin "Quiero ver") que contienen el título. */

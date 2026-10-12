@@ -540,6 +540,13 @@ pub fn run() {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 12,
+            description: "sincronizar historial y listas",
+            // Vive en cuenta.rs, como la v10.
+            sql: cuenta::MIGRACION_SQL_V12,
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()

@@ -320,6 +320,7 @@ export async function marcarVisto(meta: MediaMeta, visto: boolean): Promise<void
     console.warn("[historial] error marcando visto:", e);
     return;
   }
+  avisarCambio();
   aplicarLocal({
     imdb_id: meta.clave,
     season,
@@ -361,15 +362,19 @@ export async function borrarProgreso(
       );
     }
     reindexar();
+    avisarCambio();
   } catch (e) {
     console.warn("[historial] error borrando:", e);
   }
 }
 
 // Con cuenta, avisa que hay algo para subir (cuenta.svelte.ts escucha). Es un
-// evento y no un import para no atar el historial a la cuenta.
-function avisarCambio(): void {
-  window.dispatchEvent(new Event("kutral:cambio-local"));
+// evento y no un import para no atar el historial a la cuenta. guardarProgreso
+// no avisa: corre cada 15 s mientras se reproduce; avisa HistorialTracker al
+// detener.
+export function avisarCambio(): void {
+  // Sin window (tests en Node) no hay a quién avisar.
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("kutral:cambio-local"));
 }
 
 export function esFavorito(clave: string): boolean {

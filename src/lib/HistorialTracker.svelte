@@ -13,7 +13,7 @@
   import { onMount, onDestroy } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-  import { contextoActual, guardarProgreso } from "$lib/historial.svelte";
+  import { contextoActual, guardarProgreso, avisarCambio } from "$lib/historial.svelte";
 
   type MpvStatus = {
     running: boolean;
@@ -81,6 +81,8 @@
       runtime: Math.floor(dur),
       real: pos / dur,
     });
+    // Con cuenta: el minuto donde quedó sube ya, para seguir en otro equipo.
+    avisarCambio();
   }
 
   function arrancar(): void {
