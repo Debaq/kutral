@@ -67,6 +67,10 @@
     probarServidor,
     salirCuenta,
     sincronizarCuenta,
+    social,
+    cargarSocial,
+    agregarAmigo,
+    quitarAmigo,
   } from "$lib/cuenta.svelte";
   import type { RdDeviceStart, WebStatus } from "$lib/tipos";
   let tmdb = $state("");
@@ -527,8 +531,37 @@
   let ctaOk = $state("");
 
   onMount(() => {
-    void cargarCuenta().then(() => (ctaServidor = cuenta.servidor));
+    void cargarCuenta().then(() => {
+      ctaServidor = cuenta.servidor;
+      void cargarSocial();
+    });
   });
+
+  // Amigos: se agregan por su nombre de usuario en el mismo servidor.
+  let amigoNombre = $state("");
+  let amigoBusy = $state(false);
+  let amigoErr = $state("");
+
+  async function accionAmigo(fn: () => Promise<void>) {
+    amigoErr = "";
+    amigoBusy = true;
+    try {
+      await fn();
+    } catch (e) {
+      amigoErr = String(e);
+    } finally {
+      amigoBusy = false;
+    }
+  }
+
+  function pedirAmistad() {
+    const n = amigoNombre.trim();
+    if (!n) return;
+    void accionAmigo(async () => {
+      await agregarAmigo(n);
+      amigoNombre = "";
+    });
+  }
 
   async function probarCta() {
     ctaErr = "";
@@ -1023,6 +1056,70 @@
           {#if ctaErr}<p class="err">{ctaErr}</p>{/if}
           {#if ctaOk}<p class="ok">{ctaOk}</p>{/if}
         </section>
+
+        {#if cuenta.usuario}
+          <section class="block">
+            <h2>Amigos</h2>
+            <p class="hint">
+              Agrega a alguien por su nombre de usuario en tu mismo servidor. Cuando
+              acepte, podrán recomendarse películas y series desde la ficha de cada título.
+            </p>
+            <div class="key-row">
+              <input data-nav
+                bind:value={amigoNombre}
+                placeholder="nombre de tu amigo"
+                autocomplete="off"
+                spellcheck="false"
+                onkeydown={(e) => e.key === "Enter" && pedirAmistad()}
+              />
+              <button data-nav class="btn-sec" onclick={pedirAmistad} disabled={amigoBusy || !amigoNombre.trim()}>
+                Agregar
+              </button>
+            </div>
+
+            {#if social.recibidas.length}
+              <p class="subhead amigos-sub">Te quieren agregar</p>
+              {#each social.recibidas as a (a.nombre)}
+                <div class="amigo">
+                  <span>{a.nombre}</span>
+                  <button data-nav class="btn-link" onclick={() => accionAmigo(() => agregarAmigo(a.nombre))} disabled={amigoBusy}>
+                    Aceptar
+                  </button>
+                  <button data-nav class="btn-sec" onclick={() => accionAmigo(() => quitarAmigo(a.nombre))} disabled={amigoBusy}>
+                    Rechazar
+                  </button>
+                </div>
+              {/each}
+            {/if}
+
+            {#if social.amigos.length}
+              <p class="subhead amigos-sub">Tus amigos</p>
+              {#each social.amigos as a (a.nombre)}
+                <div class="amigo">
+                  <span class="dot ok"></span>
+                  <span>{a.nombre}</span>
+                  <button data-nav class="btn-sec" onclick={() => accionAmigo(() => quitarAmigo(a.nombre))} disabled={amigoBusy}>
+                    Quitar
+                  </button>
+                </div>
+              {/each}
+            {/if}
+
+            {#if social.enviadas.length}
+              <p class="subhead amigos-sub">Esperando respuesta</p>
+              {#each social.enviadas as a (a.nombre)}
+                <div class="amigo">
+                  <span class="tenue">{a.nombre}</span>
+                  <button data-nav class="btn-sec" onclick={() => accionAmigo(() => quitarAmigo(a.nombre))} disabled={amigoBusy}>
+                    Cancelar
+                  </button>
+                </div>
+              {/each}
+            {/if}
+
+            {#if amigoErr || social.error}<p class="err">{amigoErr || social.error}</p>{/if}
+          </section>
+        {/if}
 
         <section class="block">
           <h2>Actualizaciones</h2>
@@ -2107,6 +2204,20 @@
     margin: 10px 0 0; font-size: 12.5px;
   }
   .err { color: #ff7373; }
+
+  .amigos-sub { margin-top: 16px; }
+  .amigo {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px;
+    margin-top: 6px;
+    background: #0d0d12;
+    border: 1px solid #1f1f28;
+    border-radius: 8px;
+    font-size: 13.5px;
+  }
+  .amigo > span:not(.dot) { margin-right: auto; }
+  .amigo .btn-link { padding: 7px 14px; font-size: 12.5px; }
+  .amigo .tenue { color: #888892; }
   .ok { color: #9be38a; }
   .os-linked { color: #9be38a; font-size: 13px; flex: 1; }
 

@@ -4,6 +4,7 @@
   import { IMG, img, art, onImgError } from "$lib/imagenes.svelte";
   import { borrarProgreso, type FilaHistorial, type EstadoMedio } from "$lib/historial.svelte";
   import { seasonLabel } from "$lib/inicio/util";
+  import Recomendar from "$lib/inicio/Recomendar.svelte";
   import type { Detail } from "$lib/tipos";
 
   let {
@@ -101,6 +102,7 @@
       {:else if estado?.vistos}
         <span class="hist-info">{estado.vistos} {estado.vistos === 1 ? "capítulo visto" : "capítulos vistos"}</span>
       {/if}
+      <Recomendar {titulo} />
     </div>
   {/if}
   {#if disponible}

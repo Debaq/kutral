@@ -6,7 +6,7 @@
 
 declare(strict_types=1);
 
-const VERSION_API = 1;
+const VERSION_API = 2;
 
 // PHP 7.4 no las trae (son de 8.0).
 if (!function_exists('str_starts_with')) {
@@ -138,6 +138,31 @@ function migrar(PDO $pdo): void
                 token_hash TEXT PRIMARY KEY,
                 ultimo_uso INTEGER NOT NULL
             );
+        ",
+        3 => "
+            -- Una fila por par: `de` pidió la amistad a `para`. Pendiente hasta
+            -- que `para` la acepta; quitarla (cualquiera de los dos) borra la fila.
+            CREATE TABLE amistades (
+                de INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+                para INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+                aceptada INTEGER NOT NULL DEFAULT 0,
+                creada INTEGER NOT NULL,
+                PRIMARY KEY (de, para)
+            );
+            CREATE INDEX idx_amistades_para ON amistades(para);
+
+            -- Bandeja: títulos que un amigo te recomendó. `datos` es el JSON
+            -- del título (tmdb_id, media_type, title, poster_path...).
+            CREATE TABLE recomendaciones (
+                id INTEGER PRIMARY KEY,
+                de INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+                para INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+                datos TEXT NOT NULL,
+                nota TEXT,
+                creada INTEGER NOT NULL,
+                vista INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX idx_recom_para ON recomendaciones(para, id);
         ",
     ];
     $actual = (int) $pdo->query('PRAGMA user_version')->fetchColumn();

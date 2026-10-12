@@ -6,6 +6,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { cargarHistorial } from "$lib/historial.svelte";
+import { notify } from "$lib/notifStore.svelte";
 
 type EstadoCuenta = {
   servidor: string;
@@ -15,6 +16,27 @@ type EstadoCuenta = {
 };
 
 type ResultadoSync = { subidos: number; bajados: number };
+
+export type Amigo = { nombre: string; desde: number };
+type Amigos = { amigos: Amigo[]; recibidas: Amigo[]; enviadas: Amigo[] };
+
+/** Lo que viaja en una recomendación: lo justo para mostrar la tarjeta y abrir el título. */
+export type TituloRecomendado = {
+  tmdb_id: number;
+  media_type: string;
+  title: string;
+  poster_path?: string | null;
+  year?: number | null;
+};
+
+export type Recomendacion = {
+  id: number;
+  de: string;
+  datos: TituloRecomendado;
+  nota: string | null;
+  creada: number;
+  vista: boolean;
+};
 
 // Lo despacha quien cambia algo sincronizable (hoy: historial.svelte.ts).
 const EVENTO_CAMBIO_LOCAL = "kutral:cambio-local";
@@ -29,6 +51,15 @@ export const cuenta = $state({
   ultimaSync: 0,
   sincronizando: false,
   /** Último error de sincronización (vacío si la última salió bien). */
+  error: "",
+});
+
+/** Amigos y bandeja de recomendaciones. Se refrescan junto con cada sincronización. */
+export const social = $state({
+  amigos: [] as Amigo[],
+  recibidas: [] as Amigo[],
+  enviadas: [] as Amigo[],
+  recomendaciones: [] as Recomendacion[],
   error: "",
 });
 
@@ -61,6 +92,89 @@ export async function sincronizarCuenta(): Promise<void> {
     // Refresca hora de la última sync, o refleja una sesión cerrada desde otro equipo.
     await cargarCuenta();
   }
+  await cargarSocial();
+}
+
+// ─── Amigos y recomendaciones ───────────────────────────────────────────────
+
+// Id de la última recomendación ya avisada con una notificación: sin esto,
+// cada arranque volvería a avisar todo lo no visto.
+const ULTIMA_AVISADA = "kutral_recomendacion_avisada";
+
+function vaciarSocial(): void {
+  social.amigos = [];
+  social.recibidas = [];
+  social.enviadas = [];
+  social.recomendaciones = [];
+  social.error = "";
+}
+
+function aplicarAmigos(a: Amigos): void {
+  social.amigos = a.amigos;
+  social.recibidas = a.recibidas;
+  social.enviadas = a.enviadas;
+}
+
+function avisarNuevas(recs: Recomendacion[]): void {
+  const ultima = Number(localStorage.getItem(ULTIMA_AVISADA) ?? 0);
+  const nuevas = recs.filter((r) => !r.vista && r.id > ultima);
+  if (!nuevas.length) return;
+  localStorage.setItem(ULTIMA_AVISADA, String(Math.max(...nuevas.map((r) => r.id))));
+  if (nuevas.length === 1) {
+    const r = nuevas[0];
+    notify("info", `${r.de} te recomendó ${r.datos.title}`, r.nota ?? "Está en Lo que viste → De amigos.");
+  } else {
+    notify("info", `Tienes ${nuevas.length} recomendaciones nuevas`, "Están en Lo que viste → De amigos.");
+  }
+}
+
+export async function cargarSocial(): Promise<void> {
+  if (!cuenta.usuario) {
+    vaciarSocial();
+    return;
+  }
+  try {
+    aplicarAmigos(await invoke<Amigos>("cuenta_amigos"));
+    const r = await invoke<{ recomendaciones: Recomendacion[] }>("cuenta_recomendaciones");
+    social.recomendaciones = r.recomendaciones;
+    social.error = "";
+    avisarNuevas(r.recomendaciones);
+  } catch (e) {
+    social.error = String(e);
+  }
+}
+
+/** Pide la amistad, o la acepta si esa persona ya te la pidió. */
+export async function agregarAmigo(nombre: string): Promise<void> {
+  aplicarAmigos(await invoke<Amigos>("cuenta_amigo_agregar", { nombre }));
+}
+
+/** Rechaza una solicitud, cancela una enviada o quita a un amigo. */
+export async function quitarAmigo(nombre: string): Promise<void> {
+  aplicarAmigos(await invoke<Amigos>("cuenta_amigo_quitar", { nombre }));
+}
+
+export async function recomendar(para: string[], datos: TituloRecomendado, nota: string): Promise<void> {
+  await invoke("cuenta_recomendar", { para, datos, nota: nota.trim() || null });
+}
+
+export function recomendacionesSinVer(): number {
+  return social.recomendaciones.filter((r) => !r.vista).length;
+}
+
+export async function marcarRecomendacionesVistas(): Promise<void> {
+  if (!recomendacionesSinVer()) return;
+  try {
+    await invoke("cuenta_recomendaciones_vistas");
+    social.recomendaciones = social.recomendaciones.map((r) => ({ ...r, vista: true }));
+  } catch (e) {
+    console.warn("[cuenta] marcar vistas:", e);
+  }
+}
+
+export async function quitarRecomendacion(id: number): Promise<void> {
+  await invoke("cuenta_recomendacion_quitar", { id });
+  social.recomendaciones = social.recomendaciones.filter((r) => r.id !== id);
 }
 
 let espera: ReturnType<typeof setTimeout> | null = null;
@@ -114,4 +228,5 @@ export async function salirCuenta(): Promise<void> {
   await invoke("cuenta_salir");
   cuenta.error = "";
   await cargarCuenta();
+  vaciarSocial();
 }

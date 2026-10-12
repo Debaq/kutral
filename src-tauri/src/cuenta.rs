@@ -620,6 +620,85 @@ pub async fn cuenta_sincronizar(app: tauri::AppHandle) -> Result<ResultadoSync, 
     sincronizar_o_olvidar(&dir).await
 }
 
+// ─── Amigos y recomendaciones ───────────────────────────────────────────────
+//
+// Pasan tal cual al front lo que responde el servidor: aquí solo se pone el
+// token, que el webview nunca ve. Un servidor sin estas rutas (versión 1)
+// responde 404 con "no existe ...".
+
+async fn con_sesion(
+    app: &tauri::AppHandle,
+    metodo: reqwest::Method,
+    ruta: &str,
+    cuerpo: Option<&Value>,
+) -> Result<Value, String> {
+    let dir = dir_config(app)?;
+    let c = cargar(&dir);
+    if c.token.is_empty() {
+        return Err("no hay sesión".into());
+    }
+    match api(&c.servidor, Some(&c.token), metodo, ruta, cuerpo).await {
+        Ok(v) => Ok(v),
+        Err(ErrApi::SinSesion) => {
+            let _turno = EN_CURSO.lock().await;
+            olvidar_sesion(&dir);
+            Err(ErrApi::SinSesion.texto())
+        }
+        Err(ErrApi::Otro(e)) if e.starts_with("no existe ") => {
+            Err("tu servidor es de una versión anterior: sube la carpeta server/ nueva".into())
+        }
+        Err(e) => Err(e.texto()),
+    }
+}
+
+#[tauri::command]
+pub async fn cuenta_amigos(app: tauri::AppHandle) -> Result<Value, String> {
+    con_sesion(&app, reqwest::Method::GET, "/amigos", None).await
+}
+
+/// Pide la amistad, o la acepta si el otro ya la había pedido.
+#[tauri::command]
+pub async fn cuenta_amigo_agregar(app: tauri::AppHandle, nombre: String) -> Result<Value, String> {
+    let cuerpo = json!({ "nombre": nombre.trim() });
+    con_sesion(&app, reqwest::Method::POST, "/amigos", Some(&cuerpo)).await
+}
+
+/// Rechaza, cancela o deja de ser amigo: en el servidor es lo mismo.
+#[tauri::command]
+pub async fn cuenta_amigo_quitar(app: tauri::AppHandle, nombre: String) -> Result<Value, String> {
+    let nombre = nombre.trim().to_lowercase();
+    if nombre.is_empty() || !nombre.chars().all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c)) {
+        return Err("nombre inválido".into());
+    }
+    con_sesion(&app, reqwest::Method::DELETE, &format!("/amigos/{nombre}"), None).await
+}
+
+#[tauri::command]
+pub async fn cuenta_recomendaciones(app: tauri::AppHandle) -> Result<Value, String> {
+    con_sesion(&app, reqwest::Method::GET, "/recomendaciones", None).await
+}
+
+#[tauri::command]
+pub async fn cuenta_recomendar(
+    app: tauri::AppHandle,
+    para: Vec<String>,
+    datos: Value,
+    nota: Option<String>,
+) -> Result<Value, String> {
+    let cuerpo = json!({ "para": para, "datos": datos, "nota": nota });
+    con_sesion(&app, reqwest::Method::POST, "/recomendaciones", Some(&cuerpo)).await
+}
+
+#[tauri::command]
+pub async fn cuenta_recomendaciones_vistas(app: tauri::AppHandle) -> Result<Value, String> {
+    con_sesion(&app, reqwest::Method::POST, "/recomendaciones/vistas", None).await
+}
+
+#[tauri::command]
+pub async fn cuenta_recomendacion_quitar(app: tauri::AppHandle, id: i64) -> Result<Value, String> {
+    con_sesion(&app, reqwest::Method::DELETE, &format!("/recomendaciones/{id}"), None).await
+}
+
 // Prueba de punta a punta contra un servidor real (server/ del repo):
 //
 //   php -S 127.0.0.1:18790 -t server/public server/public/index.php

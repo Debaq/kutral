@@ -2,8 +2,9 @@
 
 API JSON para sincronizar Kutral entre equipos, más un panel web del
 administrador en `/admin`. Es opcional:
-Kutral funciona sin cuenta. Hoy sincroniza los favoritos; historial, listas,
-perfiles, amigos y llavero compartido vienen después.
+Kutral funciona sin cuenta. Hoy sincroniza los favoritos y permite agregar
+amigos del mismo servidor y recomendarse títulos; historial, listas, perfiles
+y llavero compartido vienen después.
 
 ## Requisitos
 
@@ -86,7 +87,7 @@ Los errores responden `{"error": "mensaje"}` con su código HTTP.
 
 | Ruta | Qué hace |
 |---|---|
-| `GET /ping` | `{"servicio":"kutral-cuentas","version":1}` |
+| `GET /ping` | `{"servicio":"kutral-cuentas","version":2}` |
 | `POST /registro` | `{invitacion, nombre, clave, equipo}` → `{token, usuario, perfiles}` |
 | `POST /login` | `{nombre, clave, equipo}` → `{token, usuario, perfiles}` |
 | 🔒 `POST /salir` | Cierra la sesión de este equipo |
@@ -94,6 +95,13 @@ Los errores responden `{"error": "mensaje"}` con su código HTTP.
 | 🔒 `DELETE /equipos/{id}` | Cierra la sesión de otro equipo |
 | 🔒 `GET /sync?perfil=ID&desde=SEQ` | Cambios posteriores a `SEQ`: `{cambios, hasta, mas}` |
 | 🔒 `POST /sync` | `{perfil, cambios: [{coleccion, clave, datos, borrado, actualizado}]}` |
+| 🔒 `GET /amigos` | `{amigos, recibidas, enviadas}`, cada uno `[{nombre, desde}]` |
+| 🔒 `POST /amigos` | `{nombre}`: pide la amistad, o la acepta si el otro ya la pidió |
+| 🔒 `DELETE /amigos/{nombre}` | Rechaza, cancela o deja de ser amigos |
+| 🔒 `GET /recomendaciones` | Bandeja (últimas 100): `[{id, de, datos, nota, creada, vista}]` |
+| 🔒 `POST /recomendaciones` | `{para: [nombres], datos: {tmdb_id, media_type, title, ...}, nota}`; solo a amigos |
+| 🔒 `POST /recomendaciones/vistas` | Marca toda la bandeja como vista |
+| 🔒 `DELETE /recomendaciones/{id}` | Quita una de tu bandeja |
 
 Cada equipo recibe su propio token y en la base solo se guarda su sha256.
 Después de 10 intentos fallidos de login o de invitación desde una IP, responde

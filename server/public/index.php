@@ -334,6 +334,149 @@ function subir(PDO $pdo, array $s, array $b): array
     return ['resultados' => $resultados];
 }
 
+// ─── Amigos ─────────────────────────────────────────────────────────────────
+
+function id_de_nombre(PDO $pdo, string $nombre): int
+{
+    $st = $pdo->prepare('SELECT id FROM usuarios WHERE nombre = ?');
+    $st->execute([strtolower(trim($nombre))]);
+    $id = $st->fetchColumn();
+    if ($id === false) {
+        throw new Fallo(404, 'no hay ningún usuario con ese nombre en este servidor');
+    }
+    return (int) $id;
+}
+
+function son_amigos(PDO $pdo, int $a, int $b): bool
+{
+    $st = $pdo->prepare(
+        'SELECT 1 FROM amistades WHERE aceptada = 1 AND ((de = ? AND para = ?) OR (de = ? AND para = ?))'
+    );
+    $st->execute([$a, $b, $b, $a]);
+    return (bool) $st->fetchColumn();
+}
+
+function amigos(PDO $pdo, array $s): array
+{
+    $st = $pdo->prepare(
+        'SELECT a.de, a.aceptada, a.creada, u.nombre FROM amistades a
+           JOIN usuarios u ON u.id = CASE WHEN a.de = ? THEN a.para ELSE a.de END
+          WHERE a.de = ? OR a.para = ?
+          ORDER BY u.nombre'
+    );
+    $st->execute([$s['usuario'], $s['usuario'], $s['usuario']]);
+    $out = ['amigos' => [], 'recibidas' => [], 'enviadas' => []];
+    foreach ($st->fetchAll() as $f) {
+        $grupo = $f['aceptada'] ? 'amigos' : ((int) $f['de'] === $s['usuario'] ? 'enviadas' : 'recibidas');
+        $out[$grupo][] = ['nombre' => $f['nombre'], 'desde' => (int) $f['creada']];
+    }
+    return $out;
+}
+
+// Pedir la amistad a alguien que ya te la pidió = aceptarla.
+function agregar_amigo(PDO $pdo, array $s, array $b): array
+{
+    $otro = id_de_nombre($pdo, texto($b, 'nombre', 32));
+    if ($otro === $s['usuario']) {
+        throw new Fallo(400, 'no puedes agregarte a ti mismo');
+    }
+    $acepta = $pdo->prepare('UPDATE amistades SET aceptada = 1 WHERE de = ? AND para = ?');
+    $acepta->execute([$otro, $s['usuario']]);
+    if ($acepta->rowCount() === 0) {
+        $pdo->prepare('INSERT OR IGNORE INTO amistades (de, para, creada) VALUES (?, ?, ?)')
+            ->execute([$s['usuario'], $otro, ahora_ms()]);
+    }
+    return amigos($pdo, $s);
+}
+
+// Rechazar, cancelar lo enviado o dejar de ser amigos: todo borra el par.
+function quitar_amigo(PDO $pdo, array $s, string $nombre): array
+{
+    $otro = id_de_nombre($pdo, $nombre);
+    $pdo->prepare('DELETE FROM amistades WHERE (de = ? AND para = ?) OR (de = ? AND para = ?)')
+        ->execute([$s['usuario'], $otro, $otro, $s['usuario']]);
+    return amigos($pdo, $s);
+}
+
+// ─── Recomendaciones ────────────────────────────────────────────────────────
+
+const BANDEJA = 100;
+
+function recomendaciones(PDO $pdo, array $s): array
+{
+    $st = $pdo->prepare(
+        'SELECT r.id, u.nombre AS de, r.datos, r.nota, r.creada, r.vista FROM recomendaciones r
+           JOIN usuarios u ON u.id = r.de
+          WHERE r.para = ? ORDER BY r.id DESC LIMIT ' . BANDEJA
+    );
+    $st->execute([$s['usuario']]);
+    return ['recomendaciones' => array_map(function ($r) {
+        return [
+            'id' => (int) $r['id'],
+            'de' => $r['de'],
+            'datos' => json_decode($r['datos'], true),
+            'nota' => $r['nota'],
+            'creada' => (int) $r['creada'],
+            'vista' => (bool) $r['vista'],
+        ];
+    }, $st->fetchAll())];
+}
+
+function recomendar(PDO $pdo, array $s, array $b): array
+{
+    $para = $b['para'] ?? null;
+    if (!is_array($para) || !$para || count($para) > 50) {
+        throw new Fallo(400, "'para' debe ser una lista de amigos");
+    }
+    $datos = $b['datos'] ?? null;
+    if (!is_array($datos) || !isset($datos['tmdb_id'], $datos['media_type'], $datos['title'])) {
+        throw new Fallo(400, "faltan los 'datos' del título");
+    }
+    $json = json_encode($datos, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (strlen($json) > 4096) {
+        throw new Fallo(413, 'datos demasiado grandes');
+    }
+    $nota = $b['nota'] ?? null;
+    if ($nota !== null && (!is_string($nota) || largo($nota) > 200)) {
+        throw new Fallo(400, 'la nota va hasta 200 caracteres');
+    }
+    $nota = $nota === null || trim($nota) === '' ? null : trim($nota);
+
+    $ids = [];
+    foreach ($para as $nombre) {
+        if (!is_string($nombre)) {
+            throw new Fallo(400, "'para' debe ser una lista de amigos");
+        }
+        $id = id_de_nombre($pdo, $nombre);
+        if (!son_amigos($pdo, $s['usuario'], $id)) {
+            throw new Fallo(403, "$nombre no es tu amigo");
+        }
+        $ids[$id] = true;
+    }
+    $st = $pdo->prepare('INSERT INTO recomendaciones (de, para, datos, nota, creada) VALUES (?, ?, ?, ?, ?)');
+    foreach (array_keys($ids) as $id) {
+        $st->execute([$s['usuario'], $id, $json, $nota, ahora_ms()]);
+        // La bandeja guarda las últimas BANDEJA: lo más viejo se cae.
+        $pdo->prepare(
+            'DELETE FROM recomendaciones WHERE para = ? AND id NOT IN
+               (SELECT id FROM recomendaciones WHERE para = ? ORDER BY id DESC LIMIT ' . BANDEJA . ')'
+        )->execute([$id, $id]);
+    }
+    return ['ok' => true, 'enviadas' => count($ids)];
+}
+
+function marcar_vistas(PDO $pdo, array $s): array
+{
+    $pdo->prepare('UPDATE recomendaciones SET vista = 1 WHERE para = ? AND vista = 0')->execute([$s['usuario']]);
+    return ['ok' => true];
+}
+
+function quitar_recomendacion(PDO $pdo, array $s, int $id): array
+{
+    $pdo->prepare('DELETE FROM recomendaciones WHERE id = ? AND para = ?')->execute([$id, $s['usuario']]);
+    return ['ok' => true];
+}
+
 // ─── Despacho ───────────────────────────────────────────────────────────────
 
 try {
@@ -362,6 +505,20 @@ try {
         $res = bajar($pdo, autenticar($pdo));
     } elseif ($metodo === 'POST' && $r === '/sync') {
         $res = subir($pdo, autenticar($pdo), cuerpo());
+    } elseif ($metodo === 'GET' && $r === '/amigos') {
+        $res = amigos($pdo, autenticar($pdo));
+    } elseif ($metodo === 'POST' && $r === '/amigos') {
+        $res = agregar_amigo($pdo, autenticar($pdo), cuerpo());
+    } elseif ($metodo === 'DELETE' && preg_match('#^/amigos/([a-z0-9_.-]{1,32})$#', $r, $m) === 1) {
+        $res = quitar_amigo($pdo, autenticar($pdo), $m[1]);
+    } elseif ($metodo === 'GET' && $r === '/recomendaciones') {
+        $res = recomendaciones($pdo, autenticar($pdo));
+    } elseif ($metodo === 'POST' && $r === '/recomendaciones') {
+        $res = recomendar($pdo, autenticar($pdo), cuerpo());
+    } elseif ($metodo === 'POST' && $r === '/recomendaciones/vistas') {
+        $res = marcar_vistas($pdo, autenticar($pdo));
+    } elseif ($metodo === 'DELETE' && preg_match('#^/recomendaciones/(\d+)$#', $r, $m) === 1) {
+        $res = quitar_recomendacion($pdo, autenticar($pdo), (int) $m[1]);
     } else {
         throw new Fallo(404, "no existe $metodo $r");
     }

@@ -1,5 +1,6 @@
 <script lang="ts">
-  // Lo que viste, agrupado por fecha, y tus favoritos.
+  // Lo que viste, agrupado por fecha, tus favoritos y, con cuenta, lo que te
+  // recomendaron tus amigos.
   //
   // Misma gramática visual que el catálogo: grid de pósters, foco amarillo,
   // navegación espacial con flechas ($lib/nav). Nada acá necesita el mouse:
@@ -22,13 +23,22 @@
     type FilaHistorial,
     type FilaFavorito,
   } from "$lib/historial.svelte";
+  import {
+    cuenta,
+    social,
+    recomendacionesSinVer,
+    marcarRecomendacionesVistas,
+    quitarRecomendacion,
+  } from "$lib/cuenta.svelte";
 
-  type Pestana = "seguir" | "vistos" | "favoritos";
-  const PESTANAS: { id: Pestana; label: string }[] = [
+  type Pestana = "seguir" | "vistos" | "favoritos" | "amigos";
+  // "De amigos" solo existe con cuenta.
+  const PESTANAS = $derived<{ id: Pestana; label: string }[]>([
     { id: "seguir", label: "Seguir viendo" },
     { id: "vistos", label: "Historial" },
     { id: "favoritos", label: "Favoritos" },
-  ];
+    ...(cuenta.usuario ? [{ id: "amigos" as Pestana, label: "De amigos" }] : []),
+  ]);
 
   // Qué pestaña estaba abierta al salir a reproducir. Sobrevive al viaje de
   // ida y vuelta a la home; no debe sobrevivir al cierre de la app.
@@ -110,6 +120,17 @@
 
   const pendientes = $derived(seguirViendo(60));
   const favoritos = $derived(listaFavoritos());
+  const recomendaciones = $derived(social.recomendaciones);
+  // Las que estaban sin ver al abrir la pestaña: siguen marcadas como "nueva"
+  // mientras se mira, aunque el servidor ya las dé por vistas.
+  let nuevas = $state(new Set<number>());
+
+  function haceDias(ms: number): string {
+    const dias = Math.round((inicioDelDia(Date.now()) - inicioDelDia(ms)) / DIA_MS);
+    if (dias <= 0) return "hoy";
+    if (dias === 1) return "ayer";
+    return fechaCorta(ms);
+  }
 
   // --- Acciones -------------------------------------------------------------
 
@@ -164,6 +185,11 @@
       if (f) void quitarFavorito(f);
       return;
     }
+    if (pestana === "amigos") {
+      const r = recomendaciones[Number(idx)];
+      if (r) void quitarRecomendacion(r.id).catch((e) => console.warn("[historial] quitar recomendación:", e));
+      return;
+    }
     const lista = pestana === "seguir" ? pendientes : historial.filas;
     const f = lista[Number(idx)];
     if (f) confirmar = f;
@@ -171,6 +197,11 @@
 
   function irAPestana(id: Pestana) {
     pestana = id;
+    // Verlas en la pestaña es lo que las da por vistas (el contador se apaga).
+    if (id === "amigos") {
+      nuevas = new Set(recomendaciones.filter((r) => !r.vista).map((r) => r.id));
+      void marcarRecomendacionesVistas();
+    }
     setTimeout(() => enfocarPrimero(document.querySelector(".galeria") ?? document), 40);
   }
 
@@ -249,7 +280,7 @@
       } catch {
         /* tolerado */
       }
-      if (guardada === "seguir" || guardada === "vistos" || guardada === "favoritos") {
+      if (guardada === "seguir" || guardada === "vistos" || guardada === "favoritos" || guardada === "amigos") {
         pestana = guardada;
       } else if (!seguirViendo(1).length && historial.filas.length) {
         // Si no quedó nada a medias, la pestaña útil es el historial completo.
@@ -280,6 +311,7 @@
           {p.label}
           {#if p.id === "seguir" && pendientes.length}<span class="cuenta">{pendientes.length}</span>{/if}
           {#if p.id === "favoritos" && favoritos.length}<span class="cuenta">{favoritos.length}</span>{/if}
+          {#if p.id === "amigos" && recomendacionesSinVer()}<span class="cuenta">{recomendacionesSinVer()}</span>{/if}
         </button>
       {/each}
     </div>
@@ -361,6 +393,39 @@
             {/each}
           </div>
         {/each}
+      {/if}
+    {:else if pestana === "amigos"}
+      {#if !recomendaciones.length}
+        <p class="vacio">
+          Nadie te recomendó nada todavía. Cuando un amigo te recomiende una película
+          o serie desde su ficha, aparece aquí.
+        </p>
+      {:else}
+        <div class="grid">
+          {#each recomendaciones as r, i (r.id)}
+            <button
+              data-nav
+              data-idx={i}
+              class="card"
+              onclick={() => reproducir(r.datos)}
+              title={r.nota ? `${r.datos.title}: "${r.nota}"` : r.datos.title}
+            >
+              <span class="poster">
+                {#if img(r.datos.poster_path, "w342")}
+                  <img src={img(r.datos.poster_path, "w342")} alt="" loading="lazy" />
+                {:else}
+                  <span class="sin-poster">{r.datos.title}</span>
+                {/if}
+                {#if !r.vista || nuevas.has(r.id)}<span class="badge-cap">nueva</span>{/if}
+              </span>
+              <span class="pie">
+                <span class="titulo">{r.datos.title}</span>
+                <span class="sub">de {r.de} · {haceDias(r.creada)}</span>
+                {#if r.nota}<span class="sub nota">"{r.nota}"</span>{/if}
+              </span>
+            </button>
+          {/each}
+        </div>
       {/if}
     {:else if !favoritos.length}
       <p class="vacio">
@@ -651,6 +716,10 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .sub.nota {
+    font-style: italic;
+    color: #b8b8c2;
   }
   .vacio {
     color: #6a6a74;
