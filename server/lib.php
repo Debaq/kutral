@@ -33,7 +33,9 @@ function config(): array
             'intentos_ventana' => 900,
         ];
         $archivo = __DIR__ . '/config.php';
-        $cfg = is_file($archivo) ? array_merge($base, require $archivo) : $base;
+        // Un config.php vacío o sin `return [...]` devuelve 1: se ignora.
+        $propio = is_file($archivo) ? require $archivo : null;
+        $cfg = is_array($propio) ? array_merge($base, $propio) : $base;
     }
     return $cfg;
 }
