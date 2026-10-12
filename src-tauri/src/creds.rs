@@ -82,9 +82,14 @@ pub fn rd_creds_clear(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// ¿Hay cuenta RD vinculada? El frontend usa esto para el estado, sin tocar
-/// nunca el token en sí.
+/// ¿Hay cuenta RD vinculada en este equipo?
+pub fn rd_creds_status_local(app: &tauri::AppHandle) -> bool {
+    load(app).map(|c| !c.access_token.is_empty()).unwrap_or(false)
+}
+
+/// ¿Se puede usar RD? Propio, o prestado por un amigo (llavero.rs). El
+/// frontend usa esto para el estado, sin tocar nunca el token en sí.
 #[tauri::command]
 pub fn rd_creds_status(app: tauri::AppHandle) -> bool {
-    load(&app).map(|c| !c.access_token.is_empty()).unwrap_or(false)
+    rd_creds_status_local(&app) || crate::llavero::presta_rd().is_some()
 }

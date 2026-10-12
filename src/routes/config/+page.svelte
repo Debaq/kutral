@@ -71,6 +71,12 @@
     cargarSocial,
     agregarAmigo,
     quitarAmigo,
+    llavero,
+    llaveroCodigo,
+    llaveroVincular,
+    llaveroBorrar,
+    llaveroPrestar,
+    llaveroDejarDePrestar,
   } from "$lib/cuenta.svelte";
   import type { RdDeviceStart, WebStatus } from "$lib/tipos";
   let tmdb = $state("");
@@ -554,6 +560,82 @@
     }
   }
 
+  // Llavero: prestar Real-Debrid a amigos con una vinculación aparte.
+  let llvLink = $state<RdDeviceStart | null>(null);
+  let llvSegundos = $state(0);
+  let llvTimer: number | null = null;
+  let llvBusy = $state(false);
+  let llvErr = $state("");
+  let llvConfirmarBorrar = $state(false);
+
+  function llvParar() {
+    llvLink = null;
+    if (llvTimer !== null) {
+      clearInterval(llvTimer);
+      llvTimer = null;
+    }
+  }
+
+  // Cancelar no frena la espera en Rust: cada intento lleva número y solo el
+  // último toca la pantalla.
+  let llvIntento = 0;
+
+  function llvCancelar() {
+    llvIntento++;
+    llvParar();
+    llvBusy = false;
+  }
+
+  async function llvVincular() {
+    const yo = ++llvIntento;
+    llvParar();
+    llvErr = "";
+    llvBusy = true;
+    try {
+      const start = await llaveroCodigo();
+      llvLink = start;
+      llvSegundos = start.expires_in;
+      llvTimer = window.setInterval(() => {
+        llvSegundos = Math.max(0, llvSegundos - 1);
+        if (llvSegundos === 0) llvCancelar();
+      }, 1000);
+      await llaveroVincular(start);
+    } catch (e) {
+      if (yo === llvIntento) llvErr = String(e);
+    } finally {
+      if (yo === llvIntento) {
+        llvParar();
+        llvBusy = false;
+      }
+    }
+  }
+
+  async function llvAbrir() {
+    if (!llvLink) return;
+    try { await openUrl(llvLink.verification_url); } catch {}
+  }
+
+  async function llvAccion(fn: () => Promise<void>) {
+    llvErr = "";
+    llvBusy = true;
+    try {
+      await fn();
+    } catch (e) {
+      llvErr = String(e);
+    } finally {
+      llvBusy = false;
+      llvConfirmarBorrar = false;
+    }
+  }
+
+  const llvPrestadoA = $derived(new Set(llavero.rdMia?.prestada_a.map((p) => p.nombre) ?? []));
+
+  function llvUltimoUso(nombre: string): string {
+    const p = llavero.rdMia?.prestada_a.find((x) => x.nombre === nombre);
+    if (!p) return "";
+    return p.ultimo_uso ? `la usó ${haceCuanto(p.ultimo_uso)}` : "todavía no la usa";
+  }
+
   function pedirAmistad() {
     const n = amigoNombre.trim();
     if (!n) return;
@@ -926,7 +1008,13 @@
           <h2>RealDebrid</h2>
           <p class="hint">Vincula tu cuenta para streaming premium sin publicidad.</p>
 
-          {#if config.rdLinked && !rdLink}
+          {#if config.rdLinked && !rdLink && !llavero.rdPropio && llavero.rdDe}
+            <div class="rd-linked">
+              <span class="dot ok"></span>
+              <span>Usas el Real-Debrid que te presta <strong>{llavero.rdDe}</strong></span>
+              <button data-nav class="btn-sec" onclick={startRd} disabled={rdStarting}>Vincular la mía</button>
+            </div>
+          {:else if config.rdLinked && !rdLink}
             <div class="rd-linked">
               <span class="dot ok"></span>
               <span>Cuenta vinculada</span>
@@ -1118,6 +1206,69 @@
             {/if}
 
             {#if amigoErr || social.error}<p class="err">{amigoErr || social.error}</p>{/if}
+          </section>
+
+          <section class="block">
+            <h2>Prestar Real-Debrid</h2>
+            <p class="hint">
+              Tus amigos usan tu Real-Debrid sin conocer tu contraseña ni tu clave: el
+              servidor les entrega solo un permiso temporal y puedes dejar de prestarlo
+              cuando quieras. Usa una vinculación aparte, así la de tus equipos no se toca.
+            </p>
+            <p class="warn-box">
+              Real-Debrid prohíbe compartir la cuenta y puede bloquearla si la usan
+              desde varios lugares a la vez. Al dejar de prestar, a tu amigo se le
+              corta en ese momento.
+            </p>
+
+            {#if llvLink}
+              <div class="rd-flow">
+                <p class="rd-step">1. Abre <button data-nav class="rd-link" onclick={llvAbrir}>{llvLink.verification_url}</button></p>
+                <p class="rd-step">2. Escribe este código:</p>
+                <div class="rd-code">{llvLink.user_code}</div>
+                <p class="rd-wait">
+                  <span class="spinner"></span>
+                  Esperando autorización… <em>{fmtMmSs(llvSegundos)}</em>
+                </p>
+                <button data-nav class="btn-sec" onclick={llvCancelar}>Cancelar</button>
+              </div>
+            {:else if !llavero.rdMia}
+              <button data-nav class="btn-link" onclick={llvVincular} disabled={llvBusy}>
+                {llvBusy ? "Conectando…" : "Vincular para prestar"}
+              </button>
+            {:else}
+              {#if !social.amigos.length}
+                <p class="hint">Agrega amigos arriba para poder prestarles tu cuenta.</p>
+              {/if}
+              {#each social.amigos as a (a.nombre)}
+                {@const prestado = llvPrestadoA.has(a.nombre)}
+                <div class="amigo">
+                  {#if prestado}<span class="dot ok"></span>{/if}
+                  <span>{a.nombre}{#if prestado}<span class="tenue"> · {llvUltimoUso(a.nombre)}</span>{/if}</span>
+                  {#if prestado}
+                    <button data-nav class="btn-sec" onclick={() => llvAccion(() => llaveroDejarDePrestar(a.nombre))} disabled={llvBusy}>
+                      Dejar de prestar
+                    </button>
+                  {:else}
+                    <button data-nav class="btn-link" onclick={() => llvAccion(() => llaveroPrestar(a.nombre))} disabled={llvBusy}>
+                      Prestar
+                    </button>
+                  {/if}
+                </div>
+              {/each}
+              {#if llvConfirmarBorrar}
+                <p class="hint" style="margin: 14px 0 8px;">
+                  Se deja de prestar a todos y el servidor olvida esta vinculación.
+                </p>
+                <button data-nav class="btn-sec" onclick={() => llvAccion(llaveroBorrar)} disabled={llvBusy}>Sí, borrar</button>
+                <button data-nav class="link-tiny" onclick={() => (llvConfirmarBorrar = false)}>Cancelar</button>
+              {:else}
+                <button data-nav class="link-tiny" onclick={() => (llvConfirmarBorrar = true)}>
+                  Borrar la vinculación del llavero
+                </button>
+              {/if}
+            {/if}
+            {#if llvErr || llavero.error}<p class="err">{llvErr || llavero.error}</p>{/if}
           </section>
         {/if}
 

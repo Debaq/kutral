@@ -7,6 +7,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { cargarHistorial } from "$lib/historial.svelte";
 import { notify } from "$lib/notifStore.svelte";
+import { refreshRdLinked } from "$lib/config.svelte";
+import type { RdDeviceStart } from "$lib/tipos";
 
 type EstadoCuenta = {
   servidor: string;
@@ -62,6 +64,31 @@ export const social = $state({
   recomendaciones: [] as Recomendacion[],
   error: "",
 });
+
+export type Prestamo = { nombre: string; desde: number; ultimo_uso: number | null };
+
+type EstadoLlavero = {
+  mias: { rd?: { creada: number; prestada_a: Prestamo[] } };
+  prestadas: { servicio: string; de: string; desde: number }[];
+  rd_propio: boolean;
+};
+
+/** Llavero: el Real-Debrid que prestas a tus amigos y el que te prestan. */
+export const llavero = $state({
+  /** Hay RD vinculado en este equipo (propio). */
+  rdPropio: false,
+  /** Quién te presta RD, si alguien lo hace. Se usa solo sin RD propio. */
+  rdDe: null as string | null,
+  /** Tu vinculación para prestar; null = no prestas. */
+  rdMia: null as { creada: number; prestada_a: Prestamo[] } | null,
+  error: "",
+});
+
+function aplicarLlavero(e: EstadoLlavero): void {
+  llavero.rdPropio = e.rd_propio;
+  llavero.rdDe = e.prestadas.find((p) => p.servicio === "rd")?.de ?? null;
+  llavero.rdMia = e.mias.rd ?? null;
+}
 
 function aplicar(e: EstadoCuenta): void {
   cuenta.servidor = e.servidor;
@@ -142,6 +169,50 @@ export async function cargarSocial(): Promise<void> {
   } catch (e) {
     social.error = String(e);
   }
+  await cargarLlavero();
+}
+
+// ─── Llavero ────────────────────────────────────────────────────────────────
+
+export async function cargarLlavero(): Promise<void> {
+  try {
+    aplicarLlavero(await invoke<EstadoLlavero>("llavero_estado"));
+    llavero.error = "";
+  } catch (e) {
+    llavero.error = String(e);
+  }
+  // Un préstamo nuevo (o uno que se cortó) cambia si hay RD para usar.
+  await refreshRdLinked();
+}
+
+/** Pide un código de Real-Debrid solo para el llavero (no toca el de este equipo). */
+export async function llaveroCodigo(): Promise<RdDeviceStart> {
+  return invoke<RdDeviceStart>("rd_device_start");
+}
+
+/** Espera a que autorices el código y sube esa vinculación al servidor. */
+export async function llaveroVincular(start: RdDeviceStart): Promise<void> {
+  await invoke("llavero_vincular", {
+    deviceCode: start.device_code,
+    interval: start.interval,
+    expiresIn: start.expires_in,
+  });
+  await cargarLlavero();
+}
+
+export async function llaveroBorrar(): Promise<void> {
+  await invoke("llavero_borrar");
+  await cargarLlavero();
+}
+
+export async function llaveroPrestar(nombre: string): Promise<void> {
+  await invoke("llavero_prestar", { nombre });
+  await cargarLlavero();
+}
+
+export async function llaveroDejarDePrestar(nombre: string): Promise<void> {
+  await invoke("llavero_dejar_de_prestar", { nombre });
+  await cargarLlavero();
 }
 
 /** Pide la amistad, o la acepta si esa persona ya te la pidió. */
@@ -229,4 +300,5 @@ export async function salirCuenta(): Promise<void> {
   cuenta.error = "";
   await cargarCuenta();
   vaciarSocial();
+  await cargarLlavero();
 }

@@ -626,7 +626,12 @@ pub async fn cuenta_sincronizar(app: tauri::AppHandle) -> Result<ResultadoSync, 
 // token, que el webview nunca ve. Un servidor sin estas rutas (versión 1)
 // responde 404 con "no existe ...".
 
-async fn con_sesion(
+/// ¿Hay sesión en este equipo? Sin red.
+pub(crate) fn con_cuenta(app: &tauri::AppHandle) -> bool {
+    dir_config(app).map(|d| !cargar(&d).token.is_empty()).unwrap_or(false)
+}
+
+pub(crate) async fn con_sesion(
     app: &tauri::AppHandle,
     metodo: reqwest::Method,
     ruta: &str,

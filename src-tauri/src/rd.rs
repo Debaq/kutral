@@ -322,14 +322,33 @@ where
     F: Fn(String) -> Fut,
     Fut: std::future::Future<Output = Result<T, String>>,
 {
-    let c = crate::creds::load(app)
-        .filter(|c| !c.access_token.is_empty())
-        .ok_or("RD no vinculado")?;
+    let Some(c) = crate::creds::load(app).filter(|c| !c.access_token.is_empty()) else {
+        // Sin RD propio: el de un amigo, vía el llavero del servidor.
+        return con_token_prestado(app, op).await;
+    };
     let token = if por_vencer(&c) { renovar(app, None).await? } else { c.access_token };
     match op(token.clone()).await {
         Err(e) if token_rechazado(&e) => {
             eprintln!("[rd] token rechazado ({e}), renovando");
             let nuevo = renovar(app, Some(&token)).await?;
+            op(nuevo).await
+        }
+        r => r,
+    }
+}
+
+/// Como con_token, con el token que presta un amigo. Si RD lo rechaza se le
+/// pide al servidor que lo renueve; si ya no se lo prestan, falla.
+async fn con_token_prestado<T, F, Fut>(app: &tauri::AppHandle, op: F) -> Result<T, String>
+where
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = Result<T, String>>,
+{
+    let token = crate::llavero::token_prestado(app, None).await?;
+    match op(token.clone()).await {
+        Err(e) if token_rechazado(&e) => {
+            eprintln!("[rd] token prestado rechazado ({e}), pidiendo otro");
+            let nuevo = crate::llavero::token_prestado(app, Some(&token)).await?;
             op(nuevo).await
         }
         r => r,
@@ -551,6 +570,19 @@ pub async fn rd_device_poll(
     interval: u64,
     expires_in: u64,
 ) -> Result<(), String> {
+    let creds = esperar_vinculacion(&device_code, interval, expires_in).await?;
+    // El token NO vuelve al webview: se persiste en el store 0600 del backend.
+    crate::creds::save(&app, &creds)
+}
+
+/// Espera a que el usuario autorice el código en real-debrid.com/device y
+/// devuelve las credenciales sin guardarlas: este equipo las guarda
+/// (rd_device_poll) o se van al llavero del servidor (llavero.rs).
+pub(crate) async fn esperar_vinculacion(
+    device_code: &str,
+    interval: u64,
+    expires_in: u64,
+) -> Result<crate::creds::RdCreds, String> {
     if device_code.is_empty() {
         return Err("device_code vacío".into());
     }
@@ -590,7 +622,7 @@ pub async fn rd_device_poll(
         let form = [
             ("client_id", creds.client_id.as_str()),
             ("client_secret", creds.client_secret.as_str()),
-            ("code", device_code.as_str()),
+            ("code", device_code),
             ("grant_type", RD_GRANT_DEVICE),
         ];
         let tok = match cli
@@ -615,17 +647,12 @@ pub async fn rd_device_poll(
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        // El token NO vuelve al webview: se persiste en el store 0600 del backend.
-        crate::creds::save(
-            &app,
-            &crate::creds::RdCreds {
-                access_token: t.access_token,
-                refresh_token: t.refresh_token,
-                client_id: creds.client_id,
-                client_secret: creds.client_secret,
-                expires_at: now + t.expires_in,
-            },
-        )?;
-        return Ok(());
+        return Ok(crate::creds::RdCreds {
+            access_token: t.access_token,
+            refresh_token: t.refresh_token,
+            client_id: creds.client_id,
+            client_secret: creds.client_secret,
+            expires_at: now + t.expires_in,
+        });
     }
 }

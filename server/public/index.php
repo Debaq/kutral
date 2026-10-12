@@ -395,6 +395,7 @@ function quitar_amigo(PDO $pdo, array $s, string $nombre): array
     $otro = id_de_nombre($pdo, $nombre);
     $pdo->prepare('DELETE FROM amistades WHERE (de = ? AND para = ?) OR (de = ? AND para = ?)')
         ->execute([$s['usuario'], $otro, $otro, $s['usuario']]);
+    cortar_prestamos($pdo, $s['usuario'], $otro);
     return amigos($pdo, $s);
 }
 
@@ -477,6 +478,253 @@ function quitar_recomendacion(PDO $pdo, array $s, int $id): array
     return ['ok' => true];
 }
 
+// ─── Llavero ────────────────────────────────────────────────────────────────
+
+const SERVICIOS = ['rd'];
+// Renovar con este margen antes de que venza, y nunca más de una vez por
+// minuto aunque un equipo diga que RD le rechazó el token.
+const LLAVE_MARGEN_S = 3600;
+const LLAVE_PAUSA_MS = 60000;
+
+function servicio_valido(string $servicio): string
+{
+    if (!in_array($servicio, SERVICIOS, true)) {
+        throw new Fallo(404, "servicio desconocido: $servicio");
+    }
+    return $servicio;
+}
+
+function llave_propia(PDO $pdo, int $usuario, string $servicio): ?array
+{
+    $st = $pdo->prepare('SELECT * FROM llavero WHERE dueno = ? AND servicio = ?');
+    $st->execute([$usuario, $servicio]);
+    $f = $st->fetch();
+    return $f ?: null;
+}
+
+function llavero(PDO $pdo, array $s): array
+{
+    $mias = [];
+    $st = $pdo->prepare('SELECT id, servicio, creado FROM llavero WHERE dueno = ?');
+    $st->execute([$s['usuario']]);
+    $prest = $pdo->prepare(
+        'SELECT u.nombre, p.creado, p.ultimo_uso FROM prestamos p JOIN usuarios u ON u.id = p.para
+          WHERE p.llave = ? ORDER BY u.nombre'
+    );
+    foreach ($st->fetchAll() as $l) {
+        $prest->execute([$l['id']]);
+        $mias[$l['servicio']] = [
+            'creada' => (int) $l['creado'],
+            'prestada_a' => array_map(function ($p) {
+                return [
+                    'nombre' => $p['nombre'],
+                    'desde' => (int) $p['creado'],
+                    'ultimo_uso' => $p['ultimo_uso'] === null ? null : (int) $p['ultimo_uso'],
+                ];
+            }, $prest->fetchAll()),
+        ];
+    }
+    $st = $pdo->prepare(
+        'SELECT l.servicio, u.nombre AS de, p.creado FROM prestamos p
+           JOIN llavero l ON l.id = p.llave JOIN usuarios u ON u.id = l.dueno
+          WHERE p.para = ? ORDER BY p.creado'
+    );
+    $st->execute([$s['usuario']]);
+    $prestadas = array_map(function ($p) {
+        return ['servicio' => $p['servicio'], 'de' => $p['de'], 'desde' => (int) $p['creado']];
+    }, $st->fetchAll());
+    return ['mias' => (object) $mias, 'prestadas' => $prestadas];
+}
+
+// El dueño sube la vinculación hecha solo para el llavero. Volver a subirla
+// (revincular) conserva los préstamos.
+function guardar_llave(PDO $pdo, array $s, string $servicio, array $b): array
+{
+    $v = [
+        texto($b, 'client_id', 200),
+        texto($b, 'client_secret', 200),
+        texto($b, 'refresh_token', 500),
+        texto($b, 'access_token', 500),
+    ];
+    $expira = $b['expira'] ?? null;
+    if (!is_int($expira) || $expira <= 0) {
+        throw new Fallo(400, "falta 'expira'");
+    }
+    $st = $pdo->prepare(
+        'UPDATE llavero SET client_id = ?, client_secret = ?, refresh_token = ?, access_token = ?,
+                expira = ?, renovado = 0 WHERE dueno = ? AND servicio = ?'
+    );
+    $st->execute(array_merge($v, [$expira, $s['usuario'], $servicio]));
+    if ($st->rowCount() === 0) {
+        $pdo->prepare(
+            'INSERT INTO llavero (dueno, servicio, client_id, client_secret, refresh_token, access_token, expira, creado)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        )->execute(array_merge([$s['usuario'], $servicio], $v, [$expira, ahora_ms()]));
+    }
+    return llavero($pdo, $s);
+}
+
+function borrar_llave(PDO $pdo, array $s, string $servicio): array
+{
+    $llave = llave_propia($pdo, $s['usuario'], $servicio);
+    if ($llave) {
+        anular_token($pdo, $llave);
+    }
+    $pdo->prepare('DELETE FROM llavero WHERE dueno = ? AND servicio = ?')->execute([$s['usuario'], $servicio]);
+    return llavero($pdo, $s);
+}
+
+function prestar(PDO $pdo, array $s, string $servicio, array $b): array
+{
+    $llave = llave_propia($pdo, $s['usuario'], $servicio);
+    if (!$llave) {
+        throw new Fallo(404, 'primero vincula la cuenta que vas a prestar');
+    }
+    $nombre = texto($b, 'nombre', 32);
+    $otro = id_de_nombre($pdo, $nombre);
+    if (!son_amigos($pdo, $s['usuario'], $otro)) {
+        throw new Fallo(403, "$nombre no es tu amigo");
+    }
+    $pdo->prepare('INSERT OR IGNORE INTO prestamos (llave, para, creado) VALUES (?, ?, ?)')
+        ->execute([$llave['id'], $otro, ahora_ms()]);
+    return llavero($pdo, $s);
+}
+
+function dejar_de_prestar(PDO $pdo, array $s, string $servicio, string $nombre): array
+{
+    $llave = llave_propia($pdo, $s['usuario'], $servicio);
+    if ($llave) {
+        $st = $pdo->prepare('DELETE FROM prestamos WHERE llave = ? AND para = ?');
+        $st->execute([$llave['id'], id_de_nombre($pdo, $nombre)]);
+        if ($st->rowCount() > 0) {
+            anular_token($pdo, $llave);
+        }
+    }
+    return llavero($pdo, $s);
+}
+
+// Dejar de ser amigos corta los préstamos en los dos sentidos.
+function cortar_prestamos(PDO $pdo, int $a, int $b): void
+{
+    foreach ([[$a, $b], [$b, $a]] as list($dueno, $para)) {
+        $st = $pdo->prepare('SELECT * FROM llavero WHERE dueno = ?');
+        $st->execute([$dueno]);
+        foreach ($st->fetchAll() as $llave) {
+            $del = $pdo->prepare('DELETE FROM prestamos WHERE llave = ? AND para = ?');
+            $del->execute([$llave['id'], $para]);
+            if ($del->rowCount() > 0) {
+                anular_token($pdo, $llave);
+            }
+        }
+    }
+}
+
+// Corta al instante el token que tenían los que recibían el préstamo (probado
+// contra RD: anula solo ese token; los de los equipos del dueño siguen y la
+// vinculación sirve para renovar). Los que siguen con préstamo reciben uno
+// nuevo en su próximo pedido, porque se marca vencido.
+function anular_token(PDO $pdo, array $llave): void
+{
+    list($estado) = http_pedir('GET', config()['rd_api'] . '/disable_access_token', null, $llave['access_token']);
+    if ($estado !== 204 && $estado !== 200) {
+        error_log("[kutral] llave {$llave['id']}: disable_access_token respondió $estado");
+    }
+    $pdo->prepare('UPDATE llavero SET expira = 0, renovado = 0 WHERE id = ?')->execute([$llave['id']]);
+}
+
+function http_post_form(string $url, array $form): array
+{
+    return http_pedir('POST', $url, $form, null);
+}
+
+function http_pedir(string $metodo, string $url, ?array $form, ?string $token): array
+{
+    $cuerpo = $form === null ? null : http_build_query($form);
+    $headers = [];
+    if ($cuerpo !== null) {
+        $headers[] = 'Content-Type: application/x-www-form-urlencoded';
+    }
+    if ($token !== null) {
+        $headers[] = 'Authorization: Bearer ' . $token;
+    }
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        $op = [
+            CURLOPT_CUSTOMREQUEST => $metodo,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 15,
+        ];
+        if ($cuerpo !== null) {
+            $op[CURLOPT_POSTFIELDS] = $cuerpo;
+        }
+        curl_setopt_array($ch, $op);
+        $resp = curl_exec($ch);
+        $estado = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        curl_close($ch);
+    } else {
+        $http = [
+            'method' => $metodo,
+            'header' => implode("\r\n", $headers),
+            'timeout' => 15,
+            'ignore_errors' => true,
+        ];
+        if ($cuerpo !== null) {
+            $http['content'] = $cuerpo;
+        }
+        $resp = @file_get_contents($url, false, stream_context_create(['http' => $http]));
+        $estado = isset($http_response_header[0]) && preg_match('#\s(\d{3})\s#', $http_response_header[0], $m)
+            ? (int) $m[1] : 0;
+    }
+    $json = is_string($resp) ? json_decode($resp, true) : null;
+    return [$estado, is_array($json) ? $json : []];
+}
+
+function renovar_llave(PDO $pdo, array $llave, string $de): array
+{
+    list($estado, $t) = http_post_form(config()['rd_oauth'] . '/token', [
+        'client_id' => $llave['client_id'],
+        'client_secret' => $llave['client_secret'],
+        'code' => $llave['refresh_token'],
+        'grant_type' => 'http://oauth.net/grant_type/device/1.0',
+    ]);
+    if ($estado !== 200 || empty($t['access_token'])) {
+        error_log("[kutral] llave {$llave['id']} no renovó: $estado");
+        throw new Fallo(502, "la cuenta que te presta $de ya no responde; pídele que la vuelva a vincular");
+    }
+    $llave['access_token'] = $t['access_token'];
+    $llave['refresh_token'] = $t['refresh_token'] ?? $llave['refresh_token'];
+    $llave['expira'] = time() + (int) ($t['expires_in'] ?? 86400);
+    $llave['renovado'] = ahora_ms();
+    $pdo->prepare('UPDATE llavero SET access_token = ?, refresh_token = ?, expira = ?, renovado = ? WHERE id = ?')
+        ->execute([$llave['access_token'], $llave['refresh_token'], $llave['expira'], $llave['renovado'], $llave['id']]);
+    return $llave;
+}
+
+// Lo que pide el equipo de quien recibe el préstamo. `renovar=1` cuando RD le
+// acaba de rechazar el token que tenía.
+function token_prestado(PDO $pdo, array $s, string $servicio): array
+{
+    $st = $pdo->prepare(
+        'SELECT l.*, u.nombre AS de FROM prestamos p
+           JOIN llavero l ON l.id = p.llave JOIN usuarios u ON u.id = l.dueno
+          WHERE p.para = ? AND l.servicio = ? ORDER BY p.creado LIMIT 1'
+    );
+    $st->execute([$s['usuario'], $servicio]);
+    $llave = $st->fetch();
+    if (!$llave) {
+        throw new Fallo(403, 'nadie te está prestando esa cuenta');
+    }
+    $vence = (int) $llave['expira'] <= time() + LLAVE_MARGEN_S;
+    $pide = ($_GET['renovar'] ?? '') === '1' && ahora_ms() - (int) $llave['renovado'] > LLAVE_PAUSA_MS;
+    if ($vence || $pide) {
+        $llave = renovar_llave($pdo, $llave, $llave['de']);
+    }
+    $pdo->prepare('UPDATE prestamos SET ultimo_uso = ? WHERE llave = ? AND para = ?')
+        ->execute([ahora_ms(), $llave['id'], $s['usuario']]);
+    return ['access_token' => $llave['access_token'], 'expira' => (int) $llave['expira'], 'de' => $llave['de']];
+}
+
 // ─── Despacho ───────────────────────────────────────────────────────────────
 
 try {
@@ -519,6 +767,25 @@ try {
         $res = marcar_vistas($pdo, autenticar($pdo));
     } elseif ($metodo === 'DELETE' && preg_match('#^/recomendaciones/(\d+)$#', $r, $m) === 1) {
         $res = quitar_recomendacion($pdo, autenticar($pdo), (int) $m[1]);
+    } elseif ($metodo === 'GET' && $r === '/llavero') {
+        $res = llavero($pdo, autenticar($pdo));
+    } elseif (preg_match('#^/llavero/([a-z]{1,16})(/.*)?$#', $r, $m) === 1) {
+        $servicio = servicio_valido($m[1]);
+        $resto = $m[2] ?? '';
+        $s = autenticar($pdo);
+        if ($metodo === 'POST' && $resto === '') {
+            $res = guardar_llave($pdo, $s, $servicio, cuerpo());
+        } elseif ($metodo === 'DELETE' && $resto === '') {
+            $res = borrar_llave($pdo, $s, $servicio);
+        } elseif ($metodo === 'POST' && $resto === '/prestamos') {
+            $res = prestar($pdo, $s, $servicio, cuerpo());
+        } elseif ($metodo === 'DELETE' && preg_match('#^/prestamos/([a-z0-9_.-]{1,32})$#', $resto, $n) === 1) {
+            $res = dejar_de_prestar($pdo, $s, $servicio, $n[1]);
+        } elseif ($metodo === 'GET' && $resto === '/token') {
+            $res = token_prestado($pdo, $s, $servicio);
+        } else {
+            throw new Fallo(404, "no existe $metodo $r");
+        }
     } else {
         throw new Fallo(404, "no existe $metodo $r");
     }

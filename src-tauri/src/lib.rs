@@ -9,6 +9,7 @@ mod cuenta;
 mod dlna;
 mod kitsu;
 mod kodios;
+mod llavero;
 mod lan;
 mod net;
 mod omdb;
@@ -606,6 +607,11 @@ pub fn run() {
             cuenta::cuenta_recomendar,
             cuenta::cuenta_recomendaciones_vistas,
             cuenta::cuenta_recomendacion_quitar,
+            llavero::llavero_estado,
+            llavero::llavero_vincular,
+            llavero::llavero_borrar,
+            llavero::llavero_prestar,
+            llavero::llavero_dejar_de_prestar,
             sistema::audio_get,
             sistema::audio_set,
             sistema::audio_set_mute,

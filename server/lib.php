@@ -6,7 +6,7 @@
 
 declare(strict_types=1);
 
-const VERSION_API = 2;
+const VERSION_API = 3;
 
 // PHP 7.4 no las trae (son de 8.0).
 if (!function_exists('str_starts_with')) {
@@ -31,6 +31,9 @@ function config(): array
             // Intentos de login fallidos por IP antes de frenar, y ventana.
             'intentos_max' => 10,
             'intentos_ventana' => 900,
+            // Donde el llavero renueva los tokens de Real-Debrid (se cambia solo en pruebas).
+            'rd_oauth' => 'https://api.real-debrid.com/oauth/v2',
+            'rd_api' => 'https://api.real-debrid.com/rest/1.0',
         ];
         $archivo = __DIR__ . '/config.php';
         // Un config.php vacío o sin `return [...]` devuelve 1: se ignora.
@@ -163,6 +166,34 @@ function migrar(PDO $pdo): void
                 vista INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX idx_recom_para ON recomendaciones(para, id);
+        ",
+        4 => "
+            -- Llavero: una vinculación de un servicio (hoy solo 'rd') que el
+            -- dueño presta a amigos. Es una vinculación aparte de la de sus
+            -- equipos; el servidor la renueva y a los demás solo les entrega
+            -- el access_token, nunca el refresh_token.
+            CREATE TABLE llavero (
+                id INTEGER PRIMARY KEY,
+                dueno INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+                servicio TEXT NOT NULL,
+                client_id TEXT NOT NULL,
+                client_secret TEXT NOT NULL,
+                refresh_token TEXT NOT NULL,
+                access_token TEXT NOT NULL,
+                expira INTEGER NOT NULL,
+                renovado INTEGER NOT NULL DEFAULT 0,
+                creado INTEGER NOT NULL,
+                UNIQUE (dueno, servicio)
+            );
+
+            CREATE TABLE prestamos (
+                llave INTEGER NOT NULL REFERENCES llavero(id) ON DELETE CASCADE,
+                para INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+                creado INTEGER NOT NULL,
+                ultimo_uso INTEGER,
+                PRIMARY KEY (llave, para)
+            );
+            CREATE INDEX idx_prestamos_para ON prestamos(para);
         ",
     ];
     $actual = (int) $pdo->query('PRAGMA user_version')->fetchColumn();

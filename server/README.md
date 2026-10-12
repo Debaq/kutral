@@ -3,8 +3,8 @@
 API JSON para sincronizar Kutral entre equipos, más un panel web del
 administrador en `/admin`. Es opcional:
 Kutral funciona sin cuenta. Hoy sincroniza los favoritos y permite agregar
-amigos del mismo servidor y recomendarse títulos; historial, listas, perfiles
-y llavero compartido vienen después.
+amigos del mismo servidor, recomendarse títulos y prestarles tu Real-Debrid
+(llavero); historial, listas y perfiles vienen después.
 
 ## Requisitos
 
@@ -87,7 +87,7 @@ Los errores responden `{"error": "mensaje"}` con su código HTTP.
 
 | Ruta | Qué hace |
 |---|---|
-| `GET /ping` | `{"servicio":"kutral-cuentas","version":2}` |
+| `GET /ping` | `{"servicio":"kutral-cuentas","version":3}` |
 | `POST /registro` | `{invitacion, nombre, clave, equipo}` → `{token, usuario, perfiles}` |
 | `POST /login` | `{nombre, clave, equipo}` → `{token, usuario, perfiles}` |
 | 🔒 `POST /salir` | Cierra la sesión de este equipo |
@@ -102,10 +102,29 @@ Los errores responden `{"error": "mensaje"}` con su código HTTP.
 | 🔒 `POST /recomendaciones` | `{para: [nombres], datos: {tmdb_id, media_type, title, ...}, nota}`; solo a amigos |
 | 🔒 `POST /recomendaciones/vistas` | Marca toda la bandeja como vista |
 | 🔒 `DELETE /recomendaciones/{id}` | Quita una de tu bandeja |
+| 🔒 `GET /llavero` | `{mias: {rd: {creada, prestada_a}}, prestadas: [{servicio, de, desde}]}` |
+| 🔒 `POST /llavero/rd` | `{client_id, client_secret, refresh_token, access_token, expira}`: la vinculación para prestar |
+| 🔒 `DELETE /llavero/rd` | Borra esa vinculación y todos sus préstamos |
+| 🔒 `POST /llavero/rd/prestamos` | `{nombre}`: presta a un amigo |
+| 🔒 `DELETE /llavero/rd/prestamos/{nombre}` | Deja de prestarle |
+| 🔒 `GET /llavero/rd/token[?renovar=1]` | Para quien recibe: `{access_token, expira, de}` |
 
 Cada equipo recibe su propio token y en la base solo se guarda su sha256.
 Después de 10 intentos fallidos de login o de invitación desde una IP, responde
 429 durante 15 minutos.
+
+### Llavero
+
+Quien presta vincula en Kutral un código de Real-Debrid aparte, solo para el
+llavero; el servidor guarda esas credenciales (en `datos/kutral.sqlite`, por eso
+`datos/` nunca debe quedar a la vista) y renueva el token una hora antes de que
+venza. Quien recibe solo obtiene el `access_token`, nunca el `refresh_token`, y
+lo guarda en memoria. Con `renovar=1` (Real-Debrid le rechazó el token) el
+servidor renueva, como mucho una vez por minuto. Dejar de prestar, dejar de
+ser amigos (corta en los dos sentidos) o borrar la vinculación anula en el acto
+el token que tenían (`disable_access_token`); a los que siguen con préstamo se
+les entrega uno nuevo. Para renovar, PHP necesita salir a internet
+(`curl` o `allow_url_fopen`).
 
 En `POST /sync` gana el cambio con `actualizado` (ms) más reciente. Si el
 servidor ya tiene algo más nuevo, el resultado de ese cambio es
