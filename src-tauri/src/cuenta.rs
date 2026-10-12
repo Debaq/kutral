@@ -33,16 +33,29 @@ struct Cuenta {
     token: String,
     #[serde(default)]
     usuario: String,
+    /// Qué perfil del servidor corresponde a cada perfil de este equipo, y
+    /// hasta dónde se bajó cada uno.
     #[serde(default)]
-    perfil_id: i64,
-    #[serde(default)]
-    perfil_nombre: String,
-    /// Último `seq` del servidor ya aplicado aquí.
-    #[serde(default)]
-    cursor: i64,
+    perfiles: Vec<PerfilSync>,
     /// ms de la última sincronización completa. 0 = nunca.
     #[serde(default)]
     ultima_sync: i64,
+    // Antes de los perfiles (cuenta.json viejo): un solo perfil y su cursor.
+    // `cargar` los pasa a `perfiles`.
+    #[serde(default, skip_serializing)]
+    perfil_id: i64,
+    #[serde(default, skip_serializing)]
+    cursor: i64,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+struct PerfilSync {
+    /// Id del perfil aquí (`perfiles.id`); en el servidor es su `uid`.
+    local: String,
+    /// Id numérico del perfil en el servidor.
+    remoto: i64,
+    /// Último `seq` del servidor ya aplicado a este perfil.
+    cursor: i64,
 }
 
 // Todo recibe la carpeta de config y no el AppHandle: así los tests pueden
@@ -57,10 +70,18 @@ fn dir_config(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 }
 
 fn cargar(dir: &Path) -> Cuenta {
-    std::fs::read_to_string(dir.join("cuenta.json"))
+    let mut c: Cuenta = std::fs::read_to_string(dir.join("cuenta.json"))
         .ok()
         .and_then(|raw| serde_json::from_str(&raw).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if c.perfiles.is_empty() && c.perfil_id > 0 {
+        c.perfiles.push(PerfilSync {
+            local: crate::perfiles::PRINCIPAL.into(),
+            remoto: c.perfil_id,
+            cursor: c.cursor,
+        });
+    }
+    c
 }
 
 fn guardar(dir: &Path, c: &Cuenta) -> Result<(), String> {
@@ -333,12 +354,12 @@ pub const MIGRACION_SQL_V12: &str = "
 /// Anota para subir todo lo sincronizable que no son favoritos. Con su propia
 /// fecha (no "ahora"): si otro equipo tiene algo más nuevo, gana ese.
 const ANOTAR_RESTO: &str = "
-         INSERT OR REPLACE INTO sync_salida (coleccion, clave, cambiado)
-           SELECT 'historial', imdb_id || '|' || season || '|' || episode, last_watched FROM watch_history;
-         INSERT OR REPLACE INTO sync_salida (coleccion, clave, cambiado)
-           SELECT 'listas', id, actualizada FROM listas;
-         INSERT OR REPLACE INTO sync_salida (coleccion, clave, cambiado)
-           SELECT 'lista_items', lista_id || '|' || clave, agregado FROM lista_items;";
+         INSERT OR REPLACE INTO sync_salida (perfil, coleccion, clave, cambiado)
+           SELECT perfil, 'historial', imdb_id || '|' || season || '|' || episode, last_watched FROM watch_history;
+         INSERT OR REPLACE INTO sync_salida (perfil, coleccion, clave, cambiado)
+           SELECT perfil, 'listas', id, actualizada FROM listas;
+         INSERT OR REPLACE INTO sync_salida (perfil, coleccion, clave, cambiado)
+           SELECT perfil, 'lista_items', lista_id || '|' || clave, agregado FROM lista_items;";
 
 const FAVORITOS: &str = "favoritos";
 const HISTORIAL: &str = "historial";
@@ -368,8 +389,8 @@ fn set_activa(db: &Connection, activa: bool) -> Result<(), String> {
 fn anotar_todo(db: &Connection) -> Result<(), String> {
     db.execute_batch(&format!(
         "DELETE FROM sync_salida;
-         INSERT OR REPLACE INTO sync_salida (coleccion, clave, cambiado)
-           SELECT 'favoritos', imdb_id, added_at FROM favorites;
+         INSERT OR REPLACE INTO sync_salida (perfil, coleccion, clave, cambiado)
+           SELECT perfil, 'favoritos', imdb_id, added_at FROM favorites;
          {ANOTAR_RESTO}"
     ))
     .map_err(|e| e.to_string())
@@ -388,13 +409,13 @@ fn partir_item(clave: &str) -> Option<(&str, &str)> {
     clave.split_once('|')
 }
 
-fn datos_historial(db: &Connection, clave: &str) -> Result<Option<Value>, String> {
+fn datos_historial(db: &Connection, perfil: &str, clave: &str) -> Result<Option<Value>, String> {
     let Some((imdb, season, episode)) = partir_historial(clave) else { return Ok(None) };
     db.query_row(
         "SELECT tmdb_id, media_type, title, poster_path, still_path, episode_title,
                 watched_seconds, runtime_seconds, progress_real, completed, last_watched
-           FROM watch_history WHERE imdb_id = ?1 AND season = ?2 AND episode = ?3",
-        params![imdb, season, episode],
+           FROM watch_history WHERE perfil = ?4 AND imdb_id = ?1 AND season = ?2 AND episode = ?3",
+        params![imdb, season, episode, perfil],
         |r| {
             Ok(json!({
                 "tmdb_id": r.get::<_, i64>(0)?,
@@ -415,10 +436,10 @@ fn datos_historial(db: &Connection, clave: &str) -> Result<Option<Value>, String
     .map_err(|e| e.to_string())
 }
 
-fn datos_lista(db: &Connection, id: &str) -> Result<Option<Value>, String> {
+fn datos_lista(db: &Connection, perfil: &str, id: &str) -> Result<Option<Value>, String> {
     db.query_row(
-        "SELECT nombre, creada, actualizada FROM listas WHERE id = ?1",
-        params![id],
+        "SELECT nombre, creada, actualizada FROM listas WHERE perfil = ?2 AND id = ?1",
+        params![id, perfil],
         |r| {
             Ok(json!({
                 "nombre": r.get::<_, String>(0)?,
@@ -431,12 +452,12 @@ fn datos_lista(db: &Connection, id: &str) -> Result<Option<Value>, String> {
     .map_err(|e| e.to_string())
 }
 
-fn datos_item(db: &Connection, clave: &str) -> Result<Option<Value>, String> {
+fn datos_item(db: &Connection, perfil: &str, clave: &str) -> Result<Option<Value>, String> {
     let Some((lista, item)) = partir_item(clave) else { return Ok(None) };
     db.query_row(
         "SELECT tmdb_id, media_type, title, poster_path, posicion, agregado
-           FROM lista_items WHERE lista_id = ?1 AND clave = ?2",
-        params![lista, item],
+           FROM lista_items WHERE perfil = ?3 AND lista_id = ?1 AND clave = ?2",
+        params![lista, item, perfil],
         |r| {
             Ok(json!({
                 "tmdb_id": r.get::<_, i64>(0)?,
@@ -452,27 +473,27 @@ fn datos_item(db: &Connection, clave: &str) -> Result<Option<Value>, String> {
     .map_err(|e| e.to_string())
 }
 
-/// Lo anotado para subir, con el estado actual de cada fila.
-fn pendientes(db: &Connection) -> Result<Vec<Cambio>, String> {
+/// Lo anotado para subir de un perfil, con el estado actual de cada fila.
+fn pendientes(db: &Connection, perfil: &str) -> Result<Vec<Cambio>, String> {
     let mut st = db
-        .prepare("SELECT coleccion, clave, cambiado FROM sync_salida ORDER BY cambiado")
+        .prepare("SELECT coleccion, clave, cambiado FROM sync_salida WHERE perfil = ?1 ORDER BY cambiado")
         .map_err(|e| e.to_string())?;
     let filas: Vec<(String, String, i64)> = st
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .query_map(params![perfil], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
         .map_err(|e| e.to_string())?
         .collect::<Result<_, _>>()
         .map_err(|e| e.to_string())?;
     let mut fav = db
         .prepare(
             "SELECT tmdb_id, media_type, title, poster_path, added_at
-               FROM favorites WHERE imdb_id = ?1",
+               FROM favorites WHERE perfil = ?2 AND imdb_id = ?1",
         )
         .map_err(|e| e.to_string())?;
     let mut out = Vec::with_capacity(filas.len());
     for (coleccion, clave, cambiado) in filas {
         let datos = match coleccion.as_str() {
             FAVORITOS => fav
-                .query_row(params![clave], |r| {
+                .query_row(params![clave, perfil], |r| {
                     Ok(json!({
                         "tmdb_id": r.get::<_, i64>(0)?,
                         "media_type": r.get::<_, String>(1)?,
@@ -483,9 +504,9 @@ fn pendientes(db: &Connection) -> Result<Vec<Cambio>, String> {
                 })
                 .optional()
                 .map_err(|e| e.to_string())?,
-            HISTORIAL => datos_historial(db, &clave)?,
-            LISTAS => datos_lista(db, &clave)?,
-            LISTA_ITEMS => datos_item(db, &clave)?,
+            HISTORIAL => datos_historial(db, perfil, &clave)?,
+            LISTAS => datos_lista(db, perfil, &clave)?,
+            LISTA_ITEMS => datos_item(db, perfil, &clave)?,
             // Colección que esta versión no conoce: no se sube.
             _ => continue,
         };
@@ -502,19 +523,21 @@ fn pendientes(db: &Connection) -> Result<Vec<Cambio>, String> {
 
 /// Quita de la salida lo ya subido, salvo que haya vuelto a cambiar mientras
 /// tanto (su `cambiado` sería mayor que el que se subió).
-fn marcar_subidos(db: &Connection, subidos: &[Cambio]) -> Result<(), String> {
+fn marcar_subidos(db: &Connection, perfil: &str, subidos: &[Cambio]) -> Result<(), String> {
     let mut st = db
-        .prepare("DELETE FROM sync_salida WHERE coleccion = ?1 AND clave = ?2 AND cambiado <= ?3")
+        .prepare(
+            "DELETE FROM sync_salida WHERE perfil = ?4 AND coleccion = ?1 AND clave = ?2 AND cambiado <= ?3",
+        )
         .map_err(|e| e.to_string())?;
     for c in subidos {
-        st.execute(params![c.coleccion, c.clave, c.actualizado])
+        st.execute(params![c.coleccion, c.clave, c.actualizado, perfil])
             .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
-/// Aplica cambios del servidor. Devuelve cuántos tocaron algo local.
-fn aplicar(db: &mut Connection, cambios: &[Cambio]) -> Result<usize, String> {
+/// Aplica cambios del servidor a un perfil. Devuelve cuántos tocaron algo local.
+fn aplicar(db: &mut Connection, perfil: &str, cambios: &[Cambio]) -> Result<usize, String> {
     let tx = db.transaction().map_err(|e| e.to_string())?;
     tx.execute("UPDATE sync_estado SET aplicando = 1 WHERE id = 1", [])
         .map_err(|e| e.to_string())?;
@@ -523,8 +546,8 @@ fn aplicar(db: &mut Connection, cambios: &[Cambio]) -> Result<usize, String> {
         // Un cambio local pendiente y más nuevo gana: se sube en la próxima.
         let local: Option<i64> = tx
             .query_row(
-                "SELECT cambiado FROM sync_salida WHERE coleccion = ?1 AND clave = ?2",
-                params![c.coleccion, c.clave],
+                "SELECT cambiado FROM sync_salida WHERE perfil = ?3 AND coleccion = ?1 AND clave = ?2",
+                params![c.coleccion, c.clave, perfil],
                 |r| r.get(0),
             )
             .optional()
@@ -535,16 +558,16 @@ fn aplicar(db: &mut Connection, cambios: &[Cambio]) -> Result<usize, String> {
         // Antes de aplicar: aplicar_historial puede volver a anotarlo.
         if local.is_some() {
             tx.execute(
-                "DELETE FROM sync_salida WHERE coleccion = ?1 AND clave = ?2",
-                params![c.coleccion, c.clave],
+                "DELETE FROM sync_salida WHERE perfil = ?3 AND coleccion = ?1 AND clave = ?2",
+                params![c.coleccion, c.clave, perfil],
             )
             .map_err(|e| e.to_string())?;
         }
         let tocadas = match c.coleccion.as_str() {
-            FAVORITOS => aplicar_favorito(&tx, c)?,
-            HISTORIAL => aplicar_historial(&tx, c)?,
-            LISTAS => aplicar_lista(&tx, c)?,
-            LISTA_ITEMS => aplicar_item(&tx, c)?,
+            FAVORITOS => aplicar_favorito(&tx, perfil, c)?,
+            HISTORIAL => aplicar_historial(&tx, perfil, c)?,
+            LISTAS => aplicar_lista(&tx, perfil, c)?,
+            LISTA_ITEMS => aplicar_item(&tx, perfil, c)?,
             _ => 0,
         };
         n += tocadas;
@@ -555,10 +578,10 @@ fn aplicar(db: &mut Connection, cambios: &[Cambio]) -> Result<usize, String> {
     Ok(n)
 }
 
-fn aplicar_favorito(tx: &rusqlite::Transaction, c: &Cambio) -> Result<usize, String> {
+fn aplicar_favorito(tx: &rusqlite::Transaction, perfil: &str, c: &Cambio) -> Result<usize, String> {
     if c.borrado {
         return tx
-            .execute("DELETE FROM favorites WHERE imdb_id = ?1", params![c.clave])
+            .execute("DELETE FROM favorites WHERE perfil = ?2 AND imdb_id = ?1", params![c.clave, perfil])
             .map_err(|e| e.to_string());
     }
     let Some(d) = &c.datos else { return Ok(0) };
@@ -573,9 +596,9 @@ fn aplicar_favorito(tx: &rusqlite::Transaction, c: &Cambio) -> Result<usize, Str
     // el eco de lo que este mismo equipo subió).
     let igual: bool = tx
         .query_row(
-            "SELECT 1 FROM favorites WHERE imdb_id = ?1 AND tmdb_id = ?2 AND media_type = ?3
+            "SELECT 1 FROM favorites WHERE perfil = ?7 AND imdb_id = ?1 AND tmdb_id = ?2 AND media_type = ?3
                AND title = ?4 AND poster_path IS ?5 AND added_at = ?6",
-            params![c.clave, tmdb_id, media_type, title, s("poster_path"), added_at],
+            params![c.clave, tmdb_id, media_type, title, s("poster_path"), added_at, perfil],
             |_| Ok(true),
         )
         .optional()
@@ -585,24 +608,24 @@ fn aplicar_favorito(tx: &rusqlite::Transaction, c: &Cambio) -> Result<usize, Str
         return Ok(0);
     }
     tx.execute(
-        "INSERT INTO favorites (imdb_id, tmdb_id, media_type, title, poster_path, added_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-         ON CONFLICT(imdb_id) DO UPDATE SET
+        "INSERT INTO favorites (perfil, imdb_id, tmdb_id, media_type, title, poster_path, added_at)
+         VALUES (?7, ?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT(perfil, imdb_id) DO UPDATE SET
            tmdb_id = excluded.tmdb_id, media_type = excluded.media_type,
            title = excluded.title, poster_path = excluded.poster_path,
            added_at = excluded.added_at",
-        params![c.clave, tmdb_id, media_type, title, s("poster_path"), added_at],
+        params![c.clave, tmdb_id, media_type, title, s("poster_path"), added_at, perfil],
     )
     .map_err(|e| e.to_string())
 }
 
-fn aplicar_historial(tx: &rusqlite::Transaction, c: &Cambio) -> Result<usize, String> {
+fn aplicar_historial(tx: &rusqlite::Transaction, perfil: &str, c: &Cambio) -> Result<usize, String> {
     let Some((imdb, season, episode)) = partir_historial(&c.clave) else { return Ok(0) };
     if c.borrado {
         return tx
             .execute(
-                "DELETE FROM watch_history WHERE imdb_id = ?1 AND season = ?2 AND episode = ?3",
-                params![imdb, season, episode],
+                "DELETE FROM watch_history WHERE perfil = ?4 AND imdb_id = ?1 AND season = ?2 AND episode = ?3",
+                params![imdb, season, episode, perfil],
             )
             .map_err(|e| e.to_string());
     }
@@ -621,8 +644,8 @@ fn aplicar_historial(tx: &rusqlite::Transaction, c: &Cambio) -> Result<usize, St
     let previo: Option<(i64, i64, i64)> = tx
         .query_row(
             "SELECT completed, watched_seconds, last_watched FROM watch_history
-              WHERE imdb_id = ?1 AND season = ?2 AND episode = ?3",
-            params![imdb, season, episode],
+              WHERE perfil = ?4 AND imdb_id = ?1 AND season = ?2 AND episode = ?3",
+            params![imdb, season, episode, perfil],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()
@@ -638,9 +661,9 @@ fn aplicar_historial(tx: &rusqlite::Transaction, c: &Cambio) -> Result<usize, St
     tx.execute(
         "INSERT INTO watch_history
            (imdb_id, season, episode, tmdb_id, media_type, title, poster_path, still_path,
-            episode_title, watched_seconds, runtime_seconds, progress_real, completed, last_watched)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)
-         ON CONFLICT(imdb_id, season, episode) DO UPDATE SET
+            episode_title, watched_seconds, runtime_seconds, progress_real, completed, last_watched, perfil)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)
+         ON CONFLICT(perfil, imdb_id, season, episode) DO UPDATE SET
            tmdb_id = excluded.tmdb_id, media_type = excluded.media_type, title = excluded.title,
            poster_path = COALESCE(excluded.poster_path, watch_history.poster_path),
            still_path = COALESCE(excluded.still_path, watch_history.still_path),
@@ -664,28 +687,29 @@ fn aplicar_historial(tx: &rusqlite::Transaction, c: &Cambio) -> Result<usize, St
             runtime,
             real,
             completed_final,
-            last_watched
+            last_watched,
+            perfil
         ],
     )
     .map_err(|e| e.to_string())?;
     if local_completo && completed == 0 {
         tx.execute(
-            "INSERT OR REPLACE INTO sync_salida (coleccion, clave, cambiado) VALUES (?1, ?2, ?3)",
-            params![HISTORIAL, c.clave, ahora_ms()],
+            "INSERT OR REPLACE INTO sync_salida (perfil, coleccion, clave, cambiado) VALUES (?4, ?1, ?2, ?3)",
+            params![HISTORIAL, c.clave, ahora_ms(), perfil],
         )
         .map_err(|e| e.to_string())?;
     }
     Ok(1)
 }
 
-fn aplicar_lista(tx: &rusqlite::Transaction, c: &Cambio) -> Result<usize, String> {
+fn aplicar_lista(tx: &rusqlite::Transaction, perfil: &str, c: &Cambio) -> Result<usize, String> {
     if c.borrado {
         // "Quiero ver" existe en todos los equipos y no se borra.
         if c.clave == "quiero-ver" {
             return Ok(0);
         }
         return tx
-            .execute("DELETE FROM listas WHERE id = ?1", params![c.clave])
+            .execute("DELETE FROM listas WHERE perfil = ?2 AND id = ?1", params![c.clave, perfil])
             .map_err(|e| e.to_string());
     }
     let Some(d) = &c.datos else { return Ok(0) };
@@ -694,8 +718,8 @@ fn aplicar_lista(tx: &rusqlite::Transaction, c: &Cambio) -> Result<usize, String
     let actualizada = d.get("actualizada").and_then(|v| v.as_i64()).unwrap_or(c.actualizado);
     let igual: bool = tx
         .query_row(
-            "SELECT 1 FROM listas WHERE id = ?1 AND nombre = ?2 AND actualizada = ?3",
-            params![c.clave, nombre, actualizada],
+            "SELECT 1 FROM listas WHERE perfil = ?4 AND id = ?1 AND nombre = ?2 AND actualizada = ?3",
+            params![c.clave, nombre, actualizada, perfil],
             |_| Ok(true),
         )
         .optional()
@@ -705,20 +729,20 @@ fn aplicar_lista(tx: &rusqlite::Transaction, c: &Cambio) -> Result<usize, String
         return Ok(0);
     }
     tx.execute(
-        "INSERT INTO listas (id, nombre, creada, actualizada) VALUES (?1, ?2, ?3, ?4)
-         ON CONFLICT(id) DO UPDATE SET nombre = excluded.nombre, actualizada = excluded.actualizada",
-        params![c.clave, nombre, creada, actualizada],
+        "INSERT INTO listas (perfil, id, nombre, creada, actualizada) VALUES (?5, ?1, ?2, ?3, ?4)
+         ON CONFLICT(perfil, id) DO UPDATE SET nombre = excluded.nombre, actualizada = excluded.actualizada",
+        params![c.clave, nombre, creada, actualizada, perfil],
     )
     .map_err(|e| e.to_string())
 }
 
-fn aplicar_item(tx: &rusqlite::Transaction, c: &Cambio) -> Result<usize, String> {
+fn aplicar_item(tx: &rusqlite::Transaction, perfil: &str, c: &Cambio) -> Result<usize, String> {
     let Some((lista, item)) = partir_item(&c.clave) else { return Ok(0) };
     if c.borrado {
         return tx
             .execute(
-                "DELETE FROM lista_items WHERE lista_id = ?1 AND clave = ?2",
-                params![lista, item],
+                "DELETE FROM lista_items WHERE perfil = ?3 AND lista_id = ?1 AND clave = ?2",
+                params![lista, item, perfil],
             )
             .map_err(|e| e.to_string());
     }
@@ -733,9 +757,9 @@ fn aplicar_item(tx: &rusqlite::Transaction, c: &Cambio) -> Result<usize, String>
     let agregado = i("agregado").unwrap_or(c.actualizado);
     let igual: bool = tx
         .query_row(
-            "SELECT 1 FROM lista_items WHERE lista_id = ?1 AND clave = ?2 AND posicion = ?3
+            "SELECT 1 FROM lista_items WHERE perfil = ?6 AND lista_id = ?1 AND clave = ?2 AND posicion = ?3
                AND title = ?4 AND poster_path IS ?5",
-            params![lista, item, posicion, title, s("poster_path")],
+            params![lista, item, posicion, title, s("poster_path"), perfil],
             |_| Ok(true),
         )
         .optional()
@@ -745,12 +769,12 @@ fn aplicar_item(tx: &rusqlite::Transaction, c: &Cambio) -> Result<usize, String>
         return Ok(0);
     }
     tx.execute(
-        "INSERT INTO lista_items (lista_id, clave, tmdb_id, media_type, title, poster_path, posicion, agregado)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-         ON CONFLICT(lista_id, clave) DO UPDATE SET
+        "INSERT INTO lista_items (lista_id, clave, tmdb_id, media_type, title, poster_path, posicion, agregado, perfil)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+         ON CONFLICT(perfil, lista_id, clave) DO UPDATE SET
            tmdb_id = excluded.tmdb_id, media_type = excluded.media_type, title = excluded.title,
            poster_path = excluded.poster_path, posicion = excluded.posicion",
-        params![lista, item, tmdb_id, media_type, title, s("poster_path"), posicion, agregado],
+        params![lista, item, tmdb_id, media_type, title, s("poster_path"), posicion, agregado, perfil],
     )
     .map_err(|e| e.to_string())
 }
@@ -766,6 +790,72 @@ pub struct ResultadoSync {
 
 const LOTE: usize = 500;
 
+#[derive(Deserialize, Serialize, Debug)]
+struct PerfilRemoto {
+    id: i64,
+    uid: String,
+    nombre: String,
+    #[serde(default)]
+    color: String,
+    #[serde(default)]
+    actualizado: i64,
+}
+
+/// Los perfiles mismos: los creados aquí suben, los creados en otro equipo
+/// bajan, un cambio de nombre o color gana si es más nuevo y uno borrado en
+/// otro equipo se borra aquí. Devuelve cuántos cambios locales hubo.
+///
+/// Borrar un perfil sincronizado exige red (ver perfil_borrar): por eso un
+/// perfil que está en el servidor y no aquí es siempre uno nuevo de otro equipo.
+async fn sincronizar_perfiles(c: &mut Cuenta, db: &mut Connection) -> Result<usize, ErrApi> {
+    let v = api(&c.servidor, Some(&c.token), reqwest::Method::GET, "/perfiles", None).await?;
+    let remotos: Vec<PerfilRemoto> = serde_json::from_value(v["perfiles"].clone())
+        .map_err(|e| ErrApi::Otro(format!("respuesta inválida: {e}")))?;
+    let locales = crate::perfiles::listar(db)?;
+    let mut cambios = 0;
+    let mut mapa = Vec::new();
+    for l in &locales {
+        let previo = c.perfiles.iter().find(|p| p.local == l.id).cloned();
+        let subir = |l: &crate::perfiles::Perfil| {
+            json!({ "uid": l.id, "nombre": l.nombre, "color": l.color, "actualizado": l.actualizado })
+        };
+        match remotos.iter().find(|r| r.uid == l.id) {
+            Some(r) => {
+                if l.actualizado > r.actualizado {
+                    api(&c.servidor, Some(&c.token), reqwest::Method::POST, "/perfiles", Some(&subir(l))).await?;
+                } else if r.actualizado > l.actualizado {
+                    crate::perfiles::actualizar(db, &r.uid, &r.nombre, &r.color, r.actualizado)?;
+                    // Solo la fecha (dos equipos con el mismo "Principal"): no
+                    // es un cambio que el front tenga que recargar.
+                    if r.nombre != l.nombre || r.color != l.color {
+                        cambios += 1;
+                    }
+                }
+                let cursor = previo.filter(|p| p.remoto == r.id).map_or(0, |p| p.cursor);
+                mapa.push(PerfilSync { local: l.id.clone(), remoto: r.id, cursor });
+            }
+            // Ya estuvo en el servidor y no está más: lo borraron en otro equipo.
+            None if previo.is_some() && l.id != crate::perfiles::PRINCIPAL => {
+                crate::perfiles::borrar_local(db, &l.id)?;
+                cambios += 1;
+            }
+            None => {
+                let r = api(&c.servidor, Some(&c.token), reqwest::Method::POST, "/perfiles", Some(&subir(l)))
+                    .await?;
+                let id = r["id"].as_i64().ok_or_else(|| ErrApi::Otro("respuesta sin id de perfil".into()))?;
+                mapa.push(PerfilSync { local: l.id.clone(), remoto: id, cursor: 0 });
+            }
+        }
+    }
+    for r in remotos.iter().filter(|r| !locales.iter().any(|l| l.id == r.uid)) {
+        crate::perfiles::crear_local(db, &r.uid, &r.nombre, &r.color, r.actualizado)?;
+        mapa.push(PerfilSync { local: r.uid.clone(), remoto: r.id, cursor: 0 });
+        cambios += 1;
+    }
+    c.perfiles = mapa;
+    Ok(cambios)
+}
+
 async fn sincronizar(dir: &Path) -> Result<ResultadoSync, ErrApi> {
     let mut c = cargar(dir);
     if c.token.is_empty() {
@@ -774,46 +864,53 @@ async fn sincronizar(dir: &Path) -> Result<ResultadoSync, ErrApi> {
     let mut db = abrir_db(dir)?;
     let mut res = ResultadoSync { subidos: 0, bajados: 0 };
 
-    // 1. Subir.
-    let pend = pendientes(&db)?;
-    for lote in pend.chunks(LOTE) {
-        let r = api(
-            &c.servidor,
-            Some(&c.token),
-            reqwest::Method::POST,
-            "/sync",
-            Some(&json!({ "perfil": c.perfil_id, "cambios": lote })),
-        )
-        .await?;
-        marcar_subidos(&db, lote)?;
-        // Lo que el servidor rechazó por tener algo más nuevo: aplicarlo aquí.
-        let vigentes: Vec<Cambio> = r["resultados"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|x| serde_json::from_value(x.get("vigente")?.clone()).ok())
-            .collect();
-        res.bajados += aplicar(&mut db, &vigentes)?;
-        res.subidos += lote.len() - vigentes.len();
-    }
+    res.bajados += sincronizar_perfiles(&mut c, &mut db).await?;
+    guardar(dir, &c)?;
 
-    // 2. Bajar lo que cambió en otros equipos.
-    loop {
-        let r = api(
-            &c.servidor,
-            Some(&c.token),
-            reqwest::Method::GET,
-            &format!("/sync?perfil={}&desde={}", c.perfil_id, c.cursor),
-            None,
-        )
-        .await?;
-        let cambios: Vec<Cambio> = serde_json::from_value(r["cambios"].clone())
-            .map_err(|e| ErrApi::Otro(format!("respuesta inválida: {e}")))?;
-        res.bajados += aplicar(&mut db, &cambios)?;
-        c.cursor = r["hasta"].as_i64().unwrap_or(c.cursor);
-        guardar(dir, &c)?;
-        if !r["mas"].as_bool().unwrap_or(false) {
-            break;
+    for i in 0..c.perfiles.len() {
+        let PerfilSync { local, remoto, .. } = c.perfiles[i].clone();
+
+        // 1. Subir.
+        let pend = pendientes(&db, &local)?;
+        for lote in pend.chunks(LOTE) {
+            let r = api(
+                &c.servidor,
+                Some(&c.token),
+                reqwest::Method::POST,
+                "/sync",
+                Some(&json!({ "perfil": remoto, "cambios": lote })),
+            )
+            .await?;
+            marcar_subidos(&db, &local, lote)?;
+            // Lo que el servidor rechazó por tener algo más nuevo: aplicarlo aquí.
+            let vigentes: Vec<Cambio> = r["resultados"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|x| serde_json::from_value(x.get("vigente")?.clone()).ok())
+                .collect();
+            res.bajados += aplicar(&mut db, &local, &vigentes)?;
+            res.subidos += lote.len() - vigentes.len();
+        }
+
+        // 2. Bajar lo que cambió en otros equipos.
+        loop {
+            let r = api(
+                &c.servidor,
+                Some(&c.token),
+                reqwest::Method::GET,
+                &format!("/sync?perfil={}&desde={}", remoto, c.perfiles[i].cursor),
+                None,
+            )
+            .await?;
+            let cambios: Vec<Cambio> = serde_json::from_value(r["cambios"].clone())
+                .map_err(|e| ErrApi::Otro(format!("respuesta inválida: {e}")))?;
+            res.bajados += aplicar(&mut db, &local, &cambios)?;
+            c.perfiles[i].cursor = r["hasta"].as_i64().unwrap_or(c.perfiles[i].cursor);
+            guardar(dir, &c)?;
+            if !r["mas"].as_bool().unwrap_or(false) {
+                break;
+            }
         }
     }
     c.ultima_sync = ahora_ms();
@@ -856,16 +953,13 @@ async fn entrar(
         .await
         .map_err(ErrApi::texto)?;
     let token = v["token"].as_str().ok_or("respuesta sin token")?.to_string();
-    // Por ahora un solo perfil por cuenta: el primero.
-    let perfil = v["perfiles"].get(0).ok_or("la cuenta no tiene perfiles")?;
+    // Los perfiles se emparejan en la primera sincronización (por uid: el
+    // "principal" de aquí con el de la cuenta).
     let c = Cuenta {
         servidor,
         token,
         usuario: v["usuario"].as_str().unwrap_or_default().to_string(),
-        perfil_id: perfil["id"].as_i64().unwrap_or(0),
-        perfil_nombre: perfil["nombre"].as_str().unwrap_or_default().to_string(),
-        cursor: 0,
-        ultima_sync: 0,
+        ..Default::default()
     };
     guardar(dir, &c)?;
     let db = abrir_db(dir)?;
@@ -900,7 +994,6 @@ async fn sincronizar_o_olvidar(dir: &Path) -> Result<ResultadoSync, String> {
 pub struct EstadoCuenta {
     pub servidor: String,
     pub usuario: Option<String>,
-    pub perfil: Option<String>,
     pub ultima_sync: i64,
 }
 
@@ -911,7 +1004,6 @@ pub fn cuenta_estado(app: tauri::AppHandle) -> Result<EstadoCuenta, String> {
     Ok(EstadoCuenta {
         servidor: c.servidor,
         usuario: con_sesion.then_some(c.usuario),
-        perfil: con_sesion.then_some(c.perfil_nombre),
         ultima_sync: c.ultima_sync,
     })
 }
@@ -960,6 +1052,38 @@ pub async fn cuenta_sincronizar(app: tauri::AppHandle) -> Result<ResultadoSync, 
     let dir = dir_config(&app)?;
     let _turno = EN_CURSO.lock().await;
     sincronizar_o_olvidar(&dir).await
+}
+
+// ─── Perfiles ───────────────────────────────────────────────────────────────
+
+/// Borra un perfil con todo lo suyo. Con cuenta, primero en el servidor (así
+/// los demás equipos se enteran): sin red no se puede borrar uno que ya se
+/// sincronizó, para que no reaparezca en la próxima sincronización.
+#[tauri::command]
+pub async fn perfil_borrar(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    if id == crate::perfiles::PRINCIPAL {
+        return Err("el perfil principal no se puede borrar".into());
+    }
+    let dir = dir_config(&app)?;
+    let _turno = EN_CURSO.lock().await;
+    let mut c = cargar(&dir);
+    if let Some(m) = c.perfiles.iter().find(|p| p.local == id).cloned() {
+        if !c.token.is_empty() {
+            match api(&c.servidor, Some(&c.token), reqwest::Method::DELETE, &format!("/perfiles/{}", m.remoto), None)
+                .await
+            {
+                Ok(_) => {}
+                Err(ErrApi::Otro(e)) if e.starts_with("no se pudo conectar") => {
+                    return Err("sin conexión con el servidor: para borrar un perfil sincronizado hace falta red".into())
+                }
+                Err(e) => return Err(e.texto()),
+            }
+        }
+        c.perfiles.retain(|p| p.local != id);
+        guardar(&dir, &c)?;
+    }
+    let mut db = abrir_db(&dir)?;
+    crate::perfiles::borrar_local(&mut db, &id)
 }
 
 // ─── Amigos y recomendaciones ───────────────────────────────────────────────
@@ -1096,6 +1220,7 @@ pub async fn cuenta_lista_publica(app: tauri::AppHandle, codigo: String) -> Resu
 //   KUTRAL_TEST_SERVIDOR=http://127.0.0.1:18790 \
 //   KUTRAL_TEST_INVITACION=$(php server/admin.php invitar) \
 //   KUTRAL_TEST_INVITACION_2=$(php server/admin.php invitar) \
+//   KUTRAL_TEST_INVITACION_3=$(php server/admin.php invitar) \
 //     cargo test cuenta -- --ignored
 //
 // Dos carpetas = dos equipos de la misma cuenta. Lo que haría el front se
@@ -1155,6 +1280,8 @@ mod tests {
         db.execute_batch(FAVORITES).unwrap();
         db.execute_batch(MIGRACION_SQL).unwrap();
         db.execute_batch(MIGRACION_SQL_V12).unwrap();
+        db.execute_batch(crate::perfiles::MIGRACION_SQL).unwrap();
+        db.execute_batch(crate::perfiles::TRIGGERS_SQL).unwrap();
         dir
     }
 
@@ -1166,7 +1293,7 @@ mod tests {
                 "INSERT INTO watch_history (imdb_id, season, episode, tmdb_id, media_type, title,
                     watched_seconds, runtime_seconds, completed, last_watched)
                  VALUES (?1, ?2, ?3, 1, 'tv', 'Serie', ?4, 3000, ?5, ?6)
-                 ON CONFLICT(imdb_id, season, episode) DO UPDATE SET
+                 ON CONFLICT(perfil, imdb_id, season, episode) DO UPDATE SET
                    watched_seconds = excluded.watched_seconds,
                    completed = MAX(excluded.completed, watch_history.completed),
                    last_watched = excluded.last_watched",
@@ -1221,7 +1348,7 @@ mod tests {
             .execute(
                 "INSERT INTO favorites (imdb_id, tmdb_id, media_type, title, poster_path, added_at)
                  VALUES (?1, 1, 'movie', ?2, NULL, ?3)
-                 ON CONFLICT(imdb_id) DO UPDATE SET title = excluded.title, added_at = excluded.added_at",
+                 ON CONFLICT(perfil, imdb_id) DO UPDATE SET title = excluded.title, added_at = excluded.added_at",
                 params![clave, title, ahora_ms()],
             )
             .unwrap();
@@ -1274,6 +1401,22 @@ mod tests {
         assert!(normalizar_servidor("http://8.8.8.8").is_err());
         assert!(normalizar_servidor("ftp://192.168.1.2").is_err());
         assert!(normalizar_servidor("kutral.ejemplo.cl").is_err());
+    }
+
+    // Regresión: guardar el progreso dos veces sin sincronizar en medio (lo
+    // normal mientras se ve algo) fallaba por la clave repetida en sync_salida.
+    #[test]
+    fn upsert_repetido_con_cuenta_no_falla() {
+        let a = equipo("upsert");
+        set_activa(&abrir_db(&a).unwrap(), true).unwrap();
+        progreso(&a, "tt1", -1, -1, 100, false);
+        progreso(&a, "tt1", -1, -1, 200, false);
+        progreso(&a, "tt1", -1, -1, 300, false);
+        fav(&a, "tt2", "Uno");
+        fav(&a, "tt2", "Otra vez");
+        assert_eq!(historial_de(&a)[0].3, 300);
+        assert_eq!(pendientes_de(&a), 2, "una entrada por fila, con la fecha del último cambio");
+        let _ = std::fs::remove_dir_all(&a);
     }
 
     #[test]
@@ -1330,7 +1473,7 @@ mod tests {
         let (a, b) = (equipo("ha"), equipo("hb"));
         // Lo que crea la migración v11 en cada equipo.
         for e in [&a, &b] {
-            sql(e, "INSERT INTO listas VALUES ('quiero-ver', 'Quiero ver', 1, 1)");
+            sql(e, "INSERT INTO listas (id, nombre, creada, actualizada) VALUES ('quiero-ver', 'Quiero ver', 1, 1)");
         }
 
         // A tenía historial antes de la cuenta; al entrar se sube.
@@ -1365,10 +1508,11 @@ mod tests {
         // Listas: crear, agregar y reordenar en A; renombrar en B.
         sql(
             &a,
-            "INSERT INTO listas VALUES ('l1', 'Nolan', 10, 10);
-             INSERT INTO lista_items VALUES ('l1', 'tt1', 1, 'movie', 'Memento', NULL, 1, 10);
-             INSERT INTO lista_items VALUES ('l1', 'tt2', 2, 'movie', 'Tenet', NULL, 2, 11);
-             INSERT INTO lista_items VALUES ('quiero-ver', 'anilist:5', 5, 'anime', 'Bebop', NULL, 1, 12);",
+            "INSERT INTO listas (id, nombre, creada, actualizada) VALUES ('l1', 'Nolan', 10, 10);
+             INSERT INTO lista_items (lista_id, clave, tmdb_id, media_type, title, poster_path, posicion, agregado)
+               VALUES ('l1', 'tt1', 1, 'movie', 'Memento', NULL, 1, 10),
+                      ('l1', 'tt2', 2, 'movie', 'Tenet', NULL, 2, 11),
+                      ('quiero-ver', 'anilist:5', 5, 'anime', 'Bebop', NULL, 1, 12);",
         );
         sync(&a).await;
         sync(&b).await;
@@ -1388,6 +1532,96 @@ mod tests {
         sync(&a).await;
         assert_eq!(listas_de(&a), vec![("quiero-ver".into(), "Quiero ver".into())]);
         assert!(items_de(&a, "l1").is_empty());
+        assert_eq!(pendientes_de(&a), 0);
+        assert_eq!(pendientes_de(&b), 0);
+
+        let _ = std::fs::remove_dir_all(&a);
+        let _ = std::fs::remove_dir_all(&b);
+    }
+
+    fn perfiles_de(dir: &Path) -> Vec<(String, String)> {
+        let db = abrir_db(dir).unwrap();
+        crate::perfiles::listar(&db).unwrap().into_iter().map(|p| (p.id, p.nombre)).collect()
+    }
+
+    fn favs_de(dir: &Path, perfil: &str) -> Vec<String> {
+        let db = abrir_db(dir).unwrap();
+        let mut st = db.prepare("SELECT imdb_id FROM favorites WHERE perfil = ?1 ORDER BY imdb_id").unwrap();
+        st.query_map(params![perfil], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap()
+    }
+
+    #[test]
+    fn cuenta_json_viejo_pasa_a_perfiles() {
+        let dir = std::env::temp_dir().join(format!("kutral-cuenta-json-{}", ahora_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("cuenta.json"),
+            r#"{"servidor":"https://x","token":"t","usuario":"nick","perfil_id":7,"perfil_nombre":"nick","cursor":42,"ultima_sync":1}"#,
+        )
+        .unwrap();
+        let c = cargar(&dir);
+        assert_eq!(c.perfiles, vec![PerfilSync { local: "principal".into(), remoto: 7, cursor: 42 }]);
+        guardar(&dir, &c).unwrap();
+        let raw = std::fs::read_to_string(dir.join("cuenta.json")).unwrap();
+        assert!(!raw.contains("perfil_id"), "lo viejo no se vuelve a escribir");
+        assert_eq!(cargar(&dir).perfiles, c.perfiles);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    #[ignore = "necesita el servidor PHP corriendo (ver arriba)"]
+    async fn perfiles_entre_equipos() {
+        let servidor = std::env::var("KUTRAL_TEST_SERVIDOR").expect("KUTRAL_TEST_SERVIDOR");
+        let inv = std::env::var("KUTRAL_TEST_INVITACION_3").expect("KUTRAL_TEST_INVITACION_3");
+        let usuario = format!("perf{}", ahora_ms() % 1_000_000);
+        let (a, b) = (equipo("pa"), equipo("pb"));
+
+        // A crea el perfil "Ana" sin cuenta todavía, con un favorito suyo.
+        sql(
+            &a,
+            "INSERT INTO perfiles (id, nombre, color, creado, actualizado) VALUES ('ana1', 'Ana', '#ff0000', 5, 5);
+             INSERT INTO favorites (perfil, imdb_id, tmdb_id, media_type, title, added_at)
+               VALUES ('ana1', 'tt100', 1, 'movie', 'De Ana', 5);",
+        );
+        fav(&a, "tt200", "Del principal");
+        entrar(&a, &servidor, &usuario, "contraseña-larga", Some(inv)).await.unwrap();
+        entrar(&b, &servidor, &usuario, "contraseña-larga", None).await.unwrap();
+        sync(&a).await;
+        sync(&b).await;
+
+        // B recibe el perfil y cada favorito queda en su perfil.
+        assert!(perfiles_de(&b).contains(&("ana1".into(), "Ana".into())));
+        assert_eq!(favs_de(&b, "ana1"), vec!["tt100".to_string()]);
+        assert_eq!(favs_de(&b, "principal"), vec!["tt200".to_string()]);
+
+        // Renombrar en B llega a A.
+        sql(&b, &format!("UPDATE perfiles SET nombre = 'Anita', actualizado = {} WHERE id = 'ana1'", ahora_ms()));
+        sync(&b).await;
+        sync(&a).await;
+        assert!(perfiles_de(&a).contains(&("ana1".into(), "Anita".into())));
+
+        // Un favorito nuevo de Ana en B no aparece en el principal de A.
+        sql(&b, "INSERT INTO favorites (perfil, imdb_id, tmdb_id, media_type, title, added_at)
+                 VALUES ('ana1', 'tt300', 1, 'movie', 'Otro de Ana', 9)");
+        sync(&b).await;
+        sync(&a).await;
+        assert_eq!(favs_de(&a, "ana1"), vec!["tt100".to_string(), "tt300".to_string()]);
+        assert_eq!(favs_de(&a, "principal"), vec!["tt200".to_string()]);
+
+        // Borrar el perfil en A (vía servidor) lo borra en B con todo lo suyo.
+        let mut c = cargar(&a);
+        let remoto = c.perfiles.iter().find(|p| p.local == "ana1").unwrap().remoto;
+        api(&c.servidor, Some(&c.token), reqwest::Method::DELETE, &format!("/perfiles/{remoto}"), None)
+            .await
+            .unwrap();
+        c.perfiles.retain(|p| p.local != "ana1");
+        guardar(&a, &c).unwrap();
+        crate::perfiles::borrar_local(&mut abrir_db(&a).unwrap(), "ana1").unwrap();
+        sync(&a).await;
+        sync(&b).await;
+        assert!(!perfiles_de(&b).iter().any(|p| p.0 == "ana1"));
+        assert!(favs_de(&b, "ana1").is_empty());
+        assert_eq!(favs_de(&b, "principal"), vec!["tt200".to_string()]);
         assert_eq!(pendientes_de(&a), 0);
         assert_eq!(pendientes_de(&b), 0);
 

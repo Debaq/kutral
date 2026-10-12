@@ -6,7 +6,7 @@
 
 declare(strict_types=1);
 
-const VERSION_API = 4;
+const VERSION_API = 5;
 
 // PHP 7.4 no las trae (son de 8.0).
 if (!function_exists('str_starts_with')) {
@@ -209,6 +209,19 @@ function migrar(PDO $pdo): void
                 UNIQUE (dueno, lista_id)
             );
         ",
+        6 => "
+            -- Perfiles de verdad: cada uno con el id que le dio el equipo que
+            -- lo creó (`uid`), color y fecha del último cambio (gana el más
+            -- nuevo). El que nació con la cuenta es el 'principal' de todos
+            -- los equipos.
+            ALTER TABLE perfiles ADD COLUMN uid TEXT;
+            ALTER TABLE perfiles ADD COLUMN color TEXT NOT NULL DEFAULT '#f5c518';
+            ALTER TABLE perfiles ADD COLUMN actualizado INTEGER NOT NULL DEFAULT 0;
+            UPDATE perfiles SET uid = 'principal'
+             WHERE id IN (SELECT MIN(id) FROM perfiles GROUP BY usuario_id);
+            UPDATE perfiles SET uid = 'p' || id WHERE uid IS NULL;
+            CREATE UNIQUE INDEX idx_perfiles_uid ON perfiles(usuario_id, uid);
+        ",
     ];
     $actual = (int) $pdo->query('PRAGMA user_version')->fetchColumn();
     foreach ($migraciones as $version => $sql) {
@@ -244,7 +257,7 @@ function crear_usuario(PDO $pdo, string $nombre, string $clave): int
     $st->execute([$nombre, password_hash($clave, PASSWORD_DEFAULT), ahora_ms()]);
     $id = (int) $pdo->lastInsertId();
     // Todo usuario nace con un perfil: el sync siempre es por perfil.
-    $pdo->prepare('INSERT INTO perfiles (usuario_id, nombre, creado) VALUES (?, ?, ?)')
+    $pdo->prepare("INSERT INTO perfiles (usuario_id, nombre, creado, uid) VALUES (?, ?, ?, 'principal')")
         ->execute([$id, $nombre, ahora_ms()]);
     return $id;
 }

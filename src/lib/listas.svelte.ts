@@ -1,7 +1,8 @@
 // Listas: "Quiero ver" y las que arma el usuario (colecciones temáticas que se
 // pueden recorrer en orden).
 //
-// Fuente de verdad: SQLite (`listas`, `lista_items`), migración v11. Igual que
+// Fuente de verdad: SQLite (`listas`, `lista_items`), migración v11; desde la
+// v13 son por perfil y aquí solo se ven las del activo. Igual que
 // historial.svelte.ts, se mantiene una copia en memoria reactiva para pintar la
 // ficha y las pestañas sin una query por tarjeta.
 //
@@ -11,6 +12,7 @@
 
 import { getDb } from "$lib/vera/db";
 import { estadoDe, avisarCambio, type MediaMeta } from "$lib/historial.svelte";
+import { perfilActual } from "$lib/perfilActivo";
 
 export const QUIERO_VER = "quiero-ver";
 
@@ -56,8 +58,12 @@ export async function cargarListas(): Promise<void> {
     return;
   }
   try {
-    const ls = await db.select<Lista[]>("SELECT * FROM listas");
-    const its = await db.select<ItemLista[]>("SELECT * FROM lista_items ORDER BY posicion, agregado");
+    const perfil = perfilActual();
+    const ls = await db.select<Lista[]>("SELECT * FROM listas WHERE perfil = $1", [perfil]);
+    const its = await db.select<ItemLista[]>(
+      "SELECT * FROM lista_items WHERE perfil = $1 ORDER BY posicion, agregado",
+      [perfil],
+    );
     const items: Record<string, ItemLista[]> = {};
     for (const l of ls) items[l.id] = [];
     for (const it of its) (items[it.lista_id] ??= []).push(it);
@@ -88,7 +94,11 @@ async function tocar(listaId: string): Promise<void> {
   const db = await getDb();
   if (!db) return;
   const ahora = Date.now();
-  await db.execute("UPDATE listas SET actualizada = $1 WHERE id = $2", [ahora, listaId]);
+  await db.execute("UPDATE listas SET actualizada = $1 WHERE perfil = $3 AND id = $2", [
+    ahora,
+    listaId,
+    perfilActual(),
+  ]);
   listas.todas = ordenarListas(listas.todas.map((l) => (l.id === listaId ? { ...l, actualizada: ahora } : l)));
 }
 
@@ -108,10 +118,11 @@ export async function crearLista(nombre: string): Promise<string | null> {
   const id = nuevoId();
   const ahora = Date.now();
   try {
-    await db.execute("INSERT INTO listas (id, nombre, creada, actualizada) VALUES ($1, $2, $3, $3)", [
+    await db.execute("INSERT INTO listas (id, nombre, creada, actualizada, perfil) VALUES ($1, $2, $3, $3, $4)", [
       id,
       n,
       ahora,
+      perfilActual(),
     ]);
   } catch (e) {
     console.warn("[listas] crear:", e);
@@ -128,7 +139,12 @@ export async function renombrarLista(listaId: string, nombre: string): Promise<v
   if (!n || listaId === QUIERO_VER) return;
   const db = await getDb();
   if (!db) return;
-  await db.execute("UPDATE listas SET nombre = $1, actualizada = $2 WHERE id = $3", [n, Date.now(), listaId]);
+  await db.execute("UPDATE listas SET nombre = $1, actualizada = $2 WHERE perfil = $4 AND id = $3", [
+    n,
+    Date.now(),
+    listaId,
+    perfilActual(),
+  ]);
   listas.todas = listas.todas.map((l) => (l.id === listaId ? { ...l, nombre: n } : l));
   avisarCambio();
 }
@@ -137,8 +153,8 @@ export async function borrarLista(listaId: string): Promise<void> {
   if (listaId === QUIERO_VER) return;
   const db = await getDb();
   if (!db) return;
-  await db.execute("DELETE FROM lista_items WHERE lista_id = $1", [listaId]);
-  await db.execute("DELETE FROM listas WHERE id = $1", [listaId]);
+  await db.execute("DELETE FROM lista_items WHERE perfil = $2 AND lista_id = $1", [listaId, perfilActual()]);
+  await db.execute("DELETE FROM listas WHERE perfil = $2 AND id = $1", [listaId, perfilActual()]);
   listas.todas = listas.todas.filter((l) => l.id !== listaId);
   const copia = { ...listas.items };
   delete copia[listaId];
@@ -166,9 +182,19 @@ export async function agregarALista(listaId: string, meta: MediaMeta): Promise<v
   try {
     await db.execute(
       `INSERT OR IGNORE INTO lista_items
-         (lista_id, clave, tmdb_id, media_type, title, poster_path, posicion, agregado)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [it.lista_id, it.clave, it.tmdb_id, it.media_type, it.title, it.poster_path, it.posicion, it.agregado],
+         (lista_id, clave, tmdb_id, media_type, title, poster_path, posicion, agregado, perfil)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [
+        it.lista_id,
+        it.clave,
+        it.tmdb_id,
+        it.media_type,
+        it.title,
+        it.poster_path,
+        it.posicion,
+        it.agregado,
+        perfilActual(),
+      ],
     );
   } catch (e) {
     console.warn("[listas] agregar:", e);
@@ -181,7 +207,11 @@ export async function agregarALista(listaId: string, meta: MediaMeta): Promise<v
 export async function quitarDeLista(listaId: string, clave: string): Promise<void> {
   const db = await getDb();
   if (!db) return;
-  await db.execute("DELETE FROM lista_items WHERE lista_id = $1 AND clave = $2", [listaId, clave]);
+  await db.execute("DELETE FROM lista_items WHERE perfil = $3 AND lista_id = $1 AND clave = $2", [
+    listaId,
+    clave,
+    perfilActual(),
+  ]);
   listas.items = { ...listas.items, [listaId]: itemsDe(listaId).filter((it) => it.clave !== clave) };
   await tocar(listaId);
 }
@@ -208,16 +238,9 @@ export async function moverEnLista(listaId: string, clave: string, delta: -1 | 1
   // Posiciones repetidas (no debería, pero una lista vieja podría tenerlas):
   // sin esto el intercambio no movería nada.
   if (a.posicion === b.posicion) a.posicion += delta * 0.5;
-  await db.execute("UPDATE lista_items SET posicion = $1 WHERE lista_id = $2 AND clave = $3", [
-    a.posicion,
-    listaId,
-    a.clave,
-  ]);
-  await db.execute("UPDATE lista_items SET posicion = $1 WHERE lista_id = $2 AND clave = $3", [
-    b.posicion,
-    listaId,
-    b.clave,
-  ]);
+  const mover = "UPDATE lista_items SET posicion = $1 WHERE perfil = $4 AND lista_id = $2 AND clave = $3";
+  await db.execute(mover, [a.posicion, listaId, a.clave, perfilActual()]);
+  await db.execute(mover, [b.posicion, listaId, b.clave, perfilActual()]);
   its[j] = a;
   its[i] = b;
   listas.items = { ...listas.items, [listaId]: its };

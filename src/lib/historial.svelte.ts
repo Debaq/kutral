@@ -1,6 +1,7 @@
 // Historial de reproducción y favoritos.
 //
-// Fuente de verdad: SQLite (`watch_history`, `favorites`), migración v7. Este
+// Fuente de verdad: SQLite (`watch_history`, `favorites`), migración v7; desde
+// la v13 cada fila es de un perfil y aquí solo se ve el activo. Este
 // módulo mantiene además una copia en memoria reactiva para que el grid pueda
 // pintar el tick verde / la barra de progreso sin una query por tarjeta.
 //
@@ -16,6 +17,7 @@
 // fila. Es TEXT en la DB, no hay validación de tt*.
 
 import { getDb } from "$lib/vera/db";
+import { perfilActual } from "$lib/perfilActivo";
 
 export type FilaHistorial = {
   imdb_id: string;
@@ -158,11 +160,14 @@ export async function cargarHistorial(): Promise<void> {
     return;
   }
   try {
+    const perfil = perfilActual();
     historial.filas = await db.select<FilaHistorial[]>(
-      "SELECT * FROM watch_history ORDER BY last_watched DESC",
+      "SELECT * FROM watch_history WHERE perfil = $1 ORDER BY last_watched DESC",
+      [perfil],
     );
     const favs = await db.select<FilaFavorito[]>(
-      "SELECT * FROM favorites ORDER BY added_at DESC",
+      "SELECT * FROM favorites WHERE perfil = $1 ORDER BY added_at DESC",
+      [perfil],
     );
     const mapa: Record<string, FilaFavorito> = {};
     for (const f of favs) mapa[f.imdb_id] = f;
@@ -226,9 +231,9 @@ export async function guardarProgreso(
       `INSERT INTO watch_history
          (imdb_id, season, episode, tmdb_id, media_type, title, poster_path,
           still_path, episode_title, watched_seconds, runtime_seconds,
-          progress_real, completed, last_watched)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-       ON CONFLICT(imdb_id, season, episode) DO UPDATE SET
+          progress_real, completed, last_watched, perfil)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+       ON CONFLICT(perfil, imdb_id, season, episode) DO UPDATE SET
          watched_seconds = excluded.watched_seconds,
          runtime_seconds = COALESCE(excluded.runtime_seconds, watch_history.runtime_seconds),
          progress_real   = COALESCE(excluded.progress_real,   watch_history.progress_real),
@@ -252,6 +257,7 @@ export async function guardarProgreso(
         real,
         completed,
         ahora,
+        perfilActual(),
       ],
     );
   } catch (e) {
@@ -295,9 +301,9 @@ export async function marcarVisto(meta: MediaMeta, visto: boolean): Promise<void
       `INSERT INTO watch_history
          (imdb_id, season, episode, tmdb_id, media_type, title, poster_path,
           still_path, episode_title, watched_seconds, runtime_seconds,
-          progress_real, completed, last_watched)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,1.0,1,$12)
-       ON CONFLICT(imdb_id, season, episode) DO UPDATE SET
+          progress_real, completed, last_watched, perfil)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,1.0,1,$12,$13)
+       ON CONFLICT(perfil, imdb_id, season, episode) DO UPDATE SET
          progress_real = 1.0,
          completed     = 1,
          last_watched  = excluded.last_watched`,
@@ -314,6 +320,7 @@ export async function marcarVisto(meta: MediaMeta, visto: boolean): Promise<void
         watched,
         runtime,
         ahora,
+        perfilActual(),
       ],
     );
   } catch (e) {
@@ -350,12 +357,15 @@ export async function borrarProgreso(
   if (!db) return;
   try {
     if (season == null || episode == null) {
-      await db.execute("DELETE FROM watch_history WHERE imdb_id = $1", [clave]);
+      await db.execute("DELETE FROM watch_history WHERE perfil = $2 AND imdb_id = $1", [
+        clave,
+        perfilActual(),
+      ]);
       historial.filas = historial.filas.filter((f) => f.imdb_id !== clave);
     } else {
       await db.execute(
-        "DELETE FROM watch_history WHERE imdb_id = $1 AND season = $2 AND episode = $3",
-        [clave, season, episode],
+        "DELETE FROM watch_history WHERE perfil = $4 AND imdb_id = $1 AND season = $2 AND episode = $3",
+        [clave, season, episode, perfilActual()],
       );
       historial.filas = historial.filas.filter(
         (f) => !(f.imdb_id === clave && f.season === season && f.episode === episode),
@@ -389,7 +399,10 @@ export async function alternarFavorito(meta: MediaMeta): Promise<boolean> {
   const activo = esFavorito(meta.clave);
   try {
     if (activo) {
-      await db.execute("DELETE FROM favorites WHERE imdb_id = $1", [meta.clave]);
+      await db.execute("DELETE FROM favorites WHERE perfil = $2 AND imdb_id = $1", [
+        meta.clave,
+        perfilActual(),
+      ]);
       const copia = { ...historial.favoritos };
       delete copia[meta.clave];
       historial.favoritos = copia;
@@ -405,10 +418,10 @@ export async function alternarFavorito(meta: MediaMeta): Promise<boolean> {
       added_at: Date.now(),
     };
     await db.execute(
-      `INSERT INTO favorites (imdb_id, tmdb_id, media_type, title, poster_path, added_at)
-       VALUES ($1,$2,$3,$4,$5,$6)
-       ON CONFLICT(imdb_id) DO UPDATE SET added_at = excluded.added_at`,
-      [fila.imdb_id, fila.tmdb_id, fila.media_type, fila.title, fila.poster_path, fila.added_at],
+      `INSERT INTO favorites (imdb_id, tmdb_id, media_type, title, poster_path, added_at, perfil)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT(perfil, imdb_id) DO UPDATE SET added_at = excluded.added_at`,
+      [fila.imdb_id, fila.tmdb_id, fila.media_type, fila.title, fila.poster_path, fila.added_at, perfilActual()],
     );
     historial.favoritos = { ...historial.favoritos, [fila.imdb_id]: fila };
     avisarCambio();

@@ -10,6 +10,7 @@ mod dlna;
 mod kitsu;
 mod kodios;
 mod llavero;
+mod perfiles;
 mod lan;
 mod net;
 mod omdb;
@@ -547,6 +548,19 @@ pub fn run() {
             sql: cuenta::MIGRACION_SQL_V12,
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 13,
+            description: "perfiles",
+            sql: perfiles::MIGRACION_SQL,
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 14,
+            description: "sincronizar por perfil",
+            // Los triggers de la v10 y v12 cayeron con las tablas viejas.
+            sql: perfiles::TRIGGERS_SQL,
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -640,6 +654,7 @@ pub fn run() {
             cuenta::cuenta_entrar,
             cuenta::cuenta_salir,
             cuenta::cuenta_sincronizar,
+            cuenta::perfil_borrar,
             cuenta::cuenta_amigos,
             cuenta::cuenta_amigo_agregar,
             cuenta::cuenta_amigo_quitar,

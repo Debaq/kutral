@@ -148,9 +148,69 @@ function sesion(PDO $pdo, int $usuario, string $token): array
 
 function perfiles(PDO $pdo, int $usuario): array
 {
-    $st = $pdo->prepare('SELECT id, nombre FROM perfiles WHERE usuario_id = ? ORDER BY id');
+    $st = $pdo->prepare('SELECT * FROM perfiles WHERE usuario_id = ? ORDER BY id');
     $st->execute([$usuario]);
-    return array_map(fn($p) => ['id' => (int) $p['id'], 'nombre' => $p['nombre']], $st->fetchAll());
+    return array_map('fila_perfil', $st->fetchAll());
+}
+
+function fila_perfil(array $p): array
+{
+    return [
+        'id' => (int) $p['id'],
+        'uid' => $p['uid'],
+        'nombre' => $p['nombre'],
+        'color' => $p['color'],
+        'actualizado' => (int) $p['actualizado'],
+    ];
+}
+
+const MAX_PERFILES = 10;
+
+// Crea el perfil o, si ya existe (mismo uid), le aplica el cambio de nombre o
+// color solo si es más nuevo que el que tiene.
+function guardar_perfil(PDO $pdo, array $s, array $b): array
+{
+    $uid = texto($b, 'uid', 64);
+    $nombre = trim(texto($b, 'nombre', 40));
+    $color = $b['color'] ?? '#f5c518';
+    $act = $b['actualizado'] ?? null;
+    if (!preg_match('/^[A-Za-z0-9_-]{1,64}$/', $uid) || $nombre === ''
+        || !is_string($color) || !preg_match('/^#[0-9a-fA-F]{6}$/', $color) || !is_int($act)) {
+        throw new Fallo(400, 'perfil inválido');
+    }
+    $st = $pdo->prepare('SELECT * FROM perfiles WHERE usuario_id = ? AND uid = ?');
+    $st->execute([$s['usuario'], $uid]);
+    $p = $st->fetch();
+    if ($p) {
+        if ($act > (int) $p['actualizado']) {
+            $pdo->prepare('UPDATE perfiles SET nombre = ?, color = ?, actualizado = ? WHERE id = ?')
+                ->execute([$nombre, $color, $act, $p['id']]);
+        }
+    } else {
+        $n = $pdo->prepare('SELECT COUNT(*) FROM perfiles WHERE usuario_id = ?');
+        $n->execute([$s['usuario']]);
+        if ((int) $n->fetchColumn() >= MAX_PERFILES) {
+            throw new Fallo(409, 'la cuenta ya tiene ' . MAX_PERFILES . ' perfiles');
+        }
+        $pdo->prepare(
+            'INSERT INTO perfiles (usuario_id, nombre, creado, uid, color, actualizado) VALUES (?, ?, ?, ?, ?, ?)'
+        )->execute([$s['usuario'], $nombre, ahora_ms(), $uid, $color, $act]);
+    }
+    $st->execute([$s['usuario'], $uid]);
+    return fila_perfil($st->fetch());
+}
+
+// Borra el perfil y todo lo sincronizado de él. El principal no se borra.
+function borrar_perfil(PDO $pdo, array $s, int $id): array
+{
+    $st = $pdo->prepare('SELECT uid FROM perfiles WHERE id = ? AND usuario_id = ?');
+    $st->execute([$id, $s['usuario']]);
+    $uid = $st->fetchColumn();
+    if ($uid === 'principal') {
+        throw new Fallo(400, 'el perfil principal no se puede borrar');
+    }
+    $pdo->prepare('DELETE FROM perfiles WHERE id = ? AND usuario_id = ?')->execute([$id, $s['usuario']]);
+    return ['perfiles' => perfiles($pdo, $s['usuario'])];
 }
 
 function fila_registro(array $r): array
@@ -833,6 +893,13 @@ try {
         $res = bajar($pdo, autenticar($pdo));
     } elseif ($metodo === 'POST' && $r === '/sync') {
         $res = subir($pdo, autenticar($pdo), cuerpo());
+    } elseif ($metodo === 'GET' && $r === '/perfiles') {
+        $s = autenticar($pdo);
+        $res = ['perfiles' => perfiles($pdo, $s['usuario'])];
+    } elseif ($metodo === 'POST' && $r === '/perfiles') {
+        $res = guardar_perfil($pdo, autenticar($pdo), cuerpo());
+    } elseif ($metodo === 'DELETE' && preg_match('#^/perfiles/(\d+)$#', $r, $m) === 1) {
+        $res = borrar_perfil($pdo, autenticar($pdo), (int) $m[1]);
     } elseif ($metodo === 'GET' && $r === '/amigos') {
         $res = amigos($pdo, autenticar($pdo));
     } elseif ($metodo === 'POST' && $r === '/amigos') {

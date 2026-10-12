@@ -9,6 +9,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { cargarHistorial } from "$lib/historial.svelte";
 import { cargarListas, crearLista, agregarALista, itemsDe, nombreDe, listas } from "$lib/listas.svelte";
+import { cargarPerfiles } from "$lib/perfiles.svelte";
 import { notify } from "$lib/notifStore.svelte";
 import { refreshRdLinked } from "$lib/config.svelte";
 import type { RdDeviceStart } from "$lib/tipos";
@@ -16,7 +17,6 @@ import type { RdDeviceStart } from "$lib/tipos";
 type EstadoCuenta = {
   servidor: string;
   usuario: string | null;
-  perfil: string | null;
   ultima_sync: number;
 };
 
@@ -73,7 +73,6 @@ const ESPERA_TRAS_CAMBIO = 3_000;
 export const cuenta = $state({
   servidor: "",
   usuario: null as string | null,
-  perfil: null as string | null,
   ultimaSync: 0,
   sincronizando: false,
   /** Último error de sincronización (vacío si la última salió bien). */
@@ -119,7 +118,6 @@ function aplicarLlavero(e: EstadoLlavero): void {
 function aplicar(e: EstadoCuenta): void {
   cuenta.servidor = e.servidor;
   cuenta.usuario = e.usuario;
-  cuenta.perfil = e.perfil;
   cuenta.ultimaSync = e.ultima_sync;
 }
 
@@ -140,6 +138,9 @@ export async function sincronizarCuenta(): Promise<void> {
     ok = true;
     cuenta.error = "";
     if (r.bajados > 0) {
+      // Primero los perfiles: si borraron en otro equipo el que está activo,
+      // se vuelve al principal antes de recargar lo demás.
+      await cargarPerfiles();
       await cargarHistorial();
       await cargarListas();
     }

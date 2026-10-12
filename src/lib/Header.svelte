@@ -16,6 +16,7 @@
   import { torrents, activeCount } from "$lib/torrents.svelte";
   import { cola, enEspera } from "$lib/colaDescargas.svelte";
   import type { WifiState } from "$lib/tipos";
+  import { perfiles, perfilDe, abrirPerfiles } from "$lib/perfiles.svelte";
 
   let maximized = $state(true);
   let fullscreen = $state(false);
@@ -48,6 +49,7 @@
   // espera turno. Con 20 capítulos encolados, un "2" sería mentira.
   const torActivas = $derived(activeCount() + enEspera());
   const torHay = $derived(torrents.list.length > 0 || cola.filas.length > 0);
+  const perfil = $derived(perfilDe(perfiles.actual));
 
   function only<T extends "vol" | "br" | "notif" | "web" | "tor">(which: T) {
     volOpen = which === "vol" ? !volOpen : false;
@@ -277,6 +279,21 @@
 
     <span class="sep" aria-hidden="true"></span>
 
+    {#if perfil}
+      <button
+        data-nav
+        class="perfil-btn"
+        style:background={perfil.color}
+        onclick={abrirPerfiles}
+        title="{perfil.nombre} · cambiar de perfil"
+        aria-label="Perfil {perfil.nombre}: cambiar"
+      >
+        {perfil.nombre.trim().charAt(0).toUpperCase()}
+      </button>
+
+      <span class="sep" aria-hidden="true"></span>
+    {/if}
+
     <button
       data-nav
       class="cfg-btn"
@@ -447,6 +464,20 @@
     line-height: 1;
   }
   .cfg-btn:hover { background: #1c1c26; color: #fff; }
+  .perfil-btn {
+    width: 26px;
+    height: 26px;
+    border-radius: 7px;
+    border: 0;
+    color: #0d0d12;
+    font-size: 13px;
+    font-weight: 800;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+  }
+  .perfil-btn:focus,
+  .perfil-btn:hover { outline: 2px solid #f3a951; outline-offset: 2px; }
   .cfg-btn:focus { outline: 2px solid #f3a951; outline-offset: 1px; }
 
   .pop-host {

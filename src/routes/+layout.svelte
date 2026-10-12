@@ -19,6 +19,8 @@
   import { cargarHistorial } from "$lib/historial.svelte";
   import { iniciarCuenta } from "$lib/cuenta.svelte";
   import { cargarListas } from "$lib/listas.svelte";
+  import { cargarPerfiles } from "$lib/perfiles.svelte";
+  import QuienVe from "$lib/QuienVe.svelte";
   import { cargarDescargas } from "$lib/descargas.svelte";
   import { cola, cargarCola, arrancarMotor } from "$lib/colaDescargas.svelte";
   import { ayuda } from "$lib/atajos/store.svelte";
@@ -134,6 +136,7 @@
     // Después del historial: getDb() abre la DB una sola vez y una segunda
     // llamada en paralelo recibiría null.
     void cargarHistorial().then(() => {
+      void cargarPerfiles();
       void cargarListas();
       void iniciarCuenta();
     });
@@ -291,6 +294,8 @@
 <HistorialTracker />
 <!-- Lo que suena en la TV (Cast/DLNA): pausar o cortar desde cualquier ruta. -->
 <CastPill />
+<!-- ¿Quién está viendo? Al arrancar con varios perfiles, o desde el encabezado. -->
+<QuienVe />
 
 <style>
   :global(html, body) {

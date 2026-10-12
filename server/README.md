@@ -87,12 +87,15 @@ Los errores responden `{"error": "mensaje"}` con su código HTTP.
 
 | Ruta | Qué hace |
 |---|---|
-| `GET /ping` | `{"servicio":"kutral-cuentas","version":4}` |
+| `GET /ping` | `{"servicio":"kutral-cuentas","version":5}` |
 | `POST /registro` | `{invitacion, nombre, clave, equipo}` → `{token, usuario, perfiles}` |
 | `POST /login` | `{nombre, clave, equipo}` → `{token, usuario, perfiles}` |
 | 🔒 `POST /salir` | Cierra la sesión de este equipo |
 | 🔒 `GET /yo` | Usuario, perfiles y equipos con sesión |
 | 🔒 `DELETE /equipos/{id}` | Cierra la sesión de otro equipo |
+| 🔒 `GET /perfiles` | `{perfiles: [{id, uid, nombre, color, actualizado}]}` |
+| 🔒 `POST /perfiles` | `{uid, nombre, color, actualizado}`: crea, o actualiza si es más nuevo (hasta 10 por cuenta) |
+| 🔒 `DELETE /perfiles/{id}` | Borra el perfil y todo lo sincronizado de él (el `principal` no) |
 | 🔒 `GET /sync?perfil=ID&desde=SEQ` | Cambios posteriores a `SEQ`: `{cambios, hasta, mas}` |
 | 🔒 `POST /sync` | `{perfil, cambios: [{coleccion, clave, datos, borrado, actualizado}]}` |
 | 🔒 `GET /amigos` | `{amigos, recibidas, enviadas}`, cada uno `[{nombre, desde}]` |
