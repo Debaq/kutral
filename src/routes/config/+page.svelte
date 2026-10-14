@@ -66,6 +66,7 @@
     entrarCuenta,
     probarServidor,
     salirCuenta,
+    desbloquearCuenta,
     sincronizarCuenta,
     social,
     cargarSocial,
@@ -682,6 +683,21 @@
     }
   }
 
+  let ctaClaveBoveda = $state("");
+
+  async function desbloquearCta() {
+    ctaErr = "";
+    ctaBusy = true;
+    try {
+      await desbloquearCuenta(ctaClaveBoveda);
+      ctaClaveBoveda = "";
+    } catch (e) {
+      ctaErr = String(e);
+    } finally {
+      ctaBusy = false;
+    }
+  }
+
   async function salirCta() {
     ctaBusy = true;
     try {
@@ -1095,8 +1111,10 @@
         <section class="block">
           <h2>Cuenta de Kutral <span class="badge-opt">opcional</span></h2>
           <p class="hint">
-            Sincroniza tus favoritos, lo que viste (con el minuto donde quedaste) y
-            tus listas entre tus equipos, usando tu propio servidor.
+            Sincroniza tus favoritos, lo que viste (con el minuto donde quedaste),
+            tus listas, tus claves de API, tus ajustes y tus vinculaciones (Real-Debrid,
+            OpenSubtitles) entre tus equipos, usando tu propio servidor. Las claves
+            viajan cifradas con tu contraseña.
             Sin cuenta, Kutral funciona igual, solo en este equipo.
           </p>
 
@@ -1112,6 +1130,18 @@
             <button data-nav class="btn-sec" onclick={() => void sincronizarCuenta()} disabled={cuenta.sincronizando}>
               {cuenta.sincronizando ? "Sincronizando…" : "Sincronizar ahora"}
             </button>
+            {#if !cuenta.boveda}
+              <p class="hint" style="margin: 14px 0 8px;">
+                Para llevar tus claves, ajustes y Real-Debrid a tus otros equipos,
+                confirma tu contraseña una vez en este equipo.
+              </p>
+              <div class="key-row">
+                <input data-nav type="password" bind:value={ctaClaveBoveda} placeholder="contraseña" autocomplete="off" />
+                <button data-nav class="btn-sec" onclick={desbloquearCta} disabled={ctaBusy || !ctaClaveBoveda}>
+                  Confirmar
+                </button>
+              </div>
+            {/if}
             {#if cuenta.error}<p class="err">{cuenta.error}</p>{/if}
           {:else}
             {#if cuenta.error}<p class="err" style="margin: 0 0 10px;">{cuenta.error}</p>{/if}

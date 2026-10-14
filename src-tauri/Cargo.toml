@@ -46,6 +46,8 @@ librqbit = { version = "9.0.1", default-features = false, features = ["rust-tls"
 # mdns-sd descubre las TVs sin runtime async propio.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 mdns-sd = { version = "0.21", default-features = false }
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
 
 # Acceso directo al WebKitGTK del webview para activar MSE (Media Source
 # Extensions), necesario para que hls.js reproduzca HLS in-app. La versión

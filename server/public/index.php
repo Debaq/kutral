@@ -310,6 +310,65 @@ function yo(PDO $pdo, array $s): array
     return ['usuario' => $nombre, 'perfiles' => perfiles($pdo, $s['usuario']), 'equipos' => $equipos];
 }
 
+// Un equipo que entró antes de la bóveda pide la contraseña para sacar su
+// clave; aquí solo se confirma que es la correcta.
+function verificar_clave(PDO $pdo, array $s, array $b): array
+{
+    frenar_si_abusa($pdo);
+    $clave = texto($b, 'clave', 200);
+    $st = $pdo->prepare('SELECT pass_hash FROM usuarios WHERE id = ?');
+    $st->execute([$s['usuario']]);
+    if (!password_verify($clave, (string) $st->fetchColumn())) {
+        anotar_fallo($pdo);
+        throw new Fallo(403, 'contraseña incorrecta');
+    }
+    return ['ok' => true];
+}
+
+// ─── Bóveda ─────────────────────────────────────────────────────────────────
+
+const BOVEDA_MAX = 256 * 1024;
+
+function boveda(PDO $pdo, array $s): array
+{
+    $st = $pdo->prepare('SELECT datos, version, actualizada FROM bovedas WHERE usuario_id = ?');
+    $st->execute([$s['usuario']]);
+    $f = $st->fetch();
+    if (!$f) {
+        return ['version' => 0, 'datos' => null, 'actualizada' => 0];
+    }
+    return ['version' => (int) $f['version'], 'datos' => $f['datos'], 'actualizada' => (int) $f['actualizada']];
+}
+
+// Escribe solo si nadie la cambió desde la versión que el equipo conoce
+// (`base`); si no, 409 y el equipo la vuelve a bajar y mezclar.
+function guardar_boveda(PDO $pdo, array $s, array $b): array
+{
+    $datos = texto($b, 'datos', BOVEDA_MAX);
+    $base = $b['base'] ?? null;
+    if (!is_int($base) || $base < 0) {
+        throw new Fallo(400, "falta o sobra 'base'");
+    }
+    $pdo->exec('BEGIN IMMEDIATE');
+    try {
+        $st = $pdo->prepare('SELECT version FROM bovedas WHERE usuario_id = ?');
+        $st->execute([$s['usuario']]);
+        $actual = (int) $st->fetchColumn();
+        if ($actual !== $base) {
+            throw new Fallo(409, 'la bóveda cambió desde otro equipo');
+        }
+        $nueva = $actual + 1;
+        $pdo->prepare(
+            'INSERT OR REPLACE INTO bovedas (usuario_id, datos, version, actualizada) VALUES (?, ?, ?, ?)'
+        )->execute([$s['usuario'], $datos, $nueva, ahora_ms()]);
+        $pdo->exec('COMMIT');
+    } catch (Throwable $e) {
+        $pdo->exec('ROLLBACK');
+        throw $e;
+    }
+    return ['version' => $nueva];
+}
+
 function quitar_equipo(PDO $pdo, array $s, int $id): array
 {
     $pdo->prepare('DELETE FROM equipos WHERE id = ? AND usuario_id = ?')->execute([$id, $s['usuario']]);
@@ -887,6 +946,12 @@ try {
         $res = quitar_equipo($pdo, $s, $s['equipo']);
     } elseif ($metodo === 'GET' && $r === '/yo') {
         $res = yo($pdo, autenticar($pdo));
+    } elseif ($metodo === 'POST' && $r === '/yo/clave') {
+        $res = verificar_clave($pdo, autenticar($pdo), cuerpo());
+    } elseif ($metodo === 'GET' && $r === '/boveda') {
+        $res = boveda($pdo, autenticar($pdo));
+    } elseif ($metodo === 'PUT' && $r === '/boveda') {
+        $res = guardar_boveda($pdo, autenticar($pdo), cuerpo());
     } elseif ($metodo === 'DELETE' && preg_match('#^/equipos/(\d+)$#', $r, $m) === 1) {
         $res = quitar_equipo($pdo, autenticar($pdo), (int) $m[1]);
     } elseif ($metodo === 'GET' && $r === '/sync') {

@@ -1,7 +1,8 @@
 // Cuenta opcional en un servidor propio (server/ del repo, ver cuenta.rs).
 //
 // Sin cuenta Kutral funciona igual. Con cuenta, favoritos, historial (con el
-// minuto donde quedaste) y listas se sincronizan entre equipos: al abrir la
+// minuto donde quedaste), listas, y en la bóveda cifrada las claves de API,
+// ajustes y vinculaciones (RD, OpenSubtitles) se sincronizan entre equipos: al abrir la
 // app, cada 5 minutos y unos segundos después de cada cambio local (en una
 // reproducción, al detenerla: no en cada guardado de progreso). El token
 // nunca pasa por aquí: lo guarda Rust.
@@ -11,16 +12,28 @@ import { cargarHistorial } from "$lib/historial.svelte";
 import { cargarListas, crearLista, agregarALista, itemsDe, nombreDe, listas } from "$lib/listas.svelte";
 import { cargarPerfiles } from "$lib/perfiles.svelte";
 import { notify } from "$lib/notifStore.svelte";
-import { refreshRdLinked } from "$lib/config.svelte";
+import {
+  refreshRdLinked,
+  refreshOsStatus,
+  ajustesDeCuenta,
+  aplicarAjustesDeCuenta,
+} from "$lib/config.svelte";
 import type { RdDeviceStart } from "$lib/tipos";
 
 type EstadoCuenta = {
   servidor: string;
   usuario: string | null;
   ultima_sync: number;
+  boveda: boolean;
 };
 
 type ResultadoSync = { subidos: number; bajados: number };
+
+type ResultadoBoveda = {
+  ajustes: Record<string, string | null> | null;
+  credenciales: boolean;
+  bloqueada: boolean;
+};
 
 export type Amigo = { nombre: string; desde: number };
 type Amigos = { amigos: Amigo[]; recibidas: Amigo[]; enviadas: Amigo[] };
@@ -74,6 +87,8 @@ export const cuenta = $state({
   servidor: "",
   usuario: null as string | null,
   ultimaSync: 0,
+  /** Hay llave de la bóveda aquí. Sin ella (sesión vieja) se pide la contraseña. */
+  boveda: true,
   sincronizando: false,
   /** Último error de sincronización (vacío si la última salió bien). */
   error: "",
@@ -119,6 +134,7 @@ function aplicar(e: EstadoCuenta): void {
   cuenta.servidor = e.servidor;
   cuenta.usuario = e.usuario;
   cuenta.ultimaSync = e.ultima_sync;
+  cuenta.boveda = e.boveda;
 }
 
 export async function cargarCuenta(): Promise<void> {
@@ -144,6 +160,7 @@ export async function sincronizarCuenta(): Promise<void> {
       await cargarHistorial();
       await cargarListas();
     }
+    await sincronizarBoveda();
   } catch (e) {
     cuenta.error = String(e);
   } finally {
@@ -155,6 +172,22 @@ export async function sincronizarCuenta(): Promise<void> {
   // Solo recién sincronizado: así las listas de aquí están al día y no se
   // publica una versión vieja encima de la de otro equipo.
   if (ok) await actualizarPublicadas();
+}
+
+/** Claves de API, ajustes y vinculaciones, cifrados con la contraseña (boveda.rs). */
+async function sincronizarBoveda(): Promise<void> {
+  const r = await invoke<ResultadoBoveda>("cuenta_boveda", { ajustes: ajustesDeCuenta() });
+  if (r.ajustes) aplicarAjustesDeCuenta(r.ajustes);
+  if (r.credenciales) {
+    await refreshRdLinked();
+    await refreshOsStatus();
+  }
+}
+
+/** Sesión de antes de la bóveda: con la contraseña ya se puede sincronizar. */
+export async function desbloquearCuenta(clave: string): Promise<void> {
+  aplicar(await invoke<EstadoCuenta>("cuenta_desbloquear", { clave }));
+  await sincronizarCuenta();
 }
 
 // ─── Amigos y recomendaciones ───────────────────────────────────────────────

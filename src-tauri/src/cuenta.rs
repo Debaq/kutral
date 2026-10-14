@@ -16,7 +16,8 @@
 // conexiones nunca ven ese 1 porque se vuelve a 0 antes del COMMIT.
 //
 // El token del equipo vive en `cuenta.json` (0600), como rd_creds.json: el
-// webview nunca lo recibe.
+// webview nunca lo recibe. Ahí también la llave de la bóveda (boveda.rs):
+// claves de API, ajustes y vinculaciones, cifrados con la contraseña.
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -40,6 +41,11 @@ struct Cuenta {
     /// ms de la última sincronización completa. 0 = nunca.
     #[serde(default)]
     ultima_sync: i64,
+    /// Llave de la bóveda (hex), sacada de la contraseña al entrar. Vacía en
+    /// una sesión anterior a la bóveda: hasta confirmar la contraseña no se
+    /// sincroniza.
+    #[serde(default)]
+    llave: String,
     // Antes de los perfiles (cuenta.json viejo): un solo perfil y su cursor.
     // `cargar` los pasa a `perfiles`.
     #[serde(default, skip_serializing)]
@@ -927,6 +933,7 @@ static EN_CURSO: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 fn olvidar_sesion(dir: &Path) {
     let c = cargar(dir);
     let _ = guardar(dir, &Cuenta { servidor: c.servidor, ..Default::default() });
+    crate::boveda::borrar_estado(dir);
     if let Ok(db) = abrir_db(dir) {
         let _ = set_activa(&db, false);
         let _ = db.execute("DELETE FROM sync_salida", []);
@@ -953,15 +960,19 @@ async fn entrar(
         .await
         .map_err(ErrApi::texto)?;
     let token = v["token"].as_str().ok_or("respuesta sin token")?.to_string();
+    let usuario = v["usuario"].as_str().unwrap_or_default().to_string();
     // Los perfiles se emparejan en la primera sincronización (por uid: el
     // "principal" de aquí con el de la cuenta).
     let c = Cuenta {
         servidor,
         token,
-        usuario: v["usuario"].as_str().unwrap_or_default().to_string(),
+        llave: crate::boveda::derivar_llave(&usuario, clave)?,
+        usuario,
         ..Default::default()
     };
     guardar(dir, &c)?;
+    // Sesión nueva: la bóveda se mezcla como la primera vez (manda la cuenta).
+    crate::boveda::borrar_estado(dir);
     let db = abrir_db(dir)?;
     set_activa(&db, true)?;
     anotar_todo(&db)
@@ -995,6 +1006,8 @@ pub struct EstadoCuenta {
     pub servidor: String,
     pub usuario: Option<String>,
     pub ultima_sync: i64,
+    /// Hay llave de la bóveda en este equipo.
+    pub boveda: bool,
 }
 
 #[tauri::command]
@@ -1005,6 +1018,7 @@ pub fn cuenta_estado(app: tauri::AppHandle) -> Result<EstadoCuenta, String> {
         servidor: c.servidor,
         usuario: con_sesion.then_some(c.usuario),
         ultima_sync: c.ultima_sync,
+        boveda: !c.llave.is_empty(),
     })
 }
 
@@ -1052,6 +1066,124 @@ pub async fn cuenta_sincronizar(app: tauri::AppHandle) -> Result<ResultadoSync, 
     let dir = dir_config(&app)?;
     let _turno = EN_CURSO.lock().await;
     sincronizar_o_olvidar(&dir).await
+}
+
+// ─── Bóveda ─────────────────────────────────────────────────────────────────
+
+#[derive(Serialize, Default, Debug)]
+pub struct ResultadoBoveda {
+    /// Ajustes del front (las mismas claves que mandó) si cambiaron aquí.
+    ajustes: Option<crate::boveda::Datos>,
+    /// Llegó una vinculación del servidor (Real-Debrid u OpenSubtitles).
+    credenciales: bool,
+    /// Sesión sin llave: falta confirmar la contraseña en este equipo.
+    bloqueada: bool,
+}
+
+const BOVEDA_CAMBIADA: &str = "la bóveda cambió desde otro equipo";
+
+/// Baja la bóveda, la mezcla con lo de aquí (`front` = ajustes del webview)
+/// y sube el resultado si el servidor no lo tenía.
+async fn sincronizar_boveda(dir: &Path, front: crate::boveda::Datos) -> Result<ResultadoBoveda, ErrApi> {
+    use crate::boveda::{self as b, CREDENCIALES};
+    let c = cargar(dir);
+    if c.token.is_empty() {
+        return Err(ErrApi::Otro("no hay sesión".into()));
+    }
+    if c.llave.is_empty() {
+        return Ok(ResultadoBoveda { bloqueada: true, ..Default::default() });
+    }
+    // Las vinculaciones solo salen de sus archivos, nunca del webview.
+    let front: b::Datos = front.into_iter().filter(|(k, _)| !CREDENCIALES.iter().any(|(n, _)| n == k)).collect();
+    // Si otro equipo sube justo entre la bajada y la subida, el servidor
+    // responde 409: se vuelve a bajar y mezclar.
+    for _ in 0..3 {
+        let estado = b::cargar_estado(dir);
+        let mut local = b::leer_credenciales(dir);
+        local.extend(front.clone());
+        let v = match api(&c.servidor, Some(&c.token), reqwest::Method::GET, "/boveda", None).await {
+            Err(ErrApi::Otro(e)) if e.starts_with("no existe ") => {
+                return Err(ErrApi::Otro("tu servidor es de una versión anterior: sube la carpeta server/ nueva".into()))
+            }
+            r => r?,
+        };
+        let version = v["version"].as_i64().unwrap_or(0);
+        // Lo que hay de verdad en el servidor. None = nada, o algo que esta
+        // llave no abre (quedó de antes de un cambio de contraseña): se pisa.
+        let remoto = if version == 0 {
+            None
+        } else if version == estado.version && estado.base.is_some() {
+            estado.base.clone()
+        } else {
+            v["datos"].as_str().and_then(|s| b::descifrar(&c.llave, s))
+        };
+        let mezcla = b::mezclar(&local, estado.base.as_ref(), remoto.as_ref().unwrap_or(&local));
+        let credenciales = b::escribir_credenciales(dir, &local, &mezcla)?;
+        let version = if remoto.as_ref() == Some(&mezcla) {
+            version
+        } else {
+            let cuerpo = json!({ "base": version, "datos": b::cifrar(&c.llave, &mezcla)? });
+            match api(&c.servidor, Some(&c.token), reqwest::Method::PUT, "/boveda", Some(&cuerpo)).await {
+                Ok(r) => r["version"].as_i64().unwrap_or(version + 1),
+                Err(ErrApi::Otro(e)) if e == BOVEDA_CAMBIADA => continue,
+                Err(e) => return Err(e),
+            }
+        };
+        b::guardar_estado(dir, &b::Estado { version, base: Some(mezcla.clone()) })?;
+        let cambio = front.iter().any(|(k, v)| mezcla.get(k).unwrap_or(&Value::Null) != v);
+        let ajustes = cambio.then(|| {
+            front.keys().map(|k| (k.clone(), mezcla.get(k).cloned().unwrap_or(Value::Null))).collect()
+        });
+        return Ok(ResultadoBoveda { ajustes, credenciales, bloqueada: false });
+    }
+    Err(ErrApi::Otro(format!("{BOVEDA_CAMBIADA}; se reintenta en la próxima sincronización")))
+}
+
+/// Sesión de antes de la bóveda: confirma la contraseña con el servidor y
+/// guarda la llave que sale de ella.
+async fn desbloquear(dir: &Path, clave: &str) -> Result<(), ErrApi> {
+    let mut c = cargar(dir);
+    if c.token.is_empty() {
+        return Err(ErrApi::Otro("no hay sesión".into()));
+    }
+    match api(&c.servidor, Some(&c.token), reqwest::Method::POST, "/yo/clave", Some(&json!({ "clave": clave }))).await {
+        Err(ErrApi::Otro(e)) if e.starts_with("no existe ") => {
+            return Err(ErrApi::Otro("tu servidor es de una versión anterior: sube la carpeta server/ nueva".into()))
+        }
+        r => r?,
+    };
+    c.llave = crate::boveda::derivar_llave(&c.usuario, clave)?;
+    guardar(dir, &c)?;
+    crate::boveda::borrar_estado(dir);
+    Ok(())
+}
+
+/// Sincroniza la bóveda. `ajustes` son los del webview (config.svelte.ts).
+#[tauri::command]
+pub async fn cuenta_boveda(
+    app: tauri::AppHandle,
+    ajustes: crate::boveda::Datos,
+) -> Result<ResultadoBoveda, String> {
+    let dir = dir_config(&app)?;
+    let _turno = EN_CURSO.lock().await;
+    match sincronizar_boveda(&dir, ajustes).await {
+        Ok(r) => Ok(r),
+        Err(ErrApi::SinSesion) => {
+            olvidar_sesion(&dir);
+            Err(ErrApi::SinSesion.texto())
+        }
+        Err(e) => Err(e.texto()),
+    }
+}
+
+#[tauri::command]
+pub async fn cuenta_desbloquear(app: tauri::AppHandle, clave: String) -> Result<EstadoCuenta, String> {
+    let dir = dir_config(&app)?;
+    {
+        let _turno = EN_CURSO.lock().await;
+        desbloquear(&dir, &clave).await.map_err(ErrApi::texto)?;
+    }
+    cuenta_estado(app)
 }
 
 // ─── Perfiles ───────────────────────────────────────────────────────────────
@@ -1221,6 +1353,7 @@ pub async fn cuenta_lista_publica(app: tauri::AppHandle, codigo: String) -> Resu
 //   KUTRAL_TEST_INVITACION=$(php server/admin.php invitar) \
 //   KUTRAL_TEST_INVITACION_2=$(php server/admin.php invitar) \
 //   KUTRAL_TEST_INVITACION_3=$(php server/admin.php invitar) \
+//   KUTRAL_TEST_INVITACION_4=$(php server/admin.php invitar) \
 //     cargo test cuenta -- --ignored
 //
 // Dos carpetas = dos equipos de la misma cuenta. Lo que haría el front se
@@ -1690,6 +1823,63 @@ mod tests {
         assert!(sincronizar_o_olvidar(&b).await.is_err());
         assert_eq!(favs(&b).len(), antes.len() + 1);
         assert_eq!(cargar(&b).servidor, servidor, "la URL se recuerda para reentrar");
+
+        let _ = std::fs::remove_dir_all(&a);
+        let _ = std::fs::remove_dir_all(&b);
+    }
+    fn ajustes(v: Value) -> crate::boveda::Datos {
+        v.as_object().unwrap().clone()
+    }
+
+    #[tokio::test]
+    #[ignore = "necesita el servidor PHP corriendo (ver arriba)"]
+    async fn boveda_entre_equipos() {
+        let servidor = std::env::var("KUTRAL_TEST_SERVIDOR").expect("KUTRAL_TEST_SERVIDOR");
+        let inv = std::env::var("KUTRAL_TEST_INVITACION_4").expect("KUTRAL_TEST_INVITACION_4");
+        let usuario = format!("bov{}", ahora_ms() % 1_000_000);
+        let (a, b) = (equipo("ba"), equipo("bb"));
+        let rd = json!({ "access_token": "acc", "refresh_token": "ref", "client_id": "cid", "client_secret": "sec", "expires_at": 0 });
+        std::fs::write(a.join("rd_creds.json"), rd.to_string()).unwrap();
+
+        // A, el de siempre, sube sus claves.
+        entrar(&a, &servidor, &usuario, "contraseña-larga", Some(inv)).await.unwrap();
+        let front_a = ajustes(json!({ "tmdb_key": "clave-tmdb-secreta", "subs_lang": "en" }));
+        let r = sincronizar_boveda(&a, front_a.clone()).await.unwrap();
+        assert!(r.ajustes.is_none() && !r.credenciales);
+
+        // El servidor solo tiene texto cifrado.
+        let c = cargar(&a);
+        let v = api(&c.servidor, Some(&c.token), reqwest::Method::GET, "/boveda", None).await.unwrap();
+        let crudo = v["datos"].as_str().unwrap();
+        assert!(!crudo.contains("clave-tmdb-secreta") && !crudo.contains("ref"));
+
+        // B, recién instalado, entra y queda igual que A.
+        entrar(&b, &servidor, &usuario, "contraseña-larga", None).await.unwrap();
+        let front_b = ajustes(json!({ "tmdb_key": null, "subs_lang": "es" }));
+        let r = sincronizar_boveda(&b, front_b).await.unwrap();
+        assert!(r.credenciales);
+        assert_eq!(Value::Object(r.ajustes.unwrap()), json!({ "tmdb_key": "clave-tmdb-secreta", "subs_lang": "en" }));
+        let rd_b: Value = serde_json::from_str(&std::fs::read_to_string(b.join("rd_creds.json")).unwrap()).unwrap();
+        assert_eq!(rd_b, rd);
+
+        // Un cambio en B llega a A; lo que A no tocó no se pisa con nada viejo.
+        let front_b = ajustes(json!({ "tmdb_key": "clave-tmdb-secreta", "subs_lang": "fr" }));
+        assert!(sincronizar_boveda(&b, front_b.clone()).await.unwrap().ajustes.is_none());
+        let r = sincronizar_boveda(&a, front_a).await.unwrap();
+        assert_eq!(r.ajustes.unwrap()["subs_lang"], "fr");
+        let front_a = ajustes(json!({ "tmdb_key": "clave-tmdb-secreta", "subs_lang": "fr" }));
+        assert!(sincronizar_boveda(&a, front_a.clone()).await.unwrap().ajustes.is_none());
+        assert!(sincronizar_boveda(&b, front_b).await.unwrap().ajustes.is_none());
+
+        // Sesión de antes de la bóveda: bloqueada hasta confirmar la contraseña.
+        let mut c = cargar(&a);
+        c.llave.clear();
+        guardar(&a, &c).unwrap();
+        assert!(sincronizar_boveda(&a, front_a.clone()).await.unwrap().bloqueada);
+        assert!(desbloquear(&a, "otra-contraseña").await.is_err());
+        desbloquear(&a, "contraseña-larga").await.unwrap();
+        let r = sincronizar_boveda(&a, front_a).await.unwrap();
+        assert!(!r.bloqueada && r.ajustes.is_none());
 
         let _ = std::fs::remove_dir_all(&a);
         let _ = std::fs::remove_dir_all(&b);

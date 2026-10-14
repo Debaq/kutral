@@ -5,6 +5,7 @@ mod awards;
 mod cache;
 mod cast;
 mod creds;
+mod boveda;
 mod cuenta;
 mod dlna;
 mod kitsu;
@@ -653,6 +654,8 @@ pub fn run() {
             cuenta::cuenta_probar,
             cuenta::cuenta_entrar,
             cuenta::cuenta_salir,
+            cuenta::cuenta_boveda,
+            cuenta::cuenta_desbloquear,
             cuenta::cuenta_sincronizar,
             cuenta::perfil_borrar,
             cuenta::cuenta_amigos,

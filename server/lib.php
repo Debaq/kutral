@@ -6,7 +6,7 @@
 
 declare(strict_types=1);
 
-const VERSION_API = 5;
+const VERSION_API = 6;
 
 // PHP 7.4 no las trae (son de 8.0).
 if (!function_exists('str_starts_with')) {
@@ -222,6 +222,18 @@ function migrar(PDO $pdo): void
             UPDATE perfiles SET uid = 'p' || id WHERE uid IS NULL;
             CREATE UNIQUE INDEX idx_perfiles_uid ON perfiles(usuario_id, uid);
         ",
+        7 => "
+            -- Bóveda: claves de API, vinculaciones (Real-Debrid, OpenSubtitles)
+            -- y ajustes del usuario. Llega cifrada con una clave que el equipo
+            -- saca de la contraseña: aquí es un texto opaco. `version` sube con
+            -- cada escritura para que dos equipos no se pisen sin enterarse.
+            CREATE TABLE bovedas (
+                usuario_id INTEGER PRIMARY KEY REFERENCES usuarios(id) ON DELETE CASCADE,
+                datos TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                actualizada INTEGER NOT NULL
+            );
+        ",
     ];
     $actual = (int) $pdo->query('PRAGMA user_version')->fetchColumn();
     foreach ($migraciones as $version => $sql) {
@@ -296,7 +308,9 @@ function crear_invitaciones(PDO $pdo, int $n): array
     return $codigos;
 }
 
-// Cambiar la contraseña cierra la sesión en todos sus equipos.
+// Cambiar la contraseña cierra la sesión en todos sus equipos y borra la
+// bóveda: estaba cifrada con la contraseña vieja. El primer equipo que vuelva
+// a entrar la sube de nuevo.
 function cambiar_clave(PDO $pdo, string $nombre, string $clave): bool
 {
     $st = $pdo->prepare('UPDATE usuarios SET pass_hash = ? WHERE nombre = ?');
@@ -305,6 +319,8 @@ function cambiar_clave(PDO $pdo, string $nombre, string $clave): bool
         return false;
     }
     cerrar_sesiones($pdo, $nombre);
+    $pdo->prepare('DELETE FROM bovedas WHERE usuario_id = (SELECT id FROM usuarios WHERE nombre = ?)')
+        ->execute([$nombre]);
     return true;
 }
 

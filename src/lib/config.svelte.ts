@@ -349,6 +349,56 @@ export function loadConfig() {
 	config.loaded = true;
 }
 
+// Lo que viaja con la cuenta de Kutral (bóveda cifrada, ver boveda.rs): claves
+// de API y preferencias tuyas. Se queda en el equipo lo que depende de él:
+// modo kiosko, pantalla completa, caché, descargas, servidor web.
+const AJUSTES_DE_CUENTA = [
+	"app_lang",
+	"tmdb_key",
+	"omdb_key",
+	"wyzie_key",
+	"subs_lang",
+	"subs_por_fuente",
+	"sub_sync_modo",
+	"sub_sync_cap_anterior",
+	"sub_sync_auto",
+	"sub_mode",
+	"source_select",
+	"verify_es_tracks",
+	"preferred_source_movie",
+	"preferred_source_series",
+	"preferred_source_anime",
+	"blocked_source_movie",
+	"blocked_source_series",
+	"blocked_source_anime",
+	"sub_size",
+	"rd_cleanup_hours",
+	"iptv_lists",
+] as const;
+
+/** Los ajustes que van a la bóveda, tal cual están en localStorage (null = sin valor). */
+export function ajustesDeCuenta(): Record<string, string | null> {
+	const a: Record<string, string | null> = {};
+	for (const k of AJUSTES_DE_CUENTA) a[k] = localStorage.getItem(k);
+	return a;
+}
+
+/** Aplica los ajustes que bajaron de la cuenta y recarga la config. */
+export function aplicarAjustesDeCuenta(a: Record<string, unknown>) {
+	for (const k of AJUSTES_DE_CUENTA) {
+		if (!(k in a)) continue;
+		const v = a[k];
+		if (typeof v === "string") localStorage.setItem(k, v);
+		else if (v === null) localStorage.removeItem(k);
+	}
+	loadConfig();
+}
+
+/** Algo de la bóveda cambió aquí: que la cuenta lo suba pronto. */
+export function avisarCambioAjustes() {
+	if (typeof window !== "undefined") window.dispatchEvent(new Event("kutral:cambio-local"));
+}
+
 export function saveConfig() {
 	if (typeof localStorage === "undefined") return;
 	localStorage.setItem("app_lang", config.lang);
@@ -394,6 +444,7 @@ export function saveConfig() {
 		.filter((l) => l.url.trim())
 		.map((l) => ({ name: (l.name || "Lista").trim(), url: l.url.trim() }));
 	localStorage.setItem("iptv_lists", JSON.stringify(listas));
+	avisarCambioAjustes();
 }
 
 // Migra credenciales RD del viejo localStorage (texto plano) al store 0600 del
@@ -422,17 +473,21 @@ export async function initRd() {
 }
 
 export async function refreshRdLinked() {
+	const antes = config.rdLinked;
 	try {
 		config.rdLinked = await invoke<boolean>("rd_creds_status");
 	} catch {
 		config.rdLinked = false;
 	}
+	// Vincular o desvincular RD también va a la bóveda de la cuenta.
+	if (config.rdLinked !== antes) avisarCambioAjustes();
 }
 
 type OsStatus = { linked: boolean; username: string; has_api_key: boolean };
 
 // Refresca el indicador de cuenta OpenSubtitles (sin tocar el token).
 export async function refreshOsStatus() {
+	const antes = config.osLinked;
 	try {
 		const s = await invoke<OsStatus>("os_status");
 		config.osLinked = s.linked;
@@ -443,6 +498,7 @@ export async function refreshOsStatus() {
 		config.osUser = "";
 		config.osHasKey = false;
 	}
+	if (config.osLinked !== antes) avisarCambioAjustes();
 }
 
 export async function initDetection() {

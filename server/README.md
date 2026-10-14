@@ -93,6 +93,9 @@ Los errores responden `{"error": "mensaje"}` con su código HTTP.
 | 🔒 `POST /salir` | Cierra la sesión de este equipo |
 | 🔒 `GET /yo` | Usuario, perfiles y equipos con sesión |
 | 🔒 `DELETE /equipos/{id}` | Cierra la sesión de otro equipo |
+| 🔒 `POST /yo/clave` | `{clave}`: confirma la contraseña (403 si no es); cuenta para el freno de intentos |
+| 🔒 `GET /boveda` | `{version, datos, actualizada}`; `version` 0 y `datos` null si no hay |
+| 🔒 `PUT /boveda` | `{base, datos}` → `{version}`; 409 si `base` no es la versión actual |
 | 🔒 `GET /perfiles` | `{perfiles: [{id, uid, nombre, color, actualizado}]}` |
 | 🔒 `POST /perfiles` | `{uid, nombre, color, actualizado}`: crea, o actualiza si es más nuevo (hasta 10 por cuenta) |
 | 🔒 `DELETE /perfiles/{id}` | Borra el perfil y todo lo sincronizado de él (el `principal` no) |
@@ -119,6 +122,15 @@ Los errores responden `{"error": "mensaje"}` con su código HTTP.
 Cada equipo recibe su propio token y en la base solo se guarda su sha256.
 Después de 10 intentos fallidos de login o de invitación desde una IP, responde
 429 durante 15 minutos.
+
+### Bóveda
+
+Claves de API, ajustes y vinculaciones (Real-Debrid, OpenSubtitles) de cada
+usuario, para que entrar con la cuenta en un Kutral nuevo lo deje igual que el
+de siempre. Kutral la cifra antes de subirla con una llave que saca de la
+contraseña (Argon2id + ChaCha20-Poly1305): el servidor guarda un texto opaco.
+Cambiar la contraseña (`admin.php` o el panel) cierra todas las sesiones y
+borra la bóveda; el primer equipo que vuelve a entrar la sube de nuevo.
 
 ### Llavero
 
