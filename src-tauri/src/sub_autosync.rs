@@ -196,6 +196,101 @@ pub fn sincronizar(audios: &[(f64, Vec<i16>)], texto_subs: &str) -> Option<Resul
     alinear_varias(&ventanas, &subs)
 }
 
+// ─────────────────────────── en el reproductor ─────────────────────────────
+
+/// Opciones del mpv que decodifica el audio a analizar: sin video, sin
+/// subtítulos y con la salida de audio a un archivo (`ao=pcm`) tan rápido
+/// como dé la red (`untimed`). Así no hace falta ffmpeg y se lee lo mismo que
+/// lee el reproductor. En Linux van a una segunda instancia de libmpv; en
+/// Windows, como `--opción=valor` a un mpv.exe aparte. Falta por llamada:
+/// el archivo de salida, el inicio, el largo y la pista de audio.
+pub const OPCIONES_MPV: [(&str, &str); 13] = [
+    ("config", "no"),
+    ("load-scripts", "no"),
+    ("terminal", "no"),
+    ("ytdl", "no"),
+    ("vid", "no"),
+    ("sid", "no"),
+    ("vo", "null"),
+    ("ao", "pcm"),
+    ("ao-pcm-waveheader", "no"),
+    ("audio-samplerate", "16000"),
+    ("audio-channels", "mono"),
+    ("audio-format", "s16"),
+    ("untimed", "yes"),
+];
+
+/// Corte de red al abrir el video para analizar, en segundos.
+pub const NETWORK_TIMEOUT: &str = "20";
+
+/// Archivo temporal donde mpv deja el audio decodificado.
+pub fn archivo_pcm() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("kutral-sync-{}.pcm", std::process::id()))
+}
+
+/// Lee lo que mpv dejó en `archivo_pcm()` (s16 little endian) y lo borra.
+pub fn leer_pcm(ruta: &std::path::Path) -> Result<Vec<i16>, String> {
+    let bytes = std::fs::read(ruta).map_err(|e| format!("leer audio: {e}"))?;
+    let _ = std::fs::remove_file(ruta);
+    Ok(bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| i16::from_le_bytes(*c))
+        .collect())
+}
+
+/// Texto del subtítulo externo puesto (archivo local o URL).
+pub fn leer_subtitulo(ruta: &str) -> Result<String, String> {
+    if ruta.starts_with("http://") || ruta.starts_with("https://") {
+        let url = ruta.to_string();
+        return tauri::async_runtime::block_on(async move {
+            let r = reqwest::get(&url).await.map_err(|e| format!("bajar subtítulo: {e}"))?;
+            r.text().await.map_err(|e| format!("bajar subtítulo: {e}"))
+        });
+    }
+    let bytes = std::fs::read(ruta).map_err(|e| format!("leer subtítulo: {e}"))?;
+    // Muchos .srt viejos vienen en Latin-1: los tiempos son ASCII igual.
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Análisis completo para el reproductor: lee el subtítulo `sub`, decodifica
+/// una ventana alrededor de `pos` con `extraer(inicio, largo)` y, si no
+/// alcanza para estar seguro, suma otra. Bloquea (baja minutos del stream):
+/// llamarlo desde un hilo aparte. `avisar` muestra el progreso en pantalla.
+pub fn analizar(
+    sub: &str,
+    pos: f64,
+    dur: f64,
+    extraer: impl Fn(f64, f64) -> Result<Vec<i16>, String>,
+    avisar: impl Fn(&str),
+) -> Result<Resultado, String> {
+    let texto = leer_subtitulo(sub)?;
+    // Ventana alrededor de donde se está viendo: esa parte del stream el
+    // reproductor la necesita igual (en un torrent, ya está o está por bajar).
+    let mut inicio = (pos - 30.0).max(0.0);
+    if dur > VENTANA_S {
+        inicio = inicio.min(dur - VENTANA_S);
+    }
+    let mut audios = vec![(inicio, extraer(inicio, VENTANA_S)?)];
+    let mut res = sincronizar(&audios, &texto);
+    // Una ventana puede no alcanzar (música, poca conversación): se suma otra
+    // antes de rendirse. La siguiente, o la anterior si ya no queda video.
+    if !res.is_some_and(|r| r.confiable()) {
+        let otra = if dur <= 0.0 || inicio + 2.0 * VENTANA_S <= dur {
+            inicio + VENTANA_S
+        } else {
+            (inicio - VENTANA_S).max(0.0)
+        };
+        if (otra - inicio).abs() >= VENTANA_S - 1.0 {
+            avisar("Sincronizando: analizando un poco más…");
+            audios.push((otra, extraer(otra, VENTANA_S)?));
+            res = sincronizar(&audios, &texto);
+        }
+    }
+    res.ok_or_else(|| "no hay suficiente audio o subtítulos en esta parte".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

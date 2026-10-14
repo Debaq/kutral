@@ -1645,7 +1645,8 @@
             así que baja esa parte del video otra vez: en 1080p son unos
             200–400 MB. Si no está seguro, no cambia nada. Solo subtítulos
             externos: los incluidos en el video ya vienen sincronizados. En el
-            reproductor: Subtítulos → Sincronizar y mover….
+            reproductor: Subtítulos → Sincronizar y mover… (en Windows, menú →
+            Ajustar subtítulos → Sincronizar automáticamente).
           </p>
           <button data-nav type="button" class="btn-ghost" onclick={borrarSincronias}>
             {syncBorradas ? "✓ Sincronías borradas" : "Borrar sincronías guardadas"}

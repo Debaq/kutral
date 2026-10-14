@@ -18,7 +18,6 @@ mod omdb;
 mod opensubtitles;
 mod subs_match;
 mod sub_sync;
-#[cfg(target_os = "linux")]
 mod sub_autosync;
 mod probe;
 mod rd;

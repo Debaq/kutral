@@ -180,6 +180,51 @@ pub fn guardar(ctx: &SyncCtx, sub: &str, delay: f64, aplicado: f64) {
     }
 }
 
+// ── identidad de la pista ──
+
+/// Ruta/URL con que se cargó un subtítulo externo → su identidad real
+/// ("os:<file_id>", "wy:<url>"). La ruta sola no sirve: al guardar en
+/// Descargas se nombra por título e idioma, y dos subtítulos distintos
+/// terminan en el mismo archivo.
+static SUB_KEYS: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+
+/// El frontend avisa la identidad del subtítulo que va a cargar.
+pub fn set_sub_key(path: &str, key: &str) {
+    if let Ok(mut k) = SUB_KEYS.lock() {
+        k.retain(|(p, _)| p != path);
+        k.push((path.to_string(), key.to_string()));
+        let sobra = k.len().saturating_sub(50);
+        k.drain(..sobra);
+    }
+}
+
+/// Pista de subtítulos tal como la describe mpv (`current-tracks/sub`).
+pub struct Pista<'a> {
+    pub externa: bool,
+    pub archivo: &'a str,
+    pub lang: &'a str,
+    pub title: &'a str,
+    pub codec: &'a str,
+    pub ff_index: i64,
+}
+
+/// Identidad de la pista: lo que se recuerda como `sub`.
+pub fn clave_pista(p: &Pista) -> String {
+    if p.externa {
+        let conocida = SUB_KEYS
+            .lock()
+            .ok()
+            .and_then(|k| k.iter().rev().find(|(r, _)| r == p.archivo).map(|(_, v)| v.clone()));
+        return conocida.unwrap_or_else(|| {
+            let nombre = p.archivo.rsplit(['/', '\\']).next().unwrap_or(p.archivo);
+            format!("ext:{nombre}")
+        });
+    }
+    // Embebida: idioma + título + códec + índice la distinguen dentro del
+    // mismo archivo, que es lo único que importa (la fuente ya va en la clave).
+    format!("emb:{}/{}/{}/{}", p.lang, p.title, p.codec, p.ff_index)
+}
+
 /// Configuración → "Borrar sincronías guardadas".
 #[tauri::command]
 pub fn sub_sync_clear() -> Result<(), String> {

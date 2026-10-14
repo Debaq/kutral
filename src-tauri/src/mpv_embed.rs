@@ -1800,29 +1800,19 @@ fn draw_sub_adj() {
 static AUTOSYNC: AtomicBool = AtomicBool::new(false);
 
 /// Decodifica `len` s de audio desde `start` a s16 mono 16 kHz con una
-/// SEGUNDA instancia de libmpv: sin video, sin subtítulos y con la salida de
-/// audio a un archivo (`ao=pcm`) tan rápido como dé la red (`untimed`).
-/// Así no hace falta ffmpeg, y lee lo mismo que lee el reproductor.
+/// SEGUNDA instancia de libmpv (opciones en `sub_autosync::OPCIONES_MPV`).
 fn extraer_audio(url: &str, start: f64, len: f64, aid: i64) -> Result<Vec<i16>, String> {
-    let tmp = std::env::temp_dir().join(format!("kutral-sync-{}.pcm", std::process::id()));
+    use crate::sub_autosync as sa;
+    let tmp = sa::archivo_pcm();
     let _ = std::fs::remove_file(&tmp);
     let ruta = tmp.to_string_lossy().into_owned();
     let m = Mpv::with_initializer(|i| {
-        i.set_option("config", "no")?;
-        i.set_option("load-scripts", "no")?;
-        i.set_option("terminal", "no")?;
+        for (k, v) in sa::OPCIONES_MPV {
+            i.set_option(k, v)?;
+        }
         i.set_option("idle", "yes")?;
-        i.set_option("vid", "no")?;
-        i.set_option("sid", "no")?;
-        i.set_option("vo", "null")?;
-        i.set_option("ao", "pcm")?;
         i.set_option("ao-pcm-file", ruta.as_str())?;
-        i.set_option("ao-pcm-waveheader", "no")?;
-        i.set_option("audio-samplerate", crate::sub_autosync::SAMPLE_RATE as i64)?;
-        i.set_option("audio-channels", "mono")?;
-        i.set_option("audio-format", "s16")?;
-        i.set_option("untimed", "yes")?;
-        i.set_option("network-timeout", "20")?;
+        i.set_option("network-timeout", sa::NETWORK_TIMEOUT)?;
         i.set_option("start", format!("{start:.2}").as_str())?;
         i.set_option("length", format!("{len:.2}").as_str())?;
         if aid > 0 {
@@ -1854,28 +1844,7 @@ fn extraer_audio(url: &str, start: f64, len: f64, aid: i64) -> Result<Vec<i16>, 
         }
     }
     drop(m); // cierra el ao y vacía el archivo
-    let bytes = std::fs::read(&tmp).map_err(|e| format!("leer audio: {e}"))?;
-    let _ = std::fs::remove_file(&tmp);
-    Ok(bytes
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|c| i16::from_le_bytes(*c))
-        .collect())
-}
-
-/// Texto del subtítulo externo puesto (archivo local o URL).
-fn leer_subtitulo(ruta: &str) -> Result<String, String> {
-    if ruta.starts_with("http://") || ruta.starts_with("https://") {
-        let url = ruta.to_string();
-        return tauri::async_runtime::block_on(async move {
-            let r = reqwest::get(&url).await.map_err(|e| format!("bajar subtítulo: {e}"))?;
-            r.text().await.map_err(|e| format!("bajar subtítulo: {e}"))
-        });
-    }
-    let bytes = std::fs::read(ruta).map_err(|e| format!("leer subtítulo: {e}"))?;
-    // Muchos .srt viejos vienen en Latin-1: los tiempos son ASCII igual.
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
+    sa::leer_pcm(&tmp)
 }
 
 fn aviso_osd(texto: &str, ms: u32) {
@@ -1908,36 +1877,15 @@ fn autosync_iniciar() {
     let clave = sub_key_actual();
     let aid = get_i64("aid");
     let (pos, dur) = (get_f64("time-pos"), get_f64("duration"));
-    // Ventana alrededor de donde se está viendo: esa parte del stream el
-    // reproductor la necesita igual (en un torrent, ya está o está por bajar).
-    let ventana = crate::sub_autosync::VENTANA_S;
-    let mut inicio = (pos - 30.0).max(0.0);
-    if dur > ventana {
-        inicio = inicio.min(dur - ventana);
-    }
     aviso_osd("Sincronizando: analizando el audio…", 4000);
     std::thread::spawn(move || {
-        let r = leer_subtitulo(&sub).and_then(|texto| {
-            use crate::sub_autosync::sincronizar;
-            let mut audios = vec![(inicio, extraer_audio(&url, inicio, ventana, aid)?)];
-            let mut res = sincronizar(&audios, &texto);
-            // Una ventana puede no alcanzar (música, poca conversación): se
-            // suma otra antes de rendirse. La siguiente, o la anterior si ya
-            // no queda video.
-            if !res.is_some_and(|r| r.confiable()) {
-                let otra = if dur <= 0.0 || inicio + 2.0 * ventana <= dur {
-                    inicio + ventana
-                } else {
-                    (inicio - ventana).max(0.0)
-                };
-                if (otra - inicio).abs() >= ventana - 1.0 {
-                    aviso_osd("Sincronizando: analizando un poco más…", 4000);
-                    audios.push((otra, extraer_audio(&url, otra, ventana, aid)?));
-                    res = sincronizar(&audios, &texto);
-                }
-            }
-            res.ok_or_else(|| "no hay suficiente audio o subtítulos en esta parte".to_string())
-        });
+        let r = crate::sub_autosync::analizar(
+            &sub,
+            pos,
+            dur,
+            |inicio, largo| extraer_audio(&url, inicio, largo, aid),
+            |t| aviso_osd(t, 4000),
+        );
         let Some(app) = APP.get() else {
             AUTOSYNC.store(false, Ordering::SeqCst);
             return;
@@ -1991,46 +1939,29 @@ struct SyncActual {
 
 static SYNC: std::sync::Mutex<Option<SyncActual>> = std::sync::Mutex::new(None);
 
-/// Ruta/URL con que se cargó un subtítulo externo → su identidad real
-/// ("os:<file_id>", "wy:<url>"). La ruta sola no sirve: al guardar en
-/// Descargas se nombra por título e idioma, y dos subtítulos distintos
-/// terminan en el mismo archivo.
-static SUB_KEYS: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
-
 /// El frontend avisa la identidad del subtítulo que acaba de cargar.
 pub fn set_sub_key(path: &str, key: &str) {
-    if let Ok(mut k) = SUB_KEYS.lock() {
-        k.retain(|(p, _)| p != path);
-        k.push((path.to_string(), key.to_string()));
-        let sobra = k.len().saturating_sub(50);
-        k.drain(..sobra);
-    }
+    crate::sub_sync::set_sub_key(path, key);
 }
 
 /// Identidad de la pista de subtítulos puesta. None = sin subtítulos.
 fn sub_key_actual() -> Option<String> {
     let mpv = MPV.get()?;
     mpv.get_property::<i64>("current-tracks/sub/id").ok()?;
-    if get_bool("current-tracks/sub/external") {
-        let path = get_string("current-tracks/sub/external-filename");
-        let conocida = SUB_KEYS
-            .lock()
-            .ok()
-            .and_then(|k| k.iter().rev().find(|(p, _)| *p == path).map(|(_, v)| v.clone()));
-        return Some(conocida.unwrap_or_else(|| {
-            let nombre = path.rsplit(['/', '\\']).next().unwrap_or(&path);
-            format!("ext:{nombre}")
-        }));
-    }
-    // Embebida: idioma + título + códec + índice la distinguen dentro del
-    // mismo archivo, que es lo único que importa (la fuente ya va en la clave).
-    Some(format!(
-        "emb:{}/{}/{}/{}",
+    let (archivo, lang, title, codec) = (
+        get_string("current-tracks/sub/external-filename"),
         get_string("current-tracks/sub/lang"),
         get_string("current-tracks/sub/title"),
         get_string("current-tracks/sub/codec"),
-        get_i64("current-tracks/sub/ff-index"),
-    ))
+    );
+    Some(crate::sub_sync::clave_pista(&crate::sub_sync::Pista {
+        externa: get_bool("current-tracks/sub/external"),
+        archivo: &archivo,
+        lang: &lang,
+        title: &title,
+        codec: &codec,
+        ff_index: get_i64("current-tracks/sub/ff-index"),
+    }))
 }
 
 /// Guarda el desfase de la pista puesta (al salir, al cambiar de video...).

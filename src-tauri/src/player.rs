@@ -534,7 +534,14 @@ pub mod imp {
                 eprintln!("[mpv-ipc] no pude conectar al IPC: sin eventos de fin");
                 return;
             };
-            for (id, prop) in [(1u8, "time-pos"), (2, "duration")] {
+            for (id, prop) in [
+                (1u8, "time-pos"),
+                (2, "duration"),
+                // Memoria de sincronía: qué pista está puesta y cuánto se
+                // corrió (al cerrarse mpv ya no se puede preguntar).
+                (3, "current-tracks/sub"),
+                (4, "sub-delay"),
+            ] {
                 let line =
                     format!("{{\"command\":[\"observe_property\",{id},\"{prop}\"]}}\n");
                 if w.write_all(line.as_bytes()).is_err() {
@@ -577,6 +584,14 @@ pub mod imp {
                                     dur = d;
                                 }
                             }
+                            Some("sub-delay") => {
+                                if let Some(d) = val {
+                                    *SUB_DELAY.lock().unwrap_or_else(|e| e.into_inner()) = d;
+                                }
+                            }
+                            Some("current-tracks/sub") => {
+                                vigilar_pista_sub(&app, v.get("data").and_then(clave_de));
+                            }
                             _ => {}
                         }
                     }
@@ -604,6 +619,7 @@ pub mod imp {
                             ["kutral-pick", id, ..] => {
                                 let _ = app.emit("player:menu-pick", id.to_string());
                             }
+                            ["kutral-autosync", ..] => autosync_iniciar(&app),
                             _ => {}
                         }
                     }
@@ -628,9 +644,252 @@ pub mod imp {
             }
             // mpv se fue: lo cerró el usuario (q, ✕ de la ventana), o murió.
             eprintln!("[mpv-ipc] mpv cerrado → mpv:state false");
+            guardar_sync_actual();
             let _ = app.emit("mpv:state", false);
             if SUSPENDIDO.swap(false, Ordering::SeqCst) {
                 let _ = app.emit("mpv:suspended", false);
+            }
+        });
+    }
+
+    // ── memoria de sincronía (sub_sync.rs) y sincronía por audio (sub_autosync.rs) ──
+    //
+    // Lo mismo que hace el embed de Linux, pero mirando a mpv por el IPC: el
+    // vigía de eventos observa `current-tracks/sub` y `sub-delay`.
+
+    /// Sesión en curso: con qué contexto se abrió, qué pista de subtítulos
+    /// está puesta y qué desfase se le aplicó al cargarla. None = no se
+    /// recuerda nada (trailer, TV en vivo).
+    struct SyncActual {
+        ctx: crate::sub_sync::SyncCtx,
+        sub: Option<String>,
+        aplicado: f64,
+    }
+
+    static SYNC: Mutex<Option<SyncActual>> = Mutex::new(None);
+    /// Último `sub-delay` que informó mpv.
+    static SUB_DELAY: Mutex<f64> = Mutex::new(0.0);
+    /// Hay un análisis en curso (uno a la vez: baja minutos del stream).
+    static AUTOSYNC: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    fn sub_delay() -> f64 {
+        *SUB_DELAY.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn osd(texto: &str, ms: u32) {
+        let _ = mpv_cmd(vec![
+            serde_json::Value::String("show-text".into()),
+            serde_json::Value::String(texto.into()),
+            serde_json::Value::String(ms.to_string()),
+        ]);
+    }
+
+    /// Identidad de la pista a partir de `current-tracks/sub`. None = sin
+    /// subtítulos.
+    fn clave_de(nodo: &serde_json::Value) -> Option<String> {
+        let o = nodo.as_object()?;
+        let txt = |k: &str| o.get(k).and_then(|v| v.as_str()).unwrap_or("");
+        Some(crate::sub_sync::clave_pista(&crate::sub_sync::Pista {
+            externa: o.get("external").and_then(|v| v.as_bool()).unwrap_or(false),
+            archivo: txt("external-filename"),
+            lang: txt("lang"),
+            title: txt("title"),
+            codec: txt("codec"),
+            ff_index: o.get("ff-index").and_then(|v| v.as_i64()).unwrap_or(0),
+        }))
+    }
+
+    /// Guarda el desfase de la pista puesta (al cerrar, al cambiar de video).
+    fn guardar_sync_actual() {
+        let delay = sub_delay();
+        let mut g = SYNC.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(s) = g.as_mut() else { return };
+        if let Some(sub) = &s.sub {
+            crate::sub_sync::guardar(&s.ctx, sub, delay, s.aplicado);
+        }
+        s.aplicado = delay;
+    }
+
+    /// Antes de lanzar otro mpv: lo ajustado en el anterior se guarda y la
+    /// sesión nueva arranca con su contexto (None = no recordar nada).
+    fn nueva_sesion_sync(
+        state: &tauri::State<'_, PlayerState>,
+        ctx: Option<crate::sub_sync::SyncCtx>,
+    ) {
+        guardar_sync_actual();
+        // Muerto el vigía del mpv anterior, ya no puede tocar la sesión nueva.
+        kill_existing(state);
+        *SYNC.lock().unwrap_or_else(|e| e.into_inner()) =
+            ctx.map(|ctx| SyncActual { ctx, sub: None, aplicado: 0.0 });
+        *SUB_DELAY.lock().unwrap_or_else(|e| e.into_inner()) = 0.0;
+    }
+
+    /// Cambió la pista de subtítulos (la eligió el front, se bajó una, o se
+    /// cambió en el menú): lo ajustado en la anterior se guarda y a la nueva
+    /// se le pone lo que tenga recordado.
+    fn vigilar_pista_sub(app: &tauri::AppHandle, key: Option<String>) {
+        let cambio = {
+            let g = SYNC.lock().unwrap_or_else(|e| e.into_inner());
+            g.as_ref()
+                .filter(|s| s.sub != key)
+                .map(|s| (s.ctx.clone(), s.sub.clone(), s.aplicado))
+        };
+        let Some((ctx, vieja, aplicado)) = cambio else { return };
+        if let Some(v) = &vieja {
+            crate::sub_sync::guardar(&ctx, v, sub_delay(), aplicado);
+        }
+        let encontrado = key.as_deref().and_then(|k| crate::sub_sync::buscar(&ctx, k));
+        let delay = encontrado.map(|(d, _)| d).unwrap_or(0.0);
+        let externa = key.as_deref().is_some_and(|k| !k.starts_with("emb:"));
+        let auto = encontrado.is_none() && externa && ctx.auto == "siempre";
+        prop("sub-delay", serde_json::json!(delay));
+        *SUB_DELAY.lock().unwrap_or_else(|e| e.into_inner()) = delay;
+        if let Some(s) = SYNC.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+            s.sub = key;
+            s.aplicado = delay;
+        }
+        if auto {
+            autosync_iniciar(app);
+            return;
+        }
+        use crate::sub_sync::Origen;
+        let aviso = match encontrado {
+            Some((d, Origen::CapituloAnterior)) if d != 0.0 => {
+                format!("Sincronía del capítulo anterior: {d:+.1} s  ·  z/x para corregir")
+            }
+            Some((d, _)) if d != 0.0 => format!("Sincronía recordada: {d:+.1} s"),
+            _ => return,
+        };
+        osd(&aviso, 3500);
+    }
+
+    /// Decodifica `len` s de audio desde `start` a s16 mono 16 kHz con OTRO
+    /// mpv.exe (opciones en `sub_autosync::OPCIONES_MPV`), que termina solo
+    /// al llegar al final del tramo.
+    fn extraer_audio(bin: &str, url: &str, start: f64, len: f64, aid: i64) -> Result<Vec<i16>, String> {
+        use crate::sub_autosync as sa;
+        use std::process::{Command, Stdio};
+        let tmp = sa::archivo_pcm();
+        let _ = std::fs::remove_file(&tmp);
+        let mut cmd = Command::new(bin);
+        crate::winproc::hide_console(&mut cmd);
+        for (k, v) in sa::OPCIONES_MPV {
+            cmd.arg(format!("--{k}={v}"));
+        }
+        cmd.arg(format!("--ao-pcm-file={}", tmp.display()))
+            .arg(format!("--network-timeout={}", sa::NETWORK_TIMEOUT))
+            .arg("--idle=no")
+            .arg("--keep-open=no")
+            .arg("--force-window=no")
+            .arg(format!("--start={start:.2}"))
+            .arg(format!("--length={len:.2}"));
+        if aid > 0 {
+            // La misma pista que se oye (así no se baja otra si son streams
+            // separados).
+            cmd.arg(format!("--aid={aid}"));
+        }
+        cmd.arg("--").arg(url);
+        cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        let mut hijo = cmd.spawn().map_err(|e| format!("mpv de análisis: {e}"))?;
+        let t = std::time::Instant::now();
+        loop {
+            match hijo.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) => {}
+                Err(e) => return Err(format!("mpv de análisis: {e}")),
+            }
+            if t.elapsed().as_secs() > 180 {
+                let _ = hijo.kill();
+                let _ = hijo.wait();
+                let _ = std::fs::remove_file(&tmp);
+                return Err("el análisis tardó demasiado (red lenta)".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        // Sin archivo o vacío: mpv no pudo abrir el video (o no tiene audio).
+        let pcm = sa::leer_pcm(&tmp).unwrap_or_default();
+        if pcm.is_empty() {
+            return Err("no se pudo abrir el video para analizar".into());
+        }
+        Ok(pcm)
+    }
+
+    /// Sincroniza por audio la pista puesta: menú de uosc (Ajustar subtítulos
+    /// → Sincronizar automáticamente) o, en modo "siempre", al cargar un
+    /// subtítulo externo sin sincronía recordada. Corre en un hilo aparte y
+    /// aplica el resultado solo si es confiable y la pista sigue siendo la
+    /// misma.
+    fn autosync_iniciar(app: &tauri::AppHandle) {
+        use std::sync::atomic::Ordering;
+        let habilitada = SYNC
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .is_some_and(|s| s.ctx.auto != "no");
+        if !habilitada {
+            osd("La sincronía automática está desactivada (Configuración → Subtítulos)", 3500);
+            return;
+        }
+        if AUTOSYNC.swap(true, Ordering::SeqCst) {
+            return; // ya hay uno en curso
+        }
+        let bin = mpv_bin(app);
+        std::thread::spawn(move || {
+            let p = read_props(&["current-tracks/sub", "path", "aid", "time-pos", "duration"]);
+            let pista = p.get("current-tracks/sub").filter(|v| v.is_object());
+            if !pista.and_then(|v| v["external"].as_bool()).unwrap_or(false) {
+                AUTOSYNC.store(false, Ordering::SeqCst);
+                osd(
+                    if pista.is_some() {
+                        "Los subtítulos incluidos en el video ya vienen sincronizados con él"
+                    } else {
+                        "No hay subtítulos puestos"
+                    },
+                    3000,
+                );
+                return;
+            }
+            let clave = pista.and_then(clave_de);
+            let sub = pista
+                .and_then(|v| v["external-filename"].as_str())
+                .unwrap_or_default()
+                .to_string();
+            let url = p.get("path").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let num = |k: &str| p.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let aid = p.get("aid").and_then(|v| v.as_i64()).unwrap_or(0);
+            osd("Sincronizando: analizando el audio…", 4000);
+            let r = crate::sub_autosync::analizar(
+                &sub,
+                num("time-pos"),
+                num("duration"),
+                |inicio, largo| extraer_audio(&bin, &url, inicio, largo, aid),
+                |t| osd(t, 4000),
+            );
+            AUTOSYNC.store(false, Ordering::SeqCst);
+            // Cambió de pista o de video mientras tanto (o se cerró): el
+            // resultado ya no corresponde a lo que está puesto.
+            let sigue = SYNC
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+                .is_some_and(|s| s.sub == clave);
+            if !sigue {
+                return;
+            }
+            match r {
+                Ok(res) if res.confiable() => {
+                    let delay = -res.desfase;
+                    prop("sub-delay", serde_json::json!(delay));
+                    osd(&format!("Sincronizado automáticamente: {delay:+.1} s"), 3500);
+                }
+                Ok(res) => {
+                    eprintln!("[autosync] poco confiable: {res:?}");
+                    osd("No pude sincronizar con seguridad. Ajusta a mano (z/x)", 4000);
+                }
+                Err(e) => {
+                    eprintln!("[autosync] {e}");
+                    osd(&format!("No pude sincronizar: {e}"), 4000);
+                }
             }
         });
     }
@@ -756,8 +1015,7 @@ pub mod imp {
         if url.is_empty() {
             return Err("url vacía".into());
         }
-        // Memoria de sincronía: por ahora solo en Linux (mpv embebido).
-        let _ = sync;
+        nueva_sesion_sync(&state, sync);
         AVISA_FIN.store(true, std::sync::atomic::Ordering::SeqCst);
         ES_TRAILER.store(false, std::sync::atomic::Ordering::SeqCst);
         EN_VIVO.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -791,6 +1049,7 @@ pub mod imp {
         if url.is_empty() {
             return Err("url vacía".into());
         }
+        nueva_sesion_sync(&state, None);
         AVISA_FIN.store(false, std::sync::atomic::Ordering::SeqCst);
         ES_TRAILER.store(true, std::sync::atomic::Ordering::SeqCst);
         EN_VIVO.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -824,6 +1083,7 @@ pub mod imp {
 
         // Un canal en vivo no "termina": si el stream se corta no corresponde
         // ofrecer próximo capítulo ni PostCréditos.
+        nueva_sesion_sync(&state, None); // un canal en vivo no se sincroniza
         AVISA_FIN.store(false, std::sync::atomic::Ordering::SeqCst);
         ES_TRAILER.store(false, std::sync::atomic::Ordering::SeqCst);
         EN_VIVO.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -864,11 +1124,11 @@ pub mod imp {
         Ok(())
     }
 
-    /// Identidad del subtítulo recién cargado. La memoria de sincronía vive
-    /// por ahora solo en el embed de Linux: acá no hay quién la use.
+    /// Identidad del subtítulo que el front va a cargar (antes del sub-add:
+    /// así la pista ya tiene identidad cuando el vigía la ve aparecer).
     #[tauri::command]
     pub fn mpv_sub_key(path: String, key: String) {
-        let _ = (path, key);
+        crate::sub_sync::set_sub_key(&path, &key);
     }
 
     /// Lista para elegir dentro del video (subtítulos descargables). En Linux
@@ -901,6 +1161,7 @@ pub mod imp {
         app: tauri::AppHandle,
         state: tauri::State<'_, PlayerState>,
     ) -> Result<(), String> {
+        guardar_sync_actual();
         let _ = mpv_cmd(vec![serde_json::Value::String("quit".into())]);
         kill_existing(&state);
         #[cfg(not(windows))]
