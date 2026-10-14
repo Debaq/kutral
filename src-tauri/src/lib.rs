@@ -650,6 +650,7 @@ pub fn run() {
             creds::rd_creds_save,
             creds::rd_creds_clear,
             creds::rd_creds_status,
+            creds::rd_creds_propio,
             cuenta::cuenta_estado,
             cuenta::cuenta_probar,
             cuenta::cuenta_entrar,

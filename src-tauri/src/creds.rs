@@ -87,6 +87,12 @@ pub fn rd_creds_status_local(app: &tauri::AppHandle) -> bool {
     load(app).map(|c| !c.access_token.is_empty()).unwrap_or(false)
 }
 
+/// ¿Hay RD propio aquí? (sin contar el que presta un amigo)
+#[tauri::command]
+pub fn rd_creds_propio(app: tauri::AppHandle) -> bool {
+    rd_creds_status_local(&app)
+}
+
 /// ¿Se puede usar RD? Propio, o prestado por un amigo (llavero.rs). El
 /// frontend usa esto para el estado, sin tocar nunca el token en sí.
 #[tauri::command]

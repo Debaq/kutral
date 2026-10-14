@@ -18,6 +18,7 @@
   import { setConcurrenciaScreening } from "$lib/screening.svelte";
   import { cargarHistorial } from "$lib/historial.svelte";
   import { iniciarCuenta } from "$lib/cuenta.svelte";
+  import { iniciarAvisoRd } from "$lib/avisoRd";
   import { cargarListas } from "$lib/listas.svelte";
   import { cargarPerfiles } from "$lib/perfiles.svelte";
   import QuienVe from "$lib/QuienVe.svelte";
@@ -145,6 +146,8 @@
     void cargarDescargas();
     // Migra/lee credenciales RD del store seguro del backend.
     void initRd().then(abrirAsistenteSiHaceFalta);
+    // Real-Debrid por vencer: aviso diario desde 7 días antes.
+    iniciarAvisoRd();
     // Propagar concurrencia configurada al worker Rust.
     void setConcurrenciaScreening(config.screeningConcurrency);
     // Descarga local activada: levanta la sesión torrent para recuperar la cola
