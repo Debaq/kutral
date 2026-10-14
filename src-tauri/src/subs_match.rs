@@ -107,7 +107,7 @@ fn normalizado(nombre: &str) -> String {
     tokens(nombre).join(".")
 }
 
-fn rasgo<'a>(toks: &'a [String], f: fn(&str) -> Option<&'static str>) -> Option<&'static str> {
+fn rasgo(toks: &[String], f: fn(&str) -> Option<&'static str>) -> Option<&'static str> {
     toks.iter().find_map(|t| f(t))
 }
 
@@ -155,8 +155,8 @@ const HASH_CHUNK: u64 = 64 * 1024;
 fn osdb_hash(size: u64, head: &[u8], tail: &[u8]) -> String {
     let mut h = size;
     for chunk in [head, tail] {
-        for w in chunk.chunks_exact(8) {
-            h = h.wrapping_add(u64::from_le_bytes(w.try_into().unwrap()));
+        for w in chunk.as_chunks::<8>().0 {
+            h = h.wrapping_add(u64::from_le_bytes(*w));
         }
     }
     format!("{h:016x}")

@@ -1857,8 +1857,10 @@ fn extraer_audio(url: &str, start: f64, len: f64, aid: i64) -> Result<Vec<i16>, 
     let bytes = std::fs::read(&tmp).map_err(|e| format!("leer audio: {e}"))?;
     let _ = std::fs::remove_file(&tmp);
     Ok(bytes
-        .chunks_exact(2)
-        .map(|c| i16::from_le_bytes([c[0], c[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| i16::from_le_bytes(*c))
         .collect())
 }
 

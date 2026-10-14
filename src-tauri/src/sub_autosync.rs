@@ -89,7 +89,9 @@ pub fn intervalos(texto: &str) -> Vec<(f64, f64)> {
 pub fn mascara_voz(pcm: &[i16]) -> Vec<f32> {
     use webrtc_vad::{SampleRate, Vad, VadMode};
     let mut vad = Vad::new_with_rate_and_mode(SampleRate::Rate16kHz, VadMode::VeryAggressive);
-    pcm.chunks_exact(MUESTRAS_HOP)
+    pcm.as_chunks::<MUESTRAS_HOP>()
+        .0
+        .iter()
         .map(|t| f32::from(u8::from(vad.is_voice_segment(t).unwrap_or(false))))
         .collect()
 }
@@ -267,8 +269,10 @@ mod tests {
     fn tears_of_steel() {
         let leer_pcm = |var: &str, max_s: f64| -> Vec<i16> {
             let b = std::fs::read(std::env::var(var).expect(var)).unwrap();
-            b.chunks_exact(2)
-                .map(|c| i16::from_le_bytes([c[0], c[1]]))
+            b.as_chunks::<2>()
+                .0
+                .iter()
+                .map(|c| i16::from_le_bytes(*c))
                 .take((max_s * SAMPLE_RATE as f64) as usize)
                 .collect()
         };
