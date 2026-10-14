@@ -150,6 +150,21 @@ marcó para deprecar. Si ya cayó, el "instantáneo" de hoy puede estar mintiend
 
 # Player en Windows: OSD y controles propios
 
+> **Actualización 2026-10-14: preferencia por A.** Mantener dos reproductores
+> duplica cada función (la sincronía automática de subtítulos, `29b66ed`, fueron
+> ~270 líneas solo para Windows). Con A, Windows hereda tal cual la barra, los
+> menús, el panel de ajuste, la portada y la sincronía, y se borran el vigía de
+> IPC, uosc y el `input.conf` de Windows. Además resuelve "Salir del reproductor
+> en Windows" (más abajo): Esc = `stop()`, como en Linux.
+>
+> Antes de planificar, un **spike solo de lo riesgoso**: video de libmpv en un
+> HWND hijo de la ventana Tauri, encima de WebView2, y Esc que devuelve el foco
+> a la interfaz; más enlazar `libmpv-2.dll` con MSVC (el zip de shinchiro trae
+> `libmpv.dll.a`, MSVC necesita un `.lib` generado con `lib /def`) y
+> empaquetarla en la CI. Aquí no hay Windows: cada iteración la prueba el
+> usuario. Si el spike sale bien: `mpv_embed.rs` se separa en núcleo portable
+> (overlays, menús, sincronía) + superficie por plataforma (GTK / Win32).
+
 Bloque aparte, **sin decidir**. Salió al planificar el aviso por OSD de la
 escalada de cache: en Windows el reproductor no tiene la interfaz que tiene en
 Linux, y queremos que la tenga. Acá queda el mapa para elegir camino.
@@ -166,9 +181,10 @@ hay — el de uosc, que es **mouse-first**. Lo que no hay es lo nuestro.
 | Ventana | una sola, mpv dentro del GtkGLArea | dos: mpv fullscreen sobre la app |
 | Barra de control | nuestra, ASS, navegable con d-pad/mando | uosc, solo mouse |
 | Menú de pistas/subs | nuestro (`mpv_embed.rs:1149` `open_menu`) | el de uosc |
-| Picker de subs del front | `mpv_open_picker` | **stub no-op** (`player.rs:519`) |
+| Picker de subs del front | `mpv_open_picker` | menú de uosc (`kutral-pick`) |
 | `mpv:fin` → PostCreditos, próximo capítulo | sí (`mpv_embed.rs:2137`) | sí, por el vigía de IPC (`player.rs:watch_events`) |
-| `player:cambiar-fuente` | botón en la barra (`mpv_embed.rs:1045`) | **no existe** |
+| `player:cambiar-fuente` | botón en la barra (`mpv_embed.rs:1045`) | menú de uosc (`kutral-fuente`) |
+| Sincronía de subs (memoria + por audio) | panel de ajuste | menú de uosc (`29b66ed`) |
 | Portada de carga | tapa el frame viejo | no |
 | Brillo, pill, gamepad | sí | parcial |
 
@@ -237,6 +253,100 @@ La escalada de cache es portable desde el día uno:
 Lo único que queda degradado en Windows hasta que se haga B es la pantalla de
 "mejor bájala y la ves después": en Linux es overlay propio, en Windows un
 `show-text` con una tecla.
+
+---
+
+# Salir del reproductor en Windows — *chico*
+
+Hoy es incómodo: hay que desmaximizar y cerrar, o Alt+F4. mpv abre
+`--fullscreen` con `border=no` (`mpv.conf`), así que no hay ✕ visible; Esc/BS
+mandan `kutral-salir`, que **suspende** (pausa + minimiza, no cierra), y para
+cerrar de verdad solo están `q` o "Salir" en el menú de uosc, que nadie
+encuentra.
+
+Opciones:
+- Mostrar los controles de ventana de uosc (`top_bar`, `top_bar_controls` en
+  `script-opts/uosc.conf`) en pantalla completa.
+- Una sola tecla evidente que cierre, guarde el progreso y devuelva el foco a
+  Kütral (hoy Esc suspende para poder retomar desde la pill).
+
+Se prueba en Linux con mpv + uosc local por IPC. Si se hace el camino A del
+player, esto desaparece solo.
+
+---
+
+# Packs de temporada
+
+## 1. Elegir el capítulo correcto dentro del pack — *chico, es un bug*
+
+Torrentio y MediaFusion mandan `fileIdx` y `behaviorHints.filename` en cada
+stream, pero `StremioStream` (`kodios.rs:262`) no los lee y `Source`
+(`kodios.rs:49`) no tiene dónde guardarlos. Al resolver se elige **el video más
+grande**: `resolve_magnet` en `rd.rs:157` (`max_by_key(bytes)` + `selectFiles`)
+y `pick_file` en `torrent.rs:358`. Con un pack de temporada, pedir el E05 puede
+reproducir otro capítulo.
+
+Trabajo: leer `fileIdx`/`filename`, llevarlos por `Source` hasta `rd_resolve` y
+`torrent_add`, y elegir ese archivo. Sin `fileIdx`, matching por nombre
+(`S01E05`, `1x05`, `E05`, anime `- 05`) antes de caer al más grande.
+
+## 2. El siguiente capítulo usa el mismo torrent — *medio*
+
+Hoy `verSiguienteCapitulo` (`+page.svelte:2171`) cambia temporada/capítulo y
+**busca fuentes desde cero**. Con un pack, el siguiente ya está en el mismo
+torrent.
+
+- RD: `selectFiles` de otro id sobre el mismo torrent. Ojo: `resolve_magnet`
+  hace `addMagnet` cada vez (`rd.rs:146`) y crea un torrent nuevo en RD.
+- Torrent local: `Entry.file_id` es único por torrent (`torrent.rs:624`), y el
+  prebuffer y `stream_url` están atados a él; hace falta `update_only_files` +
+  `stream(file_id)` sobre el mismo handle.
+- Progreso, historial y contexto de sincronía dependen de `season`/`episode` del
+  SourcePicker (`SourcePicker.svelte:481`): hay que actualizarlos a mano.
+
+**Spike primero**: cambiar de archivo en el mismo torrent, en RD y en local.
+
+## 3. Menú de capítulos en el reproductor — *medio*
+
+Con el pack abierto, un menú "Capítulos" para saltar entre ellos: ítem en el bar
+del embed (`BarAction`, `mpv_embed.rs:213`) y en el menú de uosc en Windows,
+usando `mpv_open_picker` + `player:menu-pick` (hoy solo lo usa
+`SubsService.svelte`).
+
+---
+
+# Transmitir a la TV: controles completos
+
+El control mientras se transmite tiene que ser **el área de control**: todo lo
+que tiene el reproductor normal. Hoy (`SourcePicker.svelte:1665`, `castBtns`
+`:674`) hay pausa, ±30 s, subtítulos externos (recarga el LOAD), "No se oye",
+seguir aquí y detener; la `CastPill` solo pausa y detiene.
+
+## Fácil
+
+- Barra de progreso clicable / seek absoluto (`cast_control("saltar", seg)` ya
+  existe para Cast y DLNA) y saltos de ±10 s además de ±30 s.
+- Volumen y silencio: el backend los tiene (`cast.rs:803`, `dlna.rs:313`) y
+  `CastStatus` ya devuelve `volumen`/`silencio`; falta la UI.
+- Al terminar un capítulo, ofrecer el siguiente en la TV (hoy cierra,
+  `cast.svelte.ts:409`).
+
+## Medio
+
+- Subtítulos **incluidos en el video**: extraerlos (ffmpeg → VTT) y servirlos
+  por `/sub-N.vtt` de la pasarela (`lan.rs:101`, `publicar_subs`).
+- Cast: mandar todas las pistas de texto en el LOAD y cambiar con
+  `EDIT_TRACKS_INFO`, sin recargar (hoy va una sola, `cast.rs:639`).
+
+## Difícil: pista de audio
+
+El Default Media Receiver de Cast solo cambia audio en HLS/DASH; con MKV/MP4
+multipista suena la principal. DLNA no tiene selección de pista. La única vía es
+**remux en la pasarela**: ffmpeg `-map 0:v -map 0:a:N -c copy` en streaming.
+Costos: el video deja de ir directo RD → TV y pasa por el PC, y cada seek
+reinicia ffmpeg con `-ss` (el Range sobre el remux no sirve).
+
+**Spike con la LG y un Chromecast antes de planificar.**
 
 ---
 
