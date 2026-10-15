@@ -291,6 +291,22 @@ pub fn analizar(
     res.ok_or_else(|| "no hay suficiente audio o subtítulos en esta parte".to_string())
 }
 
+/// Corre todos los tiempos de un .srt `d` segundos (pruebas punta a punta:
+/// el subtítulo oficial, desfasado a propósito).
+#[cfg(test)]
+pub fn correr_srt(srt: &str, d: f64) -> String {
+    let f = |x: &str| {
+        let s = tiempo(x).expect("tiempo del srt") + d;
+        format!("{:02}:{:02}:{:06.3}", (s / 3600.0) as u32, ((s % 3600.0) / 60.0) as u32, s % 60.0)
+    };
+    srt.lines()
+        .map(|l| match l.split_once(" --> ") {
+            Some((a, b)) => format!("{} --> {}\n", f(a), f(b)),
+            None => format!("{l}\n"),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

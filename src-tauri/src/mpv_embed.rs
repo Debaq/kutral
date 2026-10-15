@@ -3098,22 +3098,7 @@ mod tests {
         let esperadas = (ventana * crate::sub_autosync::SAMPLE_RATE as f64) as usize;
         assert!(pcm.len().abs_diff(esperadas) < 16_000, "{} vs {esperadas}", pcm.len());
         let srt = std::fs::read_to_string(std::env::var("TOS_SRT").expect("TOS_SRT")).unwrap();
-        // Corre todo el .srt 3.7 s más tarde.
-        let corrido: String = srt
-            .lines()
-            .map(|l| match l.split_once(" --> ") {
-                Some((a, b)) => {
-                    let f = |x: &str| {
-                        let v = x.replace(',', ".");
-                        let p: Vec<f64> = v.split(':').map(|n| n.parse().unwrap()).collect();
-                        let s = p[0] * 3600.0 + p[1] * 60.0 + p[2] + 3.7;
-                        format!("{:02}:{:02}:{:06.3}", (s / 3600.0) as u32, ((s % 3600.0) / 60.0) as u32, s % 60.0)
-                    };
-                    format!("{} --> {}\n", f(a), f(b))
-                }
-                None => format!("{l}\n"),
-            })
-            .collect();
+        let corrido = crate::sub_autosync::correr_srt(&srt, 3.7);
         let r = crate::sub_autosync::sincronizar(&[(330.0, pcm)], &corrido).expect("resultado");
         eprintln!("{r:?}");
         assert!(r.confiable() && (r.desfase - 3.7).abs() < 0.3, "{r:?}");

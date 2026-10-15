@@ -1486,6 +1486,72 @@ pub mod imp {
             let _ = child.wait();
         }
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// Punta a punta con red y el mpv.exe de verdad (lo corre la CI de
+        /// Windows tras fetch-windows.ps1): baja y decodifica la ventana de
+        /// audio por HTTP y la sincronización encuentra el desfase puesto a
+        /// propósito.
+        ///   TOS_SRT=TOS-es.srt cargo test -- --ignored extraer_audio_proceso
+        /// El mpv.exe vendorizado (o el del PATH).
+        fn mpv_de_prueba() -> String {
+            #[cfg(windows)]
+            let exe = "mpv.exe";
+            #[cfg(not(windows))]
+            let exe = "mpv";
+            let vendor = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor").join(exe);
+            if vendor.exists() { vendor.to_string_lossy().into_owned() } else { exe.into() }
+        }
+
+        #[test]
+        #[ignore]
+        fn extraer_audio_proceso() {
+            let bin = mpv_de_prueba();
+            let url = "https://download.blender.org/demo/movies/ToS/tears_of_steel_720p.mov";
+            let ventana = crate::sub_autosync::VENTANA_S;
+            let t = std::time::Instant::now();
+            let pcm = extraer_audio(&bin, url, 330.0, ventana, 0).expect("audio");
+            eprintln!("audio: {} muestras en {:?}", pcm.len(), t.elapsed());
+            let esperadas = (ventana * crate::sub_autosync::SAMPLE_RATE as f64) as usize;
+            assert!(pcm.len().abs_diff(esperadas) < 16_000, "{} vs {esperadas}", pcm.len());
+            let srt = std::fs::read_to_string(std::env::var("TOS_SRT").expect("TOS_SRT")).unwrap();
+            let corrido = crate::sub_autosync::correr_srt(&srt, 3.7);
+            let r = crate::sub_autosync::sincronizar(&[(330.0, pcm)], &corrido).expect("resultado");
+            eprintln!("{r:?}");
+            assert!(r.confiable() && (r.desfase - 3.7).abs() < 0.3, "{r:?}");
+        }
+
+        /// Video que no existe: error claro, sin colgarse.
+        #[test]
+        #[ignore]
+        fn extraer_audio_proceso_falla_limpio() {
+            let bin = mpv_de_prueba();
+            assert!(std::process::Command::new(&bin).arg("--version").output().is_ok(), "sin {bin}");
+            let r = extraer_audio(&bin, "http://127.0.0.1:9/no-existe.mkv", 0.0, 10.0, 0);
+            assert_eq!(r, Err("no se pudo abrir el video para analizar".to_string()));
+        }
+
+        #[test]
+        fn clave_de_pista_externa_y_embebida() {
+            // Así llega `current-tracks/sub` por el IPC (probado con mpv real).
+            let ext = serde_json::json!({
+                "id": 1, "external": true, "lang": null, "codec": "subrip", "ff-index": 0,
+                "external-filename": "C:\\Users\\x\\Downloads\\Peli [es].srt",
+            });
+            assert_eq!(clave_de(&ext).as_deref(), Some("ext:Peli [es].srt"));
+            crate::sub_sync::set_sub_key("C:\\Users\\x\\Downloads\\Peli [es].srt", "os:123");
+            assert_eq!(clave_de(&ext).as_deref(), Some("os:123"));
+            let emb = serde_json::json!({
+                "id": 3, "external": false, "lang": "spa", "title": "Forzados",
+                "codec": "ass", "ff-index": 4,
+            });
+            assert_eq!(clave_de(&emb).as_deref(), Some("emb:spa/Forzados/ass/4"));
+            assert_eq!(clave_de(&serde_json::Value::Null), None);
+        }
+    }
 }
 
 // El webserver llama estas dos directamente; las commands se referencian como
