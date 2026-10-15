@@ -1,7 +1,6 @@
 name: Prueba reproductor Windows
 
-# Prueba del reproductor embebido en Windows (feature embed-win,
-# mpv_embed/win32.rs) sin tener Windows: el runner lanza Kütral con un video
+# Prueba del reproductor de Windows (mpv_embed/win32.rs) sin tener Windows: el runner lanza Kütral con un video
 # (KUTRAL_PRUEBA_VIDEO), maneja la barra con teclas y mouse, saca capturas de
 # cada paso y sube capturas + logs como artefacto. Mismo guion que la prueba
 # en Linux. Solo a mano (Actions → Run workflow).
@@ -30,11 +29,11 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-          key: embed-win
+          key: prueba
 
-      - name: Fetch vendored binaries (con libmpv)
+      - name: Fetch vendored binaries (libmpv + mpv + yt-dlp)
         shell: pwsh
-        run: pwsh src-tauri/vendor/fetch-windows.ps1 -Embed
+        run: pwsh src-tauri/vendor/fetch-windows.ps1
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
@@ -44,16 +43,15 @@ jobs:
 
       # custom-protocol: la interfaz va dentro del binario (sin él, Tauri
       # busca el servidor de desarrollo).
-      - name: Build con embed-win
+      - name: Build
         working-directory: src-tauri
-        run: cargo build --features embed-win,tauri/custom-protocol
+        run: cargo build --features tauri/custom-protocol
 
       - name: Correr la prueba
         shell: pwsh
         run: |
           $dir = Join-Path $env:RUNNER_TEMP "spike"
           New-Item -ItemType Directory -Force $dir | Out-Null
-          Copy-Item src-tauri/vendor/mpv-dev/libmpv-2.dll src-tauri/target/debug/
 
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
           Add-Type @"

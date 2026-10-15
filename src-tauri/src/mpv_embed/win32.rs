@@ -13,12 +13,13 @@
 // Los temporizadores son SetTimer sobre la hija (también hilo principal).
 
 use std::cell::{Cell, RefCell};
+use std::os::windows::ffi::OsStrExt;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{GetStockObject, BLACK_BRUSH, HBRUSH};
-use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, LoadLibraryW};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, SetFocus, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT, VK_BACK, VK_CONTROL,
     VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1, VK_F12, VK_HOME, VK_INSERT, VK_LEFT, VK_MENU,
@@ -60,9 +61,43 @@ fn w(s: &str) -> Vec<u16> {
 
 // ───────────────────────── interfaz con el núcleo ─────────────────────────
 
-/// Antes de crear mpv (hilo main): la hija tiene que existir para pasarle su
-/// HWND a mpv como `wid`.
+/// libmpv-2.dll va enlazado en diferido (ver build.rs): hay que cargarlo de
+/// vendor/mpv-dev/ antes de la primera llamada a mpv. Ya cargado, el
+/// cargador diferido lo encuentra por nombre.
+fn cargar_libmpv(window: &tauri::WebviewWindow) -> Result<(), String> {
+    use tauri::Manager;
+    let mut cands: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(res) = window.app_handle().path().resource_dir() {
+        cands.push(res.join("vendor").join("mpv-dev").join("libmpv-2.dll"));
+    }
+    if let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())) {
+        cands.push(dir.join("libmpv-2.dll"));
+        cands.push(dir.join("vendor").join("mpv-dev").join("libmpv-2.dll"));
+    }
+    cands.push(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("vendor")
+            .join("mpv-dev")
+            .join("libmpv-2.dll"),
+    );
+    for c in &cands {
+        if !c.exists() {
+            continue;
+        }
+        let ruta: Vec<u16> = c.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        if !unsafe { LoadLibraryW(ruta.as_ptr()) }.is_null() {
+            eprintln!("[mpv-embed] libmpv: {}", c.display());
+            return Ok(());
+        }
+        eprintln!("[mpv-embed] libmpv no cargó: {}", c.display());
+    }
+    Err(format!("no encontré libmpv-2.dll (busqué en {cands:?})"))
+}
+
+/// Antes de crear mpv (hilo main): carga libmpv, y la hija tiene que existir
+/// para pasarle su HWND a mpv como `wid`.
 pub(super) fn preparar(window: &tauri::WebviewWindow) -> Result<(), String> {
+    cargar_libmpv(window)?;
     let padre = window.hwnd().map_err(|e| format!("hwnd: {e}"))?.0 as HWND;
     let h = unsafe {
         let clase = w("KutralVideo");
@@ -121,6 +156,9 @@ pub(super) fn opciones(init: &libmpv2::MpvInitializer) -> libmpv2::Result<()> {
     init.set_option("wid", HIJO.load(Ordering::SeqCst) as i64)?;
     init.set_option("input-vo-keyboard", "no")?;
     init.set_option("input-cursor-passthrough", "yes")?;
+    // La barra y los menús: sin esto libass cae a Arial (Linux usa la sans
+    // del sistema, Noto).
+    init.set_option("osd-font", "Segoe UI")?;
     Ok(())
 }
 

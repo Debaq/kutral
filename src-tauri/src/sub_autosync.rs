@@ -201,8 +201,7 @@ pub fn sincronizar(audios: &[(f64, Vec<i16>)], texto_subs: &str) -> Option<Resul
 /// Opciones del mpv que decodifica el audio a analizar: sin video, sin
 /// subtítulos y con la salida de audio a un archivo (`ao=pcm`) tan rápido
 /// como dé la red (`untimed`). Así no hace falta ffmpeg y se lee lo mismo que
-/// lee el reproductor. En Linux van a una segunda instancia de libmpv; en
-/// Windows, como `--opción=valor` a un mpv.exe aparte. Falta por llamada:
+/// lee el reproductor. Van a una segunda instancia de libmpv. Falta por llamada:
 /// el archivo de salida, el inicio, el largo y la pista de audio.
 pub const OPCIONES_MPV: [(&str, &str); 13] = [
     ("config", "no"),

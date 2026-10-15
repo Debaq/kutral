@@ -148,155 +148,23 @@ marcó para deprecar. Si ya cayó, el "instantáneo" de hoy puede estar mintiend
 
 ---
 
-# Player en Windows: OSD y controles propios
+# Player en Windows: el mismo de Linux — *hecho (octubre 2026)*
 
-> **Actualización 2026-10-14: preferencia por A.** Mantener dos reproductores
-> duplica cada función (la sincronía automática de subtítulos, `29b66ed`, fueron
-> ~270 líneas solo para Windows). Con A, Windows hereda tal cual la barra, los
-> menús, el panel de ajuste, la portada y la sincronía, y se borran el vigía de
-> IPC, uosc y el `input.conf` de Windows. Además resuelve "Salir del reproductor
-> en Windows" (más abajo): Esc = `stop()`, como en Linux.
->
-> **Spike hecho (2026-10-15, `mpv_win.rs`, `spike-windows.yml`): A es viable.**
-> En el runner de Windows, con capturas: libmpv enlaza con MSVC (`build.rs`
-> arma `mpv.lib` desde el DLL), el video se ve dentro de la ventana de Kütral
-> encima de WebView2, el `osd-overlay` se dibuja encima del video, y con
-> `input-cursor-passthrough` + `input-vo-keyboard=no` el teclado y el mouse
-> llegan a nuestra ventana hija en el hilo principal (como el GLArea): Esc
-> oculta el video y la interfaz recupera el foco. Un binding de Esc en mpv
-> NO sirve (mpv nunca tiene el foco). Falta: DPI ≠ 100 %, GPU real,
-> empaquetar el DLL junto al exe.
->
-> Plan: (1) separar `mpv_embed.rs` en núcleo (barra, menús, panel, sincronía,
-> portada) + superficie GTK, sin cambiar Linux — **hecho** (`bfb2e75`); (2)
-> superficie Win32 (`mpv_embed/win32.rs`, timers con `SetTimer`) y
-> `player.rs` de Windows delega como en Linux, detrás de `embed-win` —
-> **hecho**: `prueba-windows.yml` maneja la barra con teclas y mouse y las
-> capturas salen como en Linux (con z empatado el mpv nuevo dibujaba el fondo
-> encima de los iconos: z = id); (3) DLL en el instalador (junto al exe),
-> `embed-win` por defecto, borrar IPC + uosc + mpv.exe. Pendiente además:
-> fuente de la barra (en Windows cae a Arial), DPI ≠ 100 %, GPU real.
->
-> El spike original pedía: video de libmpv en un
-> HWND hijo de la ventana Tauri, encima de WebView2, y Esc que devuelve el foco
-> a la interfaz; más enlazar `libmpv-2.dll` con MSVC (el zip de shinchiro trae
-> `libmpv.dll.a`, MSVC necesita un `.lib` generado con `lib /def`) y
-> empaquetarla en la CI. Aquí no hay Windows: cada iteración la prueba el
-> usuario. Si el spike sale bien: `mpv_embed.rs` se separa en núcleo portable
-> (overlays, menús, sincronía) + superficie por plataforma (GTK / Win32).
+Windows usa el reproductor embebido de Linux (`mpv_embed`): núcleo común
+(`mod.rs`: barra, menús, panel de ajuste, sincronía, portada) + superficie por
+plataforma (`gtk.rs` / `win32.rs`, ventana hija con libmpv en `wid`). El
+camino viejo (mpv.exe aparte + IPC + uosc) se borró; si hace falta volver, está
+en el historial antes del commit "feat(player): Windows usa el reproductor
+embebido".
 
-Bloque aparte, **sin decidir**. Salió al planificar el aviso por OSD de la
-escalada de cache: en Windows el reproductor no tiene la interfaz que tiene en
-Linux, y queremos que la tenga. Acá queda el mapa para elegir camino.
-
-## Qué hay hoy
-
-Windows compila y se empaqueta (`.github/workflows/release.yml:212`, NSIS+MSI)
-y sí lleva uosc: `fetch-windows.ps1` vendoriza `mpv.exe` y `spawn_mpv`
-(`player.rs:400`) le pasa `--config-dir` con nuestro `mpv-config`. O sea, OSD
-hay — el de uosc, que es **mouse-first**. Lo que no hay es lo nuestro.
-
-| | Linux (embed) | Windows (proceso) |
-|---|---|---|
-| Ventana | una sola, mpv dentro del GtkGLArea | dos: mpv fullscreen sobre la app |
-| Barra de control | nuestra, ASS, navegable con d-pad/mando | uosc, solo mouse |
-| Menú de pistas/subs | nuestro (`mpv_embed.rs:1149` `open_menu`) | el de uosc |
-| Picker de subs del front | `mpv_open_picker` | menú de uosc (`kutral-pick`) |
-| `mpv:fin` → PostCreditos, próximo capítulo | sí (`mpv_embed.rs:2137`) | sí, por el vigía de IPC (`player.rs:watch_events`) |
-| `player:cambiar-fuente` | botón en la barra (`mpv_embed.rs:1045`) | menú de uosc (`kutral-fuente`) |
-| Sincronía de subs (memoria + por audio) | panel de ajuste | menú de uosc (`29b66ed`) |
-| Portada de carga | tapa el frame viejo | no |
-| Brillo, pill, gamepad | sí | parcial |
-
-Causa: `mpv_embed.rs` (2525 líneas) está atado a GTK — `GtkGLArea` + EGL para
-el render, señales GTK para mouse/teclado, `glib::timeout_add_local` para todos
-los relojes.
-
-**El dibujo NO es lo atado.** La barra y los menús se pintan con el comando
-`osd-overlay` de mpv (`put_overlay`, `mpv_embed.rs:777`): ASS puro, idéntico en
-cualquier plataforma y disponible **también por IPC**. Lo atado a GTK es el
-render, el input y los timers.
-
-## Caminos
-
-**A. Portar el embed a Windows.** libmpv con `--wid` sobre un HWND hijo de la
-ventana Tauri; en Windows no hace falta el camino OpenGL, mpv se pinta solo en
-ese HWND. Hay que reescribir la capa de input (Win32/Tauri en vez de señales
-GTK) y los timers. Da ventana única y paridad total. El más caro y el de más
-riesgo: foco, z-order y DPI conviviendo con WebView2.
-
-**B. Misma UI, por IPC, sin embeber.** *(en curso: B1 hecho)* mpv sigue siendo proceso aparte, pero:
-un hilo lector del pipe que parsee eventos (`end-file`, `observe_property`) —
-de ahí salen `mpv:fin`, el picker y `cambiar-fuente` — y nuestra barra ASS
-mandada con `osd-overlay` por el mismo pipe. Los constructores de ASS
-(`build_bar_ass`, `build_seek_ass`, `menu_geom`…) son funciones puras de
-string: se extraen de `mpv_embed.rs` a un módulo compartido y las usan las dos
-plataformas. Quedan las dos ventanas, pero se recupera todo lo demás de la
-tabla. Bastante menos trabajo que A y no toca el camino de Linux.
-
-**C. libmpv en proceso, con ventana propia de mpv.** Mismo acceso directo a
-propiedades y eventos que en Linux, sin pelear con el HWND. Ahorra el IPC pero
-tampoco da ventana única.
-
-## Estado de B, por etapas
-
-Cada etapa sirve sola; se hacen en este orden porque la última es la cara.
-
-- **B1 — eventos (hecho, commit `6558374`).** Hilo lector del pipe: observa
-  `time-pos`/`duration` y traduce `end-file` a `mpv:fin`, más `mpv:state` al
-  cerrarse mpv. Con esto Windows ya tiene PostCréditos y próximo capítulo.
-- **B2 — la barra y los menús por `osd-overlay`.** Extraer de `mpv_embed.rs` los
-  constructores de ASS (`build_bar_ass`, `build_seek_ass`, `build_menu_ass`,
-  `build_loading_ass`, `bar_geom`, `menu_geom`, los hit-tests) a un módulo
-  compartido. No son tan puros como parecen: hoy leen estado por globales y por
-  `get_f64`/`get_string` contra mpv, así que hay que pasarles el estado en vez
-  de que lo busquen solas. Es refactor sobre el Linux que funciona → reprobar
-  Linux entero. ~800-1.000 líneas movidas.
-- **B3 — el input (lo caro).** En Windows mpv tiene su propia ventana fullscreen
-  **con el foco**: las teclas y el mando los recibe mpv, no la app. La barra
-  navegable con d-pad no se porta tal cual; hay que mapear cada tecla en
-  `input.conf` a un `script-message` y leerlo del lado del vigía. Es diseño
-  nuevo, no traducción. Mientras no esté, uosc sigue puesto y cubre el mouse.
-
-**Recomendación: B primero.** Recupera el OSD y los controles navegables con
-mando sin el riesgo de A, y deja A como paso posterior si se quiere la ventana
-única — porque después de B, A solo cambia *dónde* se pinta, no *qué*.
-
-## Lo que esto NO bloquea
-
-La escalada de cache es portable desde el día uno:
-- `show-text` funciona hoy en Windows por IPC (`mpv_cmd`).
-- `read_props` (`player.rs:684`) ya lee propiedades por el pipe en Windows, así
-  que `paused-for-cache`, `demuxer-cache-duration` y `cache-speed` se leen en
-  las dos plataformas, y `set_property` sube `cache-pause-wait` igual.
-
-Lo único que queda degradado en Windows hasta que se haga B es la pantalla de
-"mejor bájala y la ves después": en Linux es overlay propio, en Windows un
-`show-text` con una tecla.
-
----
-
-# Salir del reproductor en Windows — *hecho, falta probar (`02a5425`)*
-
-Arreglado: Esc sale de pantalla completa antes de minimizar (y retomar la
-vuelve a poner), el vigía espera hasta 10 s el pipe (antes 2 s: sin vigía Esc
-no hacía nada) y al cerrar mpv Kütral recupera el foco. Lo de abajo queda como
-referencia.
-
-Hoy es incómodo: hay que desmaximizar y cerrar, o Alt+F4. mpv abre
-`--fullscreen` con `border=no` (`mpv.conf`), así que no hay ✕ visible; Esc/BS
-mandan `kutral-salir`, que **suspende** (pausa + minimiza, no cierra), y para
-cerrar de verdad solo están `q` o "Salir" en el menú de uosc, que nadie
-encuentra.
-
-Opciones:
-- Mostrar los controles de ventana de uosc (`top_bar`, `top_bar_controls` en
-  `script-opts/uosc.conf`) en pantalla completa.
-- Una sola tecla evidente que cierre, guarde el progreso y devuelva el foco a
-  Kütral (hoy Esc suspende para poder retomar desde la pill).
-
-Se prueba en Linux con mpv + uosc local por IPC. Si se hace el camino A del
-player, esto desaparece solo.
+- libmpv-2.dll va en `vendor/mpv-dev/` (fetch-windows.ps1), enlazado en
+  diferido: build.rs arma `mpv.lib` con `lib.exe` y `/DELAYLOAD`; win32.rs lo
+  carga antes de la primera llamada a mpv.
+- `prueba-windows.yml` (manual) maneja la barra en el runner y sube capturas.
+- Gotchas: Esc por un binding de mpv nunca llega (mpv no tiene el foco) →
+  `input-cursor-passthrough` + `input-vo-keyboard=no` y el input en la hija;
+  z de `osd-overlay` empatado → el mpv nuevo apila mal (z = id).
+- Sin probar en un Windows real: DPI ≠ 100 %, GPU real, instalador.
 
 ---
 

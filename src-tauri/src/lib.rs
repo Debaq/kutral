@@ -22,7 +22,6 @@ mod sub_autosync;
 mod probe;
 mod rd;
 mod player;
-#[cfg(embed)]
 mod mpv_embed;
 #[cfg(target_os = "linux")]
 mod reposo;
@@ -601,7 +600,6 @@ pub fn run() {
             }
             // Reproductor libmpv embebido: el video dentro de la ventana de
             // Kütral (GtkGLArea en Linux, ventana hija en Windows).
-            #[cfg(embed)]
             {
                 use tauri::Manager;
                 if let Some(win) = app.get_webview_window("main") {

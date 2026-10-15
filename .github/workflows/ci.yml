@@ -101,11 +101,11 @@ jobs:
         with:
           workspaces: src-tauri
 
-      # mpv.exe de verdad para las pruebas de abajo (y uosc, igual que el
-      # release).
-      - name: Fetch vendored binaries (mpv + libmpv + yt-dlp + uosc)
+      # libmpv: build.rs arma mpv.lib desde el DLL, y las pruebas de abajo
+      # lo usan de verdad.
+      - name: Fetch vendored binaries (libmpv + mpv + yt-dlp)
         shell: pwsh
-        run: pwsh src-tauri/vendor/fetch-windows.ps1 -Embed
+        run: pwsh src-tauri/vendor/fetch-windows.ps1
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
@@ -117,22 +117,19 @@ jobs:
         working-directory: src-tauri
         run: cargo clippy --all-targets -- -D warnings
 
-      # El reproductor embebido de Windows (en pruebas, ver prueba-windows.yml).
-      - name: Clippy (embed-win)
-        working-directory: src-tauri
-        run: cargo clippy --features embed-win -- -D warnings
-
       - name: Tests del backend
         working-directory: src-tauri
         run: cargo test
 
-      # Con red y mpv.exe: decodificar audio con un proceso aparte y
-      # sincronizar el subtítulo oficial de Tears of Steel corrido 3.7 s.
-      - name: Pruebas con mpv.exe (sincronía de subtítulos)
+      # Con red y libmpv: decodificar audio con una segunda instancia y
+      # sincronizar el subtítulo oficial de Tears of Steel corrido 3.7 s. El
+      # DLL va en diferido: en la app lo carga mpv_embed/win32.rs, acá el PATH.
+      - name: Pruebas con libmpv (sincronía de subtítulos)
         working-directory: src-tauri
         shell: pwsh
         run: |
           $srt = Join-Path $env:RUNNER_TEMP "TOS-es.srt"
           Invoke-WebRequest -Uri "https://download.blender.org/demo/movies/ToS/subtitles/TOS-es.srt" -OutFile $srt -UseBasicParsing
           $env:TOS_SRT = $srt
-          cargo test -- --ignored extraer_audio_proceso --nocapture
+          $env:PATH = "$PWD\vendor\mpv-dev;$env:PATH"
+          cargo test -- --ignored extraer_y_sincronizar --nocapture

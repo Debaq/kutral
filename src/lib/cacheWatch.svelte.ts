@@ -18,8 +18,8 @@
 // del archivo (tamaño / duración). Por eso no hace falta ningún ping — un ping
 // bueno con pocos seeds miente, y esta comparación no.
 //
-// Portable a propósito: lee y escribe por comandos que existen en Linux (embed)
-// y en Windows (mpv de proceso, por IPC). Ver docs/TODO.md, "Player en Windows".
+// Lee y escribe por los comandos del reproductor (mpv_cache_stats,
+// mpv_set_cache), iguales en Linux y Windows.
 
 import { invoke } from "@tauri-apps/api/core";
 import { config, cachePresetActual } from "$lib/config.svelte";

@@ -16,14 +16,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
-# build.rs: lib.exe de MSVC para armar mpv.lib (feature embed-win).
+# build.rs: lib.exe de MSVC para armar mpv.lib en Windows.
 cc = "1"
-
-[features]
-# Reproductor embebido en Windows (libmpv en una ventana hija de la de Kütral,
-# como el embed de Linux). En pruebas: apagado, el release sigue con mpv.exe
-# de proceso aparte. Necesita vendor/mpv-dev (fetch-windows.ps1).
-embed-win = ["dep:libmpv2", "dep:windows-sys"]
 
 [dependencies]
 tauri = { version = "2", features = ["protocol-asset"] }
@@ -71,8 +65,7 @@ webkit2gtk = "=2.0.2"
 gtk = "0.18"
 gdk = "0.18"
 glib = "0.18"
-# libmpv embebido (solo Linux; en Windows seguimos con mpv de proceso externo,
-# por eso NO va en [dependencies] generales — alli romperia el build Windows).
+# libmpv embebido. En Linux con la Render API (OpenGL en el GtkGLArea).
 libmpv2 = { version = "6.0.0", features = ["render"] }
 # Resolver punteros GL desde libepoxy.so (el mismo loader que usa GtkGLArea):
 # se los pasamos a libmpv como get_proc_address y leemos el FBO destino.
@@ -84,12 +77,12 @@ libc = "0.2"
 # reproduce. Misma versión que arrastra gtk 0.18.
 gio = "0.18"
 
-# Reproductor embebido en Windows (feature embed-win, ver [features]).
-# Opcional solo acá: en Linux libmpv2 es obligatoria (sin render: en Windows
-# mpv dibuja solo en su ventana).
+# Reproductor embebido en Windows (mpv_embed/win32.rs): libmpv sin render (mpv
+# dibuja solo en su ventana hija) + Win32 para la ventana y el input. Necesita
+# vendor/mpv-dev/libmpv-2.dll (fetch-windows.ps1).
 [target.'cfg(windows)'.dependencies]
-libmpv2 = { version = "6.0.0", default-features = false, optional = true }
-windows-sys = { version = "0.61", optional = true, features = [
+libmpv2 = { version = "6.0.0", default-features = false }
+windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_System_LibraryLoader",

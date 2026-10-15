@@ -4,8 +4,7 @@
 //
 // Este archivo es el núcleo, igual en toda plataforma. Lo que depende del
 // sistema (dónde se dibuja el video, de dónde llegan teclado y mouse, los
-// temporizadores) vive en la superficie: gtk.rs en Linux, win32.rs en Windows
-// (feature embed-win).
+// temporizadores) vive en la superficie: gtk.rs en Linux, win32.rs en Windows.
 //
 // Hilos:
 //   - El handle `Mpv` es Send+Sync → los comandos Tauri (hilos worker) llaman
