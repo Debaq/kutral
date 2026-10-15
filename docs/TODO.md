@@ -157,7 +157,23 @@ marcó para deprecar. Si ya cayó, el "instantáneo" de hoy puede estar mintiend
 > IPC, uosc y el `input.conf` de Windows. Además resuelve "Salir del reproductor
 > en Windows" (más abajo): Esc = `stop()`, como en Linux.
 >
-> Antes de planificar, un **spike solo de lo riesgoso**: video de libmpv en un
+> **Spike hecho (2026-10-15, `mpv_win.rs`, `spike-windows.yml`): A es viable.**
+> En el runner de Windows, con capturas: libmpv enlaza con MSVC (`build.rs`
+> arma `mpv.lib` desde el DLL), el video se ve dentro de la ventana de Kütral
+> encima de WebView2, el `osd-overlay` se dibuja encima del video, y con
+> `input-cursor-passthrough` + `input-vo-keyboard=no` el teclado y el mouse
+> llegan a nuestra ventana hija en el hilo principal (como el GLArea): Esc
+> oculta el video y la interfaz recupera el foco. Un binding de Esc en mpv
+> NO sirve (mpv nunca tiene el foco). Falta: DPI ≠ 100 %, GPU real,
+> empaquetar el DLL junto al exe.
+>
+> Plan: (1) separar `mpv_embed.rs` en núcleo (barra, menús, panel, sincronía,
+> portada) + superficie GTK, sin cambiar Linux; (2) superficie Win32 (la del
+> spike, timers con `SetTimer`) y `player.rs` de Windows delega como en
+> Linux, detrás de `embed-win`, con el spike de la CI manejando la barra; (3)
+> DLL en el instalador, `embed-win` por defecto, borrar IPC + uosc.
+>
+> El spike original pedía: video de libmpv en un
 > HWND hijo de la ventana Tauri, encima de WebView2, y Esc que devuelve el foco
 > a la interfaz; más enlazar `libmpv-2.dll` con MSVC (el zip de shinchiro trae
 > `libmpv.dll.a`, MSVC necesita un `.lib` generado con `lib /def`) y
