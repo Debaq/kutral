@@ -604,6 +604,14 @@ pub fn run() {
                     if let Err(e) = mpv_embed::init(app.handle(), &win) {
                         eprintln!("[mpv-embed] init falló: {e}");
                     }
+                    // Pruebas sin pasar por la interfaz (capturas y teclas
+                    // simuladas): abre este video al arrancar.
+                    if let Ok(url) = std::env::var("KUTRAL_PRUEBA_VIDEO") {
+                        eprintln!("[prueba] abriendo {url}");
+                        if let Err(e) = mpv_embed::play(&url, Some("Prueba"), None, None) {
+                            eprintln!("[prueba] play: {e}");
+                        }
+                    }
                 }
             }
             // Spike del reproductor embebido en Windows (ver mpv_win.rs).
