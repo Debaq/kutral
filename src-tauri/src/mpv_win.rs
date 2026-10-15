@@ -5,6 +5,12 @@
 // (con eso se dibujan la barra y los menús de Linux) visible encima del video;
 // y Esc que oculta el video y le devuelve el foco a la interfaz.
 //
+// Input como en Linux (donde el GLArea recibe teclado y mouse y decide):
+// mpv deja pasar el puntero (`input-cursor-passthrough`) y no lee el
+// teclado; los dos llegan a NUESTRA ventana hija, que vive en el hilo
+// principal igual que el GLArea. Primera prueba: Esc por un binding de mpv
+// no llegó nunca (mpv no tenía el foco).
+//
 // Se activa con KUTRAL_SPIKE_EMBED=<url> (lo corre .github/workflows/
 // spike-windows.yml, que saca capturas de pantalla). Lo que pasa se anota en
 // stderr con el prefijo [spike].
@@ -14,6 +20,7 @@ use std::sync::{Arc, OnceLock};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{GetStockObject, BLACK_BRUSH, HBRUSH};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{SetFocus, VK_ESCAPE};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, GetClientRect, RegisterClassW, SetWindowPos, ShowWindow,
     CS_HREDRAW, CS_VREDRAW, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_HIDE, WNDCLASSW, WS_CHILD,
@@ -21,9 +28,50 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 static MPV: OnceLock<Arc<Mpv>> = OnceLock::new();
+static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
 
+const WM_MOUSEMOVE: u32 = 0x0200;
+const WM_LBUTTONDOWN: u32 = 0x0201;
+const WM_KEYDOWN: u32 = 0x0100;
+const WM_SETFOCUS: u32 = 0x0007;
+
+/// Hilo principal (como las señales del GLArea en Linux).
 unsafe extern "system" fn wndproc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+    static MOVIO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let (x, y) = ((l & 0xffff) as i16, ((l >> 16) & 0xffff) as i16);
+    match m {
+        WM_SETFOCUS => eprintln!("[spike] la superficie tiene el foco"),
+        WM_MOUSEMOVE if !MOVIO.swap(true, std::sync::atomic::Ordering::SeqCst) => {
+            eprintln!("[spike] mouse sobre la superficie en ({x},{y})");
+        }
+        WM_LBUTTONDOWN => {
+            eprintln!("[spike] clic en la superficie en ({x},{y})");
+            SetFocus(h);
+        }
+        WM_KEYDOWN => {
+            eprintln!("[spike] tecla {w} en la superficie");
+            if w == VK_ESCAPE as usize {
+                esc(h);
+            }
+        }
+        _ => {}
+    }
     DefWindowProcW(h, m, w, l)
+}
+
+/// Esc: pausa, oculta el video y el teclado vuelve a la interfaz.
+fn esc(h: HWND) {
+    eprintln!("[spike] Esc → oculto el video");
+    if let Some(m) = MPV.get() {
+        let _ = m.set_property("pause", true);
+    }
+    unsafe {
+        ShowWindow(h, SW_HIDE);
+    }
+    if let Some(w) = APP.get().and_then(|a| tauri::Manager::get_webview_window(a, "main")) {
+        let _ = w.set_focus();
+        eprintln!("[spike] foco devuelto a la interfaz");
+    }
 }
 
 fn w(s: &str) -> Vec<u16> {
@@ -71,6 +119,7 @@ pub fn spike(app: &tauri::AppHandle, win: &tauri::WebviewWindow, url: String) {
         Ok(h) => h.0 as HWND,
         Err(e) => return eprintln!("[spike] sin HWND: {e}"),
     };
+    let _ = APP.set(app.clone());
     let hijo = crear_superficie(padre);
     eprintln!("[spike] superficie creada: {}", !hijo.is_null());
     let hijo_n = hijo as usize;
@@ -89,8 +138,10 @@ pub fn spike(app: &tauri::AppHandle, win: &tauri::WebviewWindow, url: String) {
         i.set_option("osc", "no")?;
         i.set_option("vo", "gpu")?;
         i.set_option("hwdec", "auto-safe")?;
-        i.set_option("input-default-bindings", "yes")?;
-        i.set_option("input-vo-keyboard", "yes")?;
+        // El input lo maneja nuestra ventana (ver arriba).
+        i.set_option("input-default-bindings", "no")?;
+        i.set_option("input-vo-keyboard", "no")?;
+        i.set_option("input-cursor-passthrough", "yes")?;
         i.set_option("input-conf", conf.to_string_lossy().as_ref())?;
         i.set_option("screenshot-directory", capturas.as_str())?;
         Ok(())
@@ -150,21 +201,12 @@ pub fn spike(app: &tauri::AppHandle, win: &tauri::WebviewWindow, url: String) {
                     std::thread::sleep(std::time::Duration::from_secs(2));
                     let _ = mpv.command("screenshot", &["subtitles"]);
                     eprintln!("[spike] captura de mpv pedida");
-                }
-                Ok(Event::ClientMessage(args)) if args.first() == Some(&"kutral-esc") => {
-                    eprintln!("[spike] Esc recibido por mpv → oculto el video");
-                    let _ = mpv.set_property("pause", true);
-                    unsafe {
-                        ShowWindow(hijo_n as HWND, SW_HIDE);
-                    }
-                    let app = app.clone();
-                    let _ = app.clone().run_on_main_thread(move || {
-                        if let Some(w) = tauri::Manager::get_webview_window(&app, "main") {
-                            let _ = w.set_focus();
-                            eprintln!("[spike] foco devuelto a la interfaz");
-                        }
+                    // Al mostrar el video, el teclado pasa a la superficie.
+                    let _ = app.run_on_main_thread(move || unsafe {
+                        SetFocus(hijo_n as HWND);
                     });
                 }
+                Ok(Event::ClientMessage(args)) => eprintln!("[spike] mensaje de mpv: {args:?}"),
                 Ok(Event::EndFile(r)) => eprintln!("[spike] fin de archivo: {r:?}"),
                 Ok(Event::Shutdown) => break,
                 Err(e) => eprintln!("[spike] evento con error: {e}"),
