@@ -1,25 +1,26 @@
 // Player — reproducción de video.
 //
-// Linux: libmpv EMBEBIDO en la ventana de kutral (ver `mpv_embed`), una sola
-//        ventana, render OpenGL en un GtkGLArea. Las commands delegan ahí.
-// Otros: mpv como PROCESO externo fullscreen controlado por IPC JSON (socket
-//        Unix / named pipe). Camino histórico, se mantiene hasta portar el
-//        embed a Windows.
+// cfg(embed) — Linux, y Windows con la feature embed-win: libmpv EMBEBIDO en
+//        la ventana de kutral (ver `mpv_embed`), una sola ventana. Las
+//        commands delegan ahí.
+// Si no: mpv como PROCESO externo fullscreen controlado por IPC JSON (socket
+//        Unix / named pipe). Camino histórico de Windows, hasta que el embed
+//        quede por defecto.
 
 use std::sync::Mutex;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(embed))]
 use std::io::{BufRead, BufReader, Read, Write};
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(embed))]
 use std::process::Child;
 
 /// Estado del player de proceso (solo no-Linux). En Linux el handle vive en
 /// `mpv_embed`; este campo queda sin usar pero el tipo es común al `manage`.
 #[derive(Default)]
 pub struct PlayerState {
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(embed))]
     pub child: Mutex<Option<Child>>,
-    #[cfg(target_os = "linux")]
+    #[cfg(embed)]
     pub _unused: Mutex<()>,
 }
 
@@ -35,7 +36,7 @@ pub struct IptvItem {
 /// descargables). Al elegirlo, el backend emite "player:menu-pick" con `id`.
 /// Solo Linux: el picker vive en el embed de libmpv. Fuera de ahí el comando
 /// recibe el JSON crudo y no lo mira, así que el tipo ni existe.
-#[cfg(target_os = "linux")]
+#[cfg(embed)]
 #[derive(serde::Deserialize)]
 pub struct PickerItem {
     pub label: String,
@@ -120,7 +121,7 @@ fn write_iptv_playlist(items: &[IptvItem]) -> Result<std::path::PathBuf, String>
 // ══════════════════════════════════════════════════════════════════════════
 //  LINUX — libmpv embebido (delega en mpv_embed)
 // ══════════════════════════════════════════════════════════════════════════
-#[cfg(target_os = "linux")]
+#[cfg(embed)]
 pub mod imp {
     use super::*;
     use crate::mpv_embed;
@@ -356,7 +357,7 @@ pub mod imp {
 // ══════════════════════════════════════════════════════════════════════════
 //  NO-LINUX — mpv proceso externo + IPC (camino histórico)
 // ══════════════════════════════════════════════════════════════════════════
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(embed))]
 pub mod imp {
     use super::*;
 

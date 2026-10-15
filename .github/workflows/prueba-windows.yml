@@ -1,14 +1,15 @@
-name: Spike reproductor Windows
+name: Prueba reproductor Windows
 
-# Prueba del reproductor embebido en Windows (feature embed-win, mpv_win.rs)
-# sin tener Windows: el runner lanza Kütral con un video, saca capturas de
-# pantalla, hace clic sobre el video y aprieta Esc, y sube capturas + logs
-# como artefacto. Solo a mano (Actions → Run workflow).
+# Prueba del reproductor embebido en Windows (feature embed-win,
+# mpv_embed/win32.rs) sin tener Windows: el runner lanza Kütral con un video
+# (KUTRAL_PRUEBA_VIDEO), maneja la barra con teclas y mouse, saca capturas de
+# cada paso y sube capturas + logs como artefacto. Mismo guion que la prueba
+# en Linux. Solo a mano (Actions → Run workflow).
 on:
   workflow_dispatch:
 
 jobs:
-  spike:
+  prueba:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -47,7 +48,7 @@ jobs:
         working-directory: src-tauri
         run: cargo build --features embed-win,tauri/custom-protocol
 
-      - name: Correr el spike
+      - name: Correr la prueba
         shell: pwsh
         run: |
           $dir = Join-Path $env:RUNNER_TEMP "spike"
@@ -64,6 +65,7 @@ jobs:
             [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, UIntPtr e);
             [DllImport("user32.dll")] public static extern void keybd_event(byte k, byte s, uint f, UIntPtr e);
             [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+            public static void Tecla(byte k) { keybd_event(k, 0, 0, UIntPtr.Zero); keybd_event(k, 0, 2, UIntPtr.Zero); }
           }
           "@
           function Captura($nombre) {
@@ -76,8 +78,7 @@ jobs:
             Write-Host "captura $nombre ($($b.Width)x$($b.Height)), primer plano: $([U]::GetForegroundWindow())"
           }
 
-          $env:KUTRAL_SPIKE_EMBED = "https://download.blender.org/demo/movies/ToS/tears_of_steel_720p.mov"
-          $env:KUTRAL_SPIKE_DIR = $dir
+          $env:KUTRAL_PRUEBA_VIDEO = "https://download.blender.org/demo/movies/ToS/tears_of_steel_720p.mov"
           $p = Start-Process -FilePath src-tauri/target/debug/kutral.exe -PassThru `
             -RedirectStandardError (Join-Path $dir "stderr.txt") `
             -RedirectStandardOutput (Join-Path $dir "stdout.txt")
@@ -86,22 +87,21 @@ jobs:
           Write-Host "ventana de Kütral: $($p.MainWindowHandle)"
           [U]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
           Start-Sleep 2
-          Captura "1-video.png"
-
-          # Clic en el centro (le da el foco al video) y Esc.
+          Captura "1-reproduciendo.png"
+          [U]::Tecla(0x0D); Start-Sleep 2; Captura "2-pausa-barra.png"          # Enter
+          [U]::Tecla(0x27); [U]::Tecla(0x27); Start-Sleep 1; Captura "3-foco-movido.png"  # → →
+          [U]::Tecla(0x43); Start-Sleep 2; Captura "4-menu-subs.png"          # c
+          [U]::Tecla(0x1B); Start-Sleep 1; [U]::Tecla(0x20); Start-Sleep 1    # Esc (cierra menú), espacio
           $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-          [U]::SetCursorPos([int]($b.Width / 2), [int]($b.Height / 2)) | Out-Null
-          [U]::mouse_event(0x2, 0, 0, 0, [UIntPtr]::Zero); [U]::mouse_event(0x4, 0, 0, 0, [UIntPtr]::Zero)
-          Start-Sleep 2
-          Captura "2-tras-clic.png"
-          [U]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero); [U]::keybd_event(0x1B, 0, 2, [UIntPtr]::Zero)
-          Start-Sleep 3
-          Captura "3-tras-esc.png"
+          [U]::SetCursorPos([int]($b.Width / 2), [int]($b.Height / 2)) | Out-Null; Start-Sleep -Milliseconds 300
+          [U]::SetCursorPos([int]($b.Width / 2) + 40, [int]($b.Height / 2) + 20) | Out-Null; Start-Sleep 1
+          Captura "5-mouse-barra.png"
+          [U]::Tecla(0x1B); Start-Sleep 3; Captura "6-tras-esc.png"           # Esc → interfaz
 
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
           Start-Sleep 1
           Write-Host "---- stderr (spike / mpv) ----"
-          Get-Content (Join-Path $dir "stderr.txt") | Select-String -Pattern "spike|error|fail|vo/|d3d|libmpv" | Select-Object -First 80
+          Get-Content (Join-Path $dir "stderr.txt") | Select-String -Pattern "mpv-embed|prueba|panic|error|fail" | Select-Object -First 80
           Write-Host "---- stdout (mpv) ----"
           Get-Content (Join-Path $dir "stdout.txt") | Select-Object -First 60
           Get-ChildItem $dir
@@ -110,5 +110,5 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: spike-windows
+          name: prueba-windows
           path: ${{ runner.temp }}/spike

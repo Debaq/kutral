@@ -103,9 +103,9 @@ jobs:
 
       # mpv.exe de verdad para las pruebas de abajo (y uosc, igual que el
       # release).
-      - name: Fetch vendored binaries (mpv + yt-dlp + uosc)
+      - name: Fetch vendored binaries (mpv + libmpv + yt-dlp + uosc)
         shell: pwsh
-        run: pwsh src-tauri/vendor/fetch-windows.ps1
+        run: pwsh src-tauri/vendor/fetch-windows.ps1 -Embed
 
       - name: Install deps
         run: pnpm install --frozen-lockfile
@@ -116,6 +116,11 @@ jobs:
       - name: Clippy
         working-directory: src-tauri
         run: cargo clippy --all-targets -- -D warnings
+
+      # El reproductor embebido de Windows (en pruebas, ver prueba-windows.yml).
+      - name: Clippy (embed-win)
+        working-directory: src-tauri
+        run: cargo clippy --features embed-win -- -D warnings
 
       - name: Tests del backend
         working-directory: src-tauri

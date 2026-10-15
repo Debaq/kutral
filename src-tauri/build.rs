@@ -2,6 +2,13 @@
 mod pe_exports;
 
 fn main() {
+    // `cfg(embed)`: reproductor libmpv embebido (mpv_embed). Siempre en
+    // Linux; en Windows con la feature embed-win.
+    println!("cargo:rustc-check-cfg=cfg(embed)");
+    let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if os == "linux" || (os == "windows" && std::env::var_os("CARGO_FEATURE_EMBED_WIN").is_some()) {
+        println!("cargo:rustc-cfg=embed");
+    }
     // Reproductor embebido en Windows (feature `embed-win`, en pruebas):
     // libmpv2-sys enlaza contra `mpv`, y con MSVC eso es un `mpv.lib`.
     if std::env::var_os("CARGO_FEATURE_EMBED_WIN").is_some()

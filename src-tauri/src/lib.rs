@@ -22,10 +22,8 @@ mod sub_autosync;
 mod probe;
 mod rd;
 mod player;
-#[cfg(target_os = "linux")]
+#[cfg(embed)]
 mod mpv_embed;
-#[cfg(all(windows, feature = "embed-win"))]
-mod mpv_win;
 #[cfg(target_os = "linux")]
 mod reposo;
 #[cfg(windows)]
@@ -599,8 +597,14 @@ pub fn run() {
                             settings.set_enable_webaudio(true);
                         }
                     });
-                    // Reproductor libmpv embebido: crea el handle y mete el
-                    // GtkGLArea en el toplevel del webview (una sola ventana).
+                }
+            }
+            // Reproductor libmpv embebido: el video dentro de la ventana de
+            // Kütral (GtkGLArea en Linux, ventana hija en Windows).
+            #[cfg(embed)]
+            {
+                use tauri::Manager;
+                if let Some(win) = app.get_webview_window("main") {
                     if let Err(e) = mpv_embed::init(app.handle(), &win) {
                         eprintln!("[mpv-embed] init falló: {e}");
                     }
@@ -612,14 +616,6 @@ pub fn run() {
                             eprintln!("[prueba] play: {e}");
                         }
                     }
-                }
-            }
-            // Spike del reproductor embebido en Windows (ver mpv_win.rs).
-            #[cfg(all(windows, feature = "embed-win"))]
-            if let Ok(url) = std::env::var("KUTRAL_SPIKE_EMBED") {
-                use tauri::Manager;
-                if let Some(win) = app.get_webview_window("main") {
-                    mpv_win::spike(app.handle(), &win, url);
                 }
             }
             Ok(())

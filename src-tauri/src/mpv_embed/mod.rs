@@ -4,7 +4,8 @@
 //
 // Este archivo es el núcleo, igual en toda plataforma. Lo que depende del
 // sistema (dónde se dibuja el video, de dónde llegan teclado y mouse, los
-// temporizadores) vive en la superficie: gtk.rs en Linux.
+// temporizadores) vive en la superficie: gtk.rs en Linux, win32.rs en Windows
+// (feature embed-win).
 //
 // Hilos:
 //   - El handle `Mpv` es Send+Sync → los comandos Tauri (hilos worker) llaman
@@ -12,8 +13,6 @@
 //   - El estado de la interfaz (bar, menús, panel) vive en thread_locals del
 //     hilo main, que es donde la superficie entrega el input y corre los
 //     temporizadores. Desde un comando se salta ahí con run_on_main_thread.
-
-#![cfg(target_os = "linux")]
 
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
@@ -27,6 +26,10 @@ use libmpv2::Mpv;
 mod gtk;
 #[cfg(target_os = "linux")]
 use self::gtk as superficie;
+#[cfg(windows)]
+mod win32;
+#[cfg(windows)]
+use self::win32 as superficie;
 
 /// Handle mpv global (vive todo el proceso). Send+Sync → comandos desde
 /// cualquier hilo.
@@ -2217,7 +2220,10 @@ fn hide_surface() {
 
 fn notify_state(on: bool) {
     RUNNING.store(on, Ordering::SeqCst);
+    #[cfg(target_os = "linux")]
     crate::reposo::set("mpv", on);
+    #[cfg(windows)]
+    crate::reposo_win::set("mpv", on);
     if let Some(app) = APP.get() {
         use tauri::Emitter;
         let _ = app.emit("mpv:state", on);
