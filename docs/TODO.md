@@ -256,7 +256,12 @@ Lo único que queda degradado en Windows hasta que se haga B es la pantalla de
 
 ---
 
-# Salir del reproductor en Windows — *chico*
+# Salir del reproductor en Windows — *hecho, falta probar (`02a5425`)*
+
+Arreglado: Esc sale de pantalla completa antes de minimizar (y retomar la
+vuelve a poner), el vigía espera hasta 10 s el pipe (antes 2 s: sin vigía Esc
+no hacía nada) y al cerrar mpv Kütral recupera el foco. Lo de abajo queda como
+referencia.
 
 Hoy es incómodo: hay que desmaximizar y cerrar, o Alt+F4. mpv abre
 `--fullscreen` con `border=no` (`mpv.conf`), así que no hay ✕ visible; Esc/BS
