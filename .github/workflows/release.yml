@@ -120,10 +120,8 @@ jobs:
           - **Dentro del sandbox** no hay wifi, brillo ni volumen del sistema, y
             el updater interno queda apagado: se actualiza con `flatpak update`.
           - **Plataformas**: Linux y Windows, solo x86_64. No hay macOS ni ARM.
-            El reproductor mpv embebido es solo de Linux; en Windows mpv corre
-            como proceso aparte.
-          - **Juegos**: las ROMs salen de Myrient y el nombre tiene que calzar
-            exacto con el set No-Intro; cualquier diferencia es un 404.
+            El reproductor es el mismo en los dos: mpv dentro de la ventana de
+            Kütral.
           NOTES
           sed -i "s/VERSION/${VERSION}/g" notes.md
           gh release create "$VERSION" \

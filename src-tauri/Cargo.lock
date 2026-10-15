@@ -2939,7 +2939,7 @@ dependencies = [
 
 [[package]]
 name = "kutral"
-version = "26.10.3"
+version = "26.10.4"
 dependencies = [
  "argon2",
  "cc",
