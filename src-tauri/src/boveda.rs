@@ -194,9 +194,9 @@ mod tests {
     fn cifra_y_descifra_solo_con_la_misma_clave() {
         let llave = derivar_llave("Ana", "contraseña-larga").unwrap();
         assert_eq!(llave, derivar_llave("ana", "contraseña-larga").unwrap());
-        let datos = d(json!({ "tmdb_key": "abc", "rd": { "refresh_token": "r" } }));
+        let datos = d(json!({ "tmdb_key": "mi-clave-tmdb", "rd": { "refresh_token": "r" } }));
         let sobre = cifrar(&llave, &datos).unwrap();
-        assert!(!sobre.contains("abc"));
+        assert!(!sobre.contains("mi-clave-tmdb"));
         assert_eq!(descifrar(&llave, &sobre), Some(datos));
         let otra = derivar_llave("ana", "otra-contraseña").unwrap();
         assert_eq!(descifrar(&otra, &sobre), None);

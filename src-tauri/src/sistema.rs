@@ -17,7 +17,7 @@ pub struct AudioState {
 #[tauri::command]
 pub async fn audio_get() -> Result<AudioState, String> {
     #[cfg(not(target_os = "linux"))]
-    { return Ok(AudioState { volume: 50, muted: false, available: false }); }
+    { Ok(AudioState { volume: 50, muted: false, available: false }) }
     #[cfg(target_os = "linux")]
     {
         use std::process::Command;
@@ -48,7 +48,7 @@ pub async fn audio_get() -> Result<AudioState, String> {
 pub async fn audio_set(volume: u8) -> Result<(), String> {
     let v = volume.min(150);
     #[cfg(not(target_os = "linux"))]
-    { let _ = v; return Ok(()); }
+    { let _ = v; Ok(()) }
     #[cfg(target_os = "linux")]
     {
         use std::process::Command;
@@ -67,7 +67,7 @@ pub async fn audio_set(volume: u8) -> Result<(), String> {
 #[tauri::command]
 pub async fn audio_set_mute(muted: bool) -> Result<(), String> {
     #[cfg(not(target_os = "linux"))]
-    { let _ = muted; return Ok(()); }
+    { let _ = muted; Ok(()) }
     #[cfg(target_os = "linux")]
     {
         use std::process::Command;
@@ -92,7 +92,7 @@ pub struct BrightnessState {
 #[tauri::command]
 pub async fn brightness_get() -> Result<BrightnessState, String> {
     #[cfg(not(target_os = "linux"))]
-    { return Ok(BrightnessState { percent: 100, available: false }); }
+    { Ok(BrightnessState { percent: 100, available: false }) }
     #[cfg(target_os = "linux")]
     {
         use std::process::Command;
@@ -116,7 +116,7 @@ pub async fn brightness_get() -> Result<BrightnessState, String> {
 pub async fn brightness_set(percent: u8) -> Result<(), String> {
     let p = percent.clamp(5, 100);
     #[cfg(not(target_os = "linux"))]
-    { let _ = p; return Ok(()); }
+    { let _ = p; Ok(()) }
     #[cfg(target_os = "linux")]
     {
         use std::process::Command;
@@ -178,7 +178,7 @@ fn parse_nmcli_line(line: &str) -> Vec<String> {
 #[tauri::command]
 pub async fn wifi_status() -> Result<WifiStatus, String> {
     #[cfg(not(target_os = "linux"))]
-    { return Ok(WifiStatus { online: true, connected_ssid: None }); }
+    { Ok(WifiStatus { online: true, connected_ssid: None }) }
     #[cfg(target_os = "linux")]
     {
         use std::process::Command;
@@ -211,7 +211,7 @@ pub async fn wifi_status() -> Result<WifiStatus, String> {
 #[tauri::command]
 pub async fn wifi_scan() -> Result<Vec<WifiNetwork>, String> {
     #[cfg(not(target_os = "linux"))]
-    { return Ok(Vec::new()); }
+    { Ok(Vec::new()) }
     #[cfg(target_os = "linux")]
     {
         use std::process::Command;
@@ -247,7 +247,7 @@ pub async fn wifi_scan() -> Result<Vec<WifiNetwork>, String> {
 pub async fn wifi_connect(ssid: String, password: Option<String>) -> Result<(), String> {
     if ssid.is_empty() { return Err("ssid vacío".into()); }
     #[cfg(not(target_os = "linux"))]
-    { let _ = password; return Err("solo soportado en Linux".into()); }
+    { let _ = password; Err("solo soportado en Linux".into()) }
     #[cfg(target_os = "linux")]
     {
         use std::io::Write;
