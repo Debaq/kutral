@@ -63,7 +63,24 @@ jobs:
             [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, UIntPtr e);
             [DllImport("user32.dll")] public static extern void keybd_event(byte k, byte s, uint f, UIntPtr e);
             [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-            public static void Tecla(byte k) { keybd_event(k, 0, 0, UIntPtr.Zero); keybd_event(k, 0, 2, UIntPtr.Zero); }
+            public static IntPtr Kutral = IntPtr.Zero;
+            // Windows solo deja traer otra ventana al frente a quien acaba de
+            // recibir input: un Alt suelto lo habilita (si no, la ventana solo
+            // parpadea en la barra de tareas y las teclas van a otra).
+            public static bool Enfocar() {
+              for (int i = 0; i < 10; i++) {
+                if (GetForegroundWindow() == Kutral) return true;
+                keybd_event(0x12, 0, 0, UIntPtr.Zero); keybd_event(0x12, 0, 2, UIntPtr.Zero);
+                SetForegroundWindow(Kutral);
+                System.Threading.Thread.Sleep(300);
+              }
+              return GetForegroundWindow() == Kutral;
+            }
+            // Nunca teclas a ciegas: solo si Kütral está en primer plano.
+            public static void Tecla(byte k) {
+              if (!Enfocar()) throw new Exception("Kütral no quedó en primer plano: no mando la tecla");
+              keybd_event(k, 0, 0, UIntPtr.Zero); keybd_event(k, 0, 2, UIntPtr.Zero);
+            }
           }
           "@
           function Captura($nombre) {
@@ -83,7 +100,8 @@ jobs:
           Start-Sleep 35
           $p.Refresh()
           Write-Host "ventana de Kütral: $($p.MainWindowHandle)"
-          [U]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
+          [U]::Kutral = $p.MainWindowHandle
+          if (-not [U]::Enfocar()) { throw "Kütral no quedó en primer plano" }
           Start-Sleep 2
           Captura "1-reproduciendo.png"
           [U]::Tecla(0x0D); Start-Sleep 2; Captura "2-pausa-barra.png"          # Enter
