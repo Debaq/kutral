@@ -491,12 +491,22 @@ pub mod imp {
         if !EN_VIVO.load(Ordering::SeqCst) {
             prop("pause", serde_json::Value::Bool(true));
         }
+        // Una ventana en pantalla completa no siempre se deja minimizar en
+        // Windows: quedaba encima y había que desmaximizarla a mano. Primero
+        // se sale de pantalla completa (mpv_resume la vuelve a poner).
+        prop("fullscreen", serde_json::Value::Bool(false));
         prop("window-minimized", serde_json::Value::Bool(true));
         SUSPENDIDO.store(true, Ordering::SeqCst);
         let _ = app.emit("mpv:state", false);
         let _ = app.emit("mpv:suspended", true);
-        // Minimizar no garantiza que Windows le pase el foco a Kütral.
+        enfocar_kutral(app);
+    }
+
+    /// Minimizar o cerrar mpv no garantiza que Windows le pase el foco a
+    /// Kütral: queda atrás de lo que haya abierto.
+    fn enfocar_kutral(app: &tauri::AppHandle) {
         if let Some(w) = tauri::Manager::get_webview_window(app, "main") {
+            let _ = w.unminimize();
             let _ = w.set_focus();
         }
     }
@@ -516,9 +526,11 @@ pub mod imp {
         use std::sync::atomic::Ordering;
         let gen = EVENT_GEN.fetch_add(1, Ordering::SeqCst) + 1;
         std::thread::spawn(move || {
-            // El pipe no existe hasta que mpv arranca del todo.
+            // El pipe no existe hasta que mpv arranca del todo. Con 2 s no
+            // alcanzaba a veces (primer arranque, antivirus revisando
+            // mpv.exe): sin vigía, Esc no hacía nada y solo quedaba Alt+F4.
             let mut conn = None;
-            for _ in 0..40 {
+            for _ in 0..200 {
                 if EVENT_GEN.load(Ordering::SeqCst) != gen {
                     return;
                 }
@@ -612,9 +624,7 @@ pub mod imp {
                             ["kutral-fuente", ..] => {
                                 let _ = app.emit("player:cambiar-fuente", ());
                                 let _ = mpv_cmd(vec![serde_json::Value::String("quit".into())]);
-                                if let Some(w) = tauri::Manager::get_webview_window(&app, "main") {
-                                    let _ = w.set_focus();
-                                }
+                                enfocar_kutral(&app);
                             }
                             ["kutral-pick", id, ..] => {
                                 let _ = app.emit("player:menu-pick", id.to_string());
@@ -649,6 +659,7 @@ pub mod imp {
             if SUSPENDIDO.swap(false, Ordering::SeqCst) {
                 let _ = app.emit("mpv:suspended", false);
             }
+            enfocar_kutral(&app);
         });
     }
 
@@ -1208,6 +1219,7 @@ pub mod imp {
             return Err("no hay reproducción en pausa".into());
         }
         prop("window-minimized", serde_json::Value::Bool(false));
+        prop("fullscreen", serde_json::Value::Bool(true));
         prop("pause", serde_json::Value::Bool(false));
         SUSPENDIDO.store(false, std::sync::atomic::Ordering::SeqCst);
         let _ = app.emit("mpv:state", true);
