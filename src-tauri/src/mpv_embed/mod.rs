@@ -649,9 +649,12 @@ fn build_bar_ass(g: &BarGeom, bar: &[BarAction], focus: usize) -> String {
 fn put_overlay(id: &str, data: &str) {
     let o = osd();
     let (rx, ry) = ((o.w as i64).to_string(), (o.h as i64).to_string());
+    // z = id: los ids van en orden de apilado (fondo < iconos < riel <
+    // portada). Con z empatado el mpv nuevo de Windows dibujaba el fondo
+    // encima de los iconos (se veían apagados); el de Linux no.
     mpv_cmd2(
         "osd-overlay",
-        &[id, "ass-events", data, &rx, &ry, "0", "no", "no"],
+        &[id, "ass-events", data, &rx, &ry, id, "no", "no"],
     );
 }
 
