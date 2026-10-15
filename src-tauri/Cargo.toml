@@ -23,7 +23,7 @@ cc = "1"
 # Reproductor embebido en Windows (libmpv en una ventana hija de la de Kütral,
 # como el embed de Linux). En pruebas: apagado, el release sigue con mpv.exe
 # de proceso aparte. Necesita vendor/mpv-dev (fetch-windows.ps1).
-embed-win = ["dep:libmpv2_win", "dep:windows-sys"]
+embed-win = ["dep:libmpv2", "dep:windows-sys"]
 
 [dependencies]
 tauri = { version = "2", features = ["protocol-asset"] }
@@ -84,10 +84,11 @@ libc = "0.2"
 # reproduce. Misma versión que arrastra gtk 0.18.
 gio = "0.18"
 
-# Reproductor embebido en Windows (feature embed-win, ver [features]). Otro
-# nombre para que sea opcional solo acá: en Linux libmpv2 es obligatoria.
+# Reproductor embebido en Windows (feature embed-win, ver [features]).
+# Opcional solo acá: en Linux libmpv2 es obligatoria (sin render: en Windows
+# mpv dibuja solo en su ventana).
 [target.'cfg(windows)'.dependencies]
-libmpv2_win = { package = "libmpv2", version = "6.0.0", default-features = false, optional = true }
+libmpv2 = { version = "6.0.0", default-features = false, optional = true }
 windows-sys = { version = "0.61", optional = true, features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",

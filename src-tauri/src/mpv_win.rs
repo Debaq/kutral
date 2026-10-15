@@ -9,7 +9,7 @@
 // spike-windows.yml, que saca capturas de pantalla). Lo que pasa se anota en
 // stderr con el prefijo [spike].
 
-use libmpv2_win::{events::Event, Mpv};
+use libmpv2::{events::Event, Mpv};
 use std::sync::{Arc, OnceLock};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{GetStockObject, BLACK_BRUSH, HBRUSH};
