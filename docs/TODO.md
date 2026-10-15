@@ -168,10 +168,14 @@ marcó para deprecar. Si ya cayó, el "instantáneo" de hoy puede estar mintiend
 > empaquetar el DLL junto al exe.
 >
 > Plan: (1) separar `mpv_embed.rs` en núcleo (barra, menús, panel, sincronía,
-> portada) + superficie GTK, sin cambiar Linux; (2) superficie Win32 (la del
-> spike, timers con `SetTimer`) y `player.rs` de Windows delega como en
-> Linux, detrás de `embed-win`, con el spike de la CI manejando la barra; (3)
-> DLL en el instalador, `embed-win` por defecto, borrar IPC + uosc.
+> portada) + superficie GTK, sin cambiar Linux — **hecho** (`bfb2e75`); (2)
+> superficie Win32 (`mpv_embed/win32.rs`, timers con `SetTimer`) y
+> `player.rs` de Windows delega como en Linux, detrás de `embed-win` —
+> **hecho**: `prueba-windows.yml` maneja la barra con teclas y mouse y las
+> capturas salen como en Linux (con z empatado el mpv nuevo dibujaba el fondo
+> encima de los iconos: z = id); (3) DLL en el instalador (junto al exe),
+> `embed-win` por defecto, borrar IPC + uosc + mpv.exe. Pendiente además:
+> fuente de la barra (en Windows cae a Arial), DPI ≠ 100 %, GPU real.
 >
 > El spike original pedía: video de libmpv en un
 > HWND hijo de la ventana Tauri, encima de WebView2, y Esc que devuelve el foco
