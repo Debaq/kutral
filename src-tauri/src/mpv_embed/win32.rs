@@ -28,9 +28,12 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, GetClientRect, KillTimer, LoadCursorW, RegisterClassW,
     SetCursor, SetTimer, SetWindowPos, ShowWindow, CS_HREDRAW, CS_VREDRAW, HWND_TOP, IDC_ARROW,
     SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_HIDE, SW_SHOW, WM_CHAR, WM_KEYDOWN,
-    WM_LBUTTONDOWN, WM_MOUSELEAVE, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_SETCURSOR, WM_SIZE, WM_TIMER,
+    WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_SETCURSOR, WM_SIZE, WM_TIMER,
     WNDCLASSW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
 };
+
+/// windows-sys no lo trae en WindowsAndMessaging (lo manda TrackMouseEvent).
+const WM_MOUSELEAVE: u32 = 0x02A3;
 
 /// La ventana hija (HWND como número: el puntero no es Send).
 static HIJO: AtomicUsize = AtomicUsize::new(0);
