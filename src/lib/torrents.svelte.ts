@@ -9,6 +9,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { notify } from "$lib/notifStore.svelte";
 import { config } from "$lib/config.svelte";
 import { marcarCompleta } from "$lib/descargas.svelte";
+import type { ArchivoPack, Pista } from "$lib/pack";
 
 /** Carpeta elegida por el usuario, o null para que el backend use la suya. */
 function dirElegida(): string | null {
@@ -49,6 +50,10 @@ export type TorrentAdded = {
 	/** Ruta absoluta del archivo elegido: lo que se guarda en `descargas`. */
 	path: string;
 	info_hash: string;
+	/** Capítulos del torrent si es un pack de temporada (vacío si no). */
+	pack: ArchivoPack[];
+	/** Ya estaba en la sesión (otro capítulo del pack): si falla, no se borra. */
+	reutilizado: boolean;
 };
 
 export const torrents = $state({
@@ -63,12 +68,14 @@ export function addTorrent(
 	magnet: string,
 	title: string,
 	bufferMb: number,
+	pista: Pista | null = null,
 ): Promise<TorrentAdded> {
 	return invoke<TorrentAdded>("torrent_add", {
 		magnet,
 		title,
 		bufferMb,
 		dir: dirElegida(),
+		pista,
 	});
 }
 

@@ -49,6 +49,8 @@
 
   // Eligió uno en el picker in-video → resolver URL, guardar y cargar en mpv.
   async function onPick(idx: string) {
+    // El picker in-video también lo usan otros menús (capítulos: "cap:…").
+    if (!/^\d+$/.test(idx)) return;
     const o = subOptions[Number(idx)];
     if (!o) return;
     await mpv(["show-text", "Descargando subtítulo…", "8000"]);

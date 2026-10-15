@@ -19,6 +19,7 @@
   import EpisodePicker from "$lib/EpisodePicker.svelte";
   import PostCreditos from "$lib/PostCreditos.svelte";
   import { esFinReal, type FinPayload } from "$lib/finVideo";
+  import { capitulosDelPack } from "$lib/pack";
   import { WEB_PLAYER_ENABLED } from "$lib/features";
   import { ANIME_GENRES, ANILIST_SORTS, anilistGenresCSV, animeSeasonOptions } from "$lib/anime";
   import RemoteQr from "$lib/RemoteQr.svelte";
@@ -2194,6 +2195,100 @@
     mode = "sources"; // la key del SourcePicker cambia → busca fuentes del nuevo
   }
 
+  // ---- Capítulos del pack (menú del reproductor) --------------------------
+  // Cuando lo que suena es parte de un pack de temporada ($lib/pack), el bar
+  // del reproductor ofrece "Capítulos". Elegir uno remonta el SourcePicker con
+  // ese capítulo y su desdePack lo abre del mismo torrent, sin buscar fuentes.
+  //
+  // El video puede seguir sonando con la lista de fuentes cerrada (se volvió
+  // con la pill, o un Esc del reproductor llegó también acá): igual que
+  // "Cambiar fuente", se vuelve a abrir la lista.
+
+  // Contexto del capítulo elegido: se aplica recién cuando arranca
+  // (onLanzado). Antes, el muestreo del historial le anotaría la posición del
+  // capítulo que sigue en pantalla.
+  let contextoPendiente: MediaMeta | null = null;
+
+  function alLanzar() {
+    const m = contextoPendiente;
+    contextoPendiente = null;
+    if (m && m.clave === claveSel && m.episode === sourcesEpisode) setContexto(m);
+  }
+
+  async function abrirMenuCapitulos() {
+    const caps = selected && claveSel ? capitulosDelPack(claveSel) : [];
+    if (!caps.length) {
+      // Se abrió otro título mientras el video esperaba en la pill.
+      void invoke("mpv_cmd", {
+        args: ["show-text", "Abre la ficha de la serie para cambiar de capítulo", "3000"],
+      }).catch(() => {});
+      return;
+    }
+    const temporadas = [...new Set(caps.map((c) => c.season))];
+    const nombres = new Map<string, string>();
+    for (const t of temporadas) {
+      for (const e of await cargarEpisodios(t)) nombres.set(`${t}:${e.episode_number}`, e.name);
+    }
+    const actual = caps.findIndex(
+      (c) => c.season === (sourcesSeason ?? 1) && c.episode === sourcesEpisode,
+    );
+    await invoke("mpv_open_picker", {
+      title: "Capítulos",
+      items: caps.map((c, i) => {
+        const num = temporadas.length > 1 ? `T${c.season} · E${c.episode}` : `Capítulo ${c.episode}`;
+        const nombre = nombres.get(`${c.season}:${c.episode}`);
+        return {
+          label: `${num}${nombre ? ` — ${nombre}` : ""}${i === actual ? "  · ahora" : ""}`,
+          id: `cap:${c.season}:${c.episode}`,
+        };
+      }),
+      sel: actual >= 0 ? actual : null,
+    });
+  }
+
+  async function irACapitulo(temporada: number, episode: number) {
+    if (!selected) return;
+    // Las temporadas del pack se cuentan desde 1; el título abierto puede no
+    // tener temporada (anime).
+    const season = temporada === (sourcesSeason ?? 1) ? sourcesSeason : temporada;
+    if (season === sourcesSeason && episode === sourcesEpisode) return;
+    // El capítulo que se deja guarda su posición ya: después del salto el
+    // muestreo del historial no sabría de cuál era.
+    const ctx = contextoActual();
+    const st = await invoke<{ running: boolean; pos: number; duration: number }>("mpv_status").catch(
+      () => null,
+    );
+    if (ctx && st?.running && st.pos > 0 && st.duration > 0) {
+      await guardarProgreso(ctx, {
+        watched: st.pos,
+        runtime: Math.floor(st.duration),
+        real: st.pos / st.duration,
+      });
+    }
+    limpiarContexto();
+    const ep = (await cargarEpisodios(season ?? 1)).find((e) => e.episode_number === episode);
+    contextoPendiente = metaDe(season ?? -1, episode, ep ?? null);
+    empezarDeCero = true;
+    sourcesAutoplay = true;
+    sourcesDescargar = false;
+    sourcesSeason = season;
+    sourcesEpisode = episode; // la key del SourcePicker cambia → desdePack
+    mode = "sources";
+  }
+
+  $effect(() => {
+    const uns: UnlistenFn[] = [];
+    void listen("player:capitulos", () => void abrirMenuCapitulos()).then((u) => uns.push(u));
+    // Sin esta página (otra ruta) nadie atiende el botón: que no quede uno
+    // que no hace nada.
+    uns.push(() => void invoke("mpv_capitulos", { on: false }).catch(() => {}));
+    void listen<string>("player:menu-pick", (e) => {
+      const m = /^cap:(\d+):(\d+)$/.exec(e.payload);
+      if (m) void irACapitulo(Number(m[1]), Number(m[2]));
+    }).then((u) => uns.push(u));
+    return () => uns.forEach((u) => u());
+  });
+
   // Enter sobre una sugerencia: abre su ficha de reproducción, igual que
   // elegirla en el catálogo.
   function verSugerencia(id: number) {
@@ -2285,6 +2380,7 @@
 
   // Cierra menú/lista y vuelve al catálogo.
   function closeSources() {
+    contextoPendiente = null;
     mode = "browse";
     sourcesDescargar = false;
     setFs(false);
@@ -2672,6 +2768,7 @@
     retomarSegundos={reanudarDesde}
     onClose={closeSources}
     onWeb={menuWeb}
+    onLanzado={alLanzar}
   />
   {/key}
 {:else if mode === "discover" && selected?.imdb_id}

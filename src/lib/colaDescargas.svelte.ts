@@ -15,6 +15,7 @@
 // cierra, la cola queda en SQLite y sigue en el próximo arranque.
 
 import { invoke } from "@tauri-apps/api/core";
+import { pistaDe } from "$lib/pack";
 import { getDb } from "$lib/vera/db";
 import { config } from "$lib/config.svelte";
 import { notify } from "$lib/notifStore.svelte";
@@ -264,7 +265,14 @@ async function procesar(f: FilaPendiente): Promise<boolean> {
     await verificarEspacio(s.size_bytes);
 
     const nombre = f.etiqueta ? `${f.title} · ${f.etiqueta}` : f.title;
-    const added = await addTorrent(s.magnet!, nombre, config.torrentBufferMb);
+    // En un pack de temporada, el archivo de ESTE capítulo (si ya se baja
+    // otro del mismo pack, se suma a ese torrent).
+    const added = await addTorrent(
+      s.magnet!,
+      nombre,
+      config.torrentBufferMb,
+      pistaDe(s, f.season >= 0 ? f.season : null, f.episode >= 0 ? f.episode : null),
+    );
     await registrarDescarga({
       clave: f.clave,
       season: f.season,

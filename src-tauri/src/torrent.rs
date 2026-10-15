@@ -25,13 +25,15 @@ use std::sync::{Arc, Mutex};
 use librqbit::api::TorrentIdOrHash;
 use librqbit::limits::LimitsConfig;
 use librqbit::{
-    AddTorrent, AddTorrentOptions, ManagedTorrent, Session, SessionOptions,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, ManagedTorrent, Session, SessionOptions,
     SessionPersistenceConfig,
 };
 use serde::Serialize;
 use tauri::Manager;
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+use crate::pack;
 
 /// Tope de subida. No la desactivamos (el tit-for-tat de BitTorrent premia
 /// subir: sin dar nada bajas más lento), pero la capamos para no ahogar la
@@ -45,8 +47,6 @@ const META_TIMEOUT_S: u64 = 60;
 
 /// Buffer inicial por defecto antes de lanzar mpv, en MB.
 pub const BUFFER_MB_DEFAULT: u64 = 24;
-
-const VIDEO_EXT: [&str; 7] = [".mkv", ".mp4", ".avi", ".mov", ".m4v", ".ts", ".webm"];
 
 // ---- Estado global -------------------------------------------------------
 
@@ -350,31 +350,30 @@ fn handle_req(
 
 // ---- Selección de archivo y prebuffer ------------------------------------
 
-fn is_video(p: &str) -> bool {
-    let l = p.to_lowercase();
-    VIDEO_EXT.iter().any(|e| l.ends_with(e))
-}
-
-/// Índice del archivo de video más grande (o del más grande a secas si el
-/// torrent no trae extensiones reconocibles).
-fn pick_file(handle: &Arc<ManagedTorrent>) -> Result<(usize, String, u64), String> {
+/// Archivo a reproducir según la pista (el capítulo, en un pack; ver
+/// pack.rs) y los capítulos del pack si lo es.
+fn pick_file(
+    handle: &Arc<ManagedTorrent>,
+    pista: &pack::Pista,
+) -> Result<(usize, String, u64, Vec<pack::ArchivoPack>), String> {
     handle
         .with_metadata(|m| {
-            let mut best: Option<(usize, String, u64)> = None;
-            let mut best_any: Option<(usize, String, u64)> = None;
-            for (i, f) in m.file_infos.iter().enumerate() {
-                let name = f.relative_filename.to_string_lossy().to_string();
-                if best_any.as_ref().is_none_or(|b| f.len > b.2) {
-                    best_any = Some((i, name.clone(), f.len));
-                }
-                if is_video(&name) && best.as_ref().is_none_or(|b| f.len > b.2) {
-                    best = Some((i, name, f.len));
-                }
-            }
-            best.or(best_any)
+            let rutas: Vec<(String, u64)> = m
+                .file_infos
+                .iter()
+                .map(|f| (f.relative_filename.to_string_lossy().to_string(), f.len))
+                .collect();
+            let archivos: Vec<pack::Archivo> = rutas
+                .iter()
+                .enumerate()
+                .map(|(i, (r, b))| pack::Archivo { idx: i as u32, ruta: r, bytes: *b })
+                .collect();
+            let idx = pack::elegir(&archivos, pista)? as usize;
+            let lista = pack::listado(&archivos);
+            let (name, len) = rutas.get(idx).cloned().ok_or("archivo fuera del torrent")?;
+            Ok((idx, name, len, lista))
         })
         .map_err(|e| format!("metadata: {e:#}"))?
-        .ok_or_else(|| "el torrent no trae archivos".to_string())
 }
 
 /// Baja los primeros `target` bytes del archivo abriendo un stream propio: eso
@@ -413,6 +412,41 @@ fn start_prebuffer(
     });
 }
 
+/// Deja bajando `file_id`. Un torrent nuevo baja SOLO ese archivo (los packs
+/// traen extras y otros idiomas). Uno que ya estaba en la sesión (otro
+/// capítulo del mismo pack) lo SUMA a lo que bajaba: el capítulo anterior
+/// quizá quedó encolado para ver sin red. Lo que se está viendo va primero
+/// igual, porque el stream pide sus piezas antes que el resto.
+async fn bajar_archivo(
+    session: &Arc<Session>,
+    handle: &Arc<ManagedTorrent>,
+    file_id: usize,
+    reutilizado: bool,
+) -> Result<(), String> {
+    let mut only: HashSet<usize> = HashSet::from([file_id]);
+    if reutilizado {
+        // Sin lista = ya baja todo: no hay nada que sumar.
+        match handle.only_files() {
+            None => only.clear(),
+            Some(v) => only.extend(v),
+        }
+    }
+    if !only.is_empty() {
+        session
+            .update_only_files(handle, &only)
+            .await
+            .map_err(|e| format!("seleccionar archivo: {e:#}"))?;
+    }
+    // Pausado desde la cola: ahora alguien lo está esperando para ver.
+    if reutilizado && handle.is_paused() {
+        session
+            .unpause(handle)
+            .await
+            .map_err(|e| format!("reanudar: {e:#}"))?;
+    }
+    Ok(())
+}
+
 // ---- Tipos de salida -----------------------------------------------------
 
 #[derive(Serialize)]
@@ -428,6 +462,11 @@ pub struct TorrentAdded {
     /// Infohash en hex: identifica la descarga entre reinicios, cuando los ids
     /// de sesión ya no valen.
     pub info_hash: String,
+    /// Capítulos del torrent si es un pack de temporada (vacío si no).
+    pub pack: Vec<pack::ArchivoPack>,
+    /// El torrent ya estaba en la sesión (otro capítulo del mismo pack): si
+    /// este falla, NO se borra, que lleva los otros capítulos.
+    pub reutilizado: bool,
 }
 
 #[derive(Serialize)]
@@ -563,8 +602,12 @@ fn stream_url(port: u16, id: usize, file_id: usize, name: &str) -> String {
 
 // ---- Comandos Tauri ------------------------------------------------------
 
-/// Agrega un magnet, elige el archivo de video más grande y arranca el buffer
-/// inicial. Devuelve la URL local que mpv puede abrir (aún descargando).
+/// Agrega un magnet, elige el archivo que dice la pista (el capítulo, en un
+/// pack) y arranca el buffer inicial. Devuelve la URL local que mpv puede
+/// abrir (aún descargando).
+///
+/// Si el torrent ya está en la sesión (otro capítulo del mismo pack), se usa
+/// ese: se suma el archivo nuevo a lo que ya bajaba.
 #[tauri::command]
 pub async fn torrent_add(
     app: tauri::AppHandle,
@@ -572,6 +615,7 @@ pub async fn torrent_add(
     title: Option<String>,
     buffer_mb: Option<u64>,
     dir: Option<String>,
+    pista: Option<pack::Pista>,
 ) -> Result<TorrentAdded, String> {
     let tor = ensure(&app, dir.as_deref()).await?;
     eprintln!("[torrent] add {}", magnet.chars().take(60).collect::<String>());
@@ -595,6 +639,7 @@ pub async fn torrent_add(
         )
         .await
         .map_err(|e| format!("agregar torrent: {e:#}"))?;
+    let reutilizado = matches!(resp, AddTorrentResponse::AlreadyManaged(..));
     let handle = resp
         .into_handle()
         .ok_or_else(|| "el torrent no quedó gestionado".to_string())?;
@@ -609,15 +654,14 @@ pub async fn torrent_add(
     .map_err(|_| "sin metadata del magnet (timeout): torrent muerto o sin peers".to_string())?
     .map_err(|e| format!("inicializar torrent: {e:#}"))?;
 
-    let (file_id, name, size_bytes) = pick_file(&handle)?;
-    eprintln!("[torrent]   elegido #{file_id} {name} ({} MB)", size_bytes / 1_048_576);
+    let (file_id, name, size_bytes, pack) = pick_file(&handle, &pista.unwrap_or_default())?;
+    eprintln!(
+        "[torrent]   elegido #{file_id} {name} ({} MB){}",
+        size_bytes / 1_048_576,
+        if reutilizado { ", torrent ya en la sesión" } else { "" }
+    );
 
-    // Bajar SOLO ese archivo (los torrents de pack traen extras y otros idiomas).
-    let only: HashSet<usize> = HashSet::from([file_id]);
-    tor.session
-        .update_only_files(&handle, &only)
-        .await
-        .map_err(|e| format!("seleccionar archivo: {e:#}"))?;
+    bajar_archivo(&tor.session, &handle, file_id, reutilizado).await?;
 
     let target = (buffer_mb.unwrap_or(BUFFER_MB_DEFAULT) * 1_048_576).min(size_bytes);
     let buffered = Arc::new(AtomicU64::new(0));
@@ -643,6 +687,8 @@ pub async fn torrent_add(
         size_bytes,
         path,
         info_hash: handle.info_hash().as_string(),
+        pack,
+        reutilizado,
     })
 }
 
@@ -787,7 +833,8 @@ fn espacio_libre(_p: &std::path::Path) -> Result<u64, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_video, local_file_size, mime_for, parse_range, stream_url};
+    use super::{local_file_size, mime_for, parse_range, stream_url};
+    use crate::pack::es_video as is_video;
 
     #[test]
     fn range_abierto_llega_al_final() {
@@ -825,6 +872,93 @@ mod tests {
         // Lo desconocido cae en matroska: es el contenedor típico de escena.
         assert_eq!(mime_for("a.mkv"), "video/x-matroska");
         assert_eq!(mime_for("a.raro"), "video/x-matroska");
+    }
+
+    /// Otro archivo del MISMO torrent (el siguiente capítulo de un pack): el
+    /// magnet repetido devuelve el torrent que ya está en la sesión, el archivo
+    /// nuevo se suma al que ya bajaba y se sirve por HTTP. Con Sintel, que trae
+    /// el video y sus subtítulos. Ignorado por defecto: necesita red y peers.
+    ///
+    /// Correr con: cargo test --lib torrent::tests::e2e_pack -- --ignored --nocapture
+    #[test]
+    #[ignore = "necesita red y peers"]
+    fn e2e_pack_mismo_torrent() {
+        const SINTEL: &str = "magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10\
+&dn=Sintel&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce\
+&tr=udp%3A%2F%2Fexplodie.org%3A6969";
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let dir = std::env::temp_dir().join("kutral-torrent-e2e-pack");
+            std::fs::create_dir_all(&dir).unwrap();
+            let session = super::Session::new(dir).await.expect("crear sesión");
+            let port = super::start_stream_server(session.clone()).expect("servidor");
+            let agregar = || async {
+                session
+                    .add_torrent(
+                        super::AddTorrent::from_url(SINTEL),
+                        Some(super::AddTorrentOptions { overwrite: true, ..Default::default() }),
+                    )
+                    .await
+                    .expect("add_torrent")
+            };
+
+            let r = agregar().await;
+            assert!(!matches!(r, super::AddTorrentResponse::AlreadyManaged(..)));
+            let handle = r.into_handle().expect("handle");
+            tokio::time::timeout(
+                std::time::Duration::from_secs(120),
+                handle.wait_until_initialized(),
+            )
+            .await
+            .expect("timeout esperando metadata")
+            .expect("inicializar");
+            let (video, ..) = super::pick_file(&handle, &Default::default()).unwrap();
+            super::bajar_archivo(&session, &handle, video, false).await.unwrap();
+            assert_eq!(handle.only_files(), Some(vec![video]));
+
+            // El "siguiente capítulo": otro archivo, mismo magnet.
+            let otro = handle
+                .with_metadata(|m| {
+                    m.file_infos
+                        .iter()
+                        .enumerate()
+                        .find(|(i, f)| *i != video && f.len > 0)
+                        .map(|(i, f)| (i, f.relative_filename.to_string_lossy().to_string()))
+                })
+                .unwrap()
+                .expect("Sintel trae más de un archivo");
+            let r = agregar().await;
+            assert!(matches!(r, super::AddTorrentResponse::AlreadyManaged(..)));
+            let h2 = r.into_handle().unwrap();
+            assert_eq!(h2.id(), handle.id());
+            super::bajar_archivo(&session, &h2, otro.0, true).await.unwrap();
+            let mut only = h2.only_files().unwrap();
+            only.sort();
+            let mut esperado = vec![video, otro.0];
+            esperado.sort();
+            assert_eq!(only, esperado, "el archivo nuevo se suma al anterior");
+
+            let url = super::stream_url(port, h2.id(), otro.0, &otro.1);
+            println!("otro archivo: {} → {url}", otro.1);
+            let st = tokio::task::spawn_blocking(move || {
+                reqwest::blocking::Client::builder()
+                    .timeout(std::time::Duration::from_secs(180))
+                    .build()
+                    .unwrap()
+                    .get(&url)
+                    .header("Range", "bytes=0-99")
+                    .send()
+                    .expect("GET")
+                    .status()
+                    .as_u16()
+            })
+            .await
+            .unwrap();
+            assert_eq!(st, 206);
+        });
     }
 
     /// Camino completo REAL contra la red: magnet → metadata → selección de
@@ -871,9 +1005,10 @@ mod tests {
             .expect("timeout esperando metadata")
             .expect("inicializar");
 
-            let (file_id, name, len) = super::pick_file(&handle).expect("elegir archivo");
+            let (file_id, name, len, _) =
+                super::pick_file(&handle, &Default::default()).expect("elegir archivo");
             println!("archivo elegido: #{file_id} {name} ({len} bytes)");
-            assert!(super::is_video(&name), "debió elegir el video, eligió {name}");
+            assert!(crate::pack::es_video(&name), "debió elegir el video, eligió {name}");
 
             let url = super::stream_url(port, handle.id(), file_id, &name);
             println!("url: {url}");

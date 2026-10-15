@@ -47,6 +47,10 @@ static LIVE: AtomicBool = AtomicBool::new(false);
 /// Lo que está en pantalla es un trailer: no es una sesión "de verdad", así que
 /// Esc la cierra en vez de dejarla esperando en la pill.
 static TRAILER: AtomicBool = AtomicBool::new(false);
+/// Lo que suena es un capítulo de un pack de temporada: el bar ofrece
+/// "Capítulos" para saltar a otro del mismo torrent. Lo prende el front
+/// después de cada `play()` (que lo apaga).
+static CAPITULOS: AtomicBool = AtomicBool::new(false);
 /// Generación de la sesión en pantalla. La sube cualquier cosa que reemplace
 /// lo que sonaba (play, trailer, IPTV) y con eso invalida al vigía de fin de
 /// archivo de la sesión anterior, que si no seguiría mirando lo nuevo.
@@ -95,6 +99,7 @@ enum BarAction {
     Subs,
     Audio,
     Video,
+    Episodes,
     Sources,
     Exit,
 }
@@ -108,6 +113,7 @@ impl BarAction {
             BarAction::Subs => "Subtítulos",
             BarAction::Audio => "Audio",
             BarAction::Video => "Video",
+            BarAction::Episodes => "Capítulos",
             BarAction::Sources => "Cambiar fuente",
             BarAction::Exit => "Salir",
         }
@@ -161,6 +167,16 @@ impl BarAction {
                 vec![(-44.0, -10.0), (44.0, -10.0), (44.0, 32.0), (-44.0, 32.0)],
                 vec![(-44.0, -32.0), (40.0, -32.0), (44.0, -14.0), (-40.0, -14.0)],
             ],
+            // Lista: tres renglones con su viñeta.
+            BarAction::Episodes => [-24.0, 0.0, 24.0]
+                .iter()
+                .flat_map(|&y| {
+                    [
+                        vec![(-42.0, y - 7.0), (-28.0, y - 7.0), (-28.0, y + 7.0), (-42.0, y + 7.0)],
+                        vec![(-18.0, y - 6.0), (42.0, y - 6.0), (42.0, y + 6.0), (-18.0, y + 6.0)],
+                    ]
+                })
+                .collect(),
             // ⇄ — dos flechas opuestas (mango + punta, sin solaparse entre sí):
             // "esta fuente no me sirve, dame otra".
             BarAction::Sources => vec![
@@ -225,6 +241,9 @@ fn build_bar_actions() -> Vec<BarAction> {
     // Cambiar de fuente solo tiene sentido en una película/capítulo: un canal
     // IPTV o un trailer no salieron de una lista de fuentes.
     if !LIVE.load(Ordering::SeqCst) && !TRAILER.load(Ordering::SeqCst) {
+        if CAPITULOS.load(Ordering::SeqCst) {
+            v.push(BarAction::Episodes);
+        }
         v.push(BarAction::Sources);
     }
     v.push(BarAction::Exit);
@@ -922,6 +941,14 @@ fn activate_focus() {
             let _ = stop();
         }
         Some(BarAction::Video) => open_video_menu(),
+        // La lista sale del front (sabe qué trae el pack y cómo se llama cada
+        // capítulo): la arma y la abre con open_picker.
+        Some(BarAction::Episodes) => {
+            if let Some(app) = APP.get() {
+                use tauri::Emitter;
+                let _ = app.emit("player:capitulos", ());
+            }
+        }
         Some(BarAction::Exit) => {
             let _ = stop();
         }
@@ -1098,10 +1125,10 @@ fn menu_activate() {
     }
 }
 
-/// Abre un picker provisto por el frontend (lista de (label, id)). Al elegir,
-/// se emite "player:menu-pick" con el id. Llamable desde un comando (hilo
-/// worker) → salta al hilo main.
-pub fn open_picker(title: String, items: Vec<(String, String)>) {
+/// Abre un picker provisto por el frontend (lista de (label, id)), con `sel`
+/// enfocado. Al elegir, se emite "player:menu-pick" con el id. Llamable desde
+/// un comando (hilo worker) → salta al hilo main.
+pub fn open_picker(title: String, items: Vec<(String, String)>, sel: usize) {
     if let Some(app) = APP.get() {
         let _ = app.run_on_main_thread(move || {
             let menu_items = items
@@ -1120,11 +1147,12 @@ pub fn open_picker(title: String, items: Vec<(String, String)>) {
             if let Some(mpv) = MPV.get() {
                 let _ = mpv.set_property("pause", true);
             }
+            let sel = sel.min(menu_items.len() - 1);
             MENU.with(|m| {
                 *m.borrow_mut() = Some(Menu {
                     title,
                     items: menu_items,
-                    sel: 0,
+                    sel,
                 })
             });
             draw_menu();
@@ -1795,6 +1823,11 @@ struct SyncActual {
 static SYNC: std::sync::Mutex<Option<SyncActual>> = std::sync::Mutex::new(None);
 
 /// El frontend avisa la identidad del subtítulo que acaba de cargar.
+/// El capítulo en pantalla es parte de un pack: el bar muestra "Capítulos".
+pub fn set_capitulos(on: bool) {
+    CAPITULOS.store(on, Ordering::SeqCst);
+}
+
 pub fn set_sub_key(path: &str, key: &str) {
     crate::sub_sync::set_sub_key(path, key);
 }
@@ -2255,6 +2288,7 @@ pub fn play(
     guardar_sync_actual();
     // Empezar algo nuevo descarta cualquier trailer y su sesión guardada.
     TRAILER.store(false, Ordering::SeqCst);
+    CAPITULOS.store(false, Ordering::SeqCst);
     clear_pending();
     // Una película no hereda la pista de audio externa de un trailer previo.
     let _ = mpv.set_property("audio-files", "");
@@ -2325,6 +2359,7 @@ pub fn play_iptv(playlist_path: &str, start: usize) -> Result<(), String> {
     // teletexto) ni los del menú, que en vivo no está.
     let _ = mpv.set_property("sid", "no");
     TRAILER.store(false, Ordering::SeqCst);
+    CAPITULOS.store(false, Ordering::SeqCst);
     clear_pending();
     let _ = mpv.set_property("playlist-start", start as i64);
     begin_loading(None);

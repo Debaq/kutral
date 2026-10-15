@@ -26,6 +26,10 @@ export type Src = {
   // null = torrent normal. Cambia todo el flujo: no hay pistas que elegir
   // ni subtítulos que bajar, y no necesita debrid para reproducirse.
   hardsub: string | null;
+  // Archivo del capítulo dentro del torrent según el addon (Torrentio,
+  // MediaFusion): en un pack de temporada separa el E05 del resto.
+  file_idx?: number | null;
+  filename?: string | null;
   _count?: number; // cuántas fuentes equivalentes se apilaron en esta
   // Veredicto de la verificación REAL de pistas (ffprobe sobre la URL
   // resuelta): qué español embebido trae el archivo de verdad.

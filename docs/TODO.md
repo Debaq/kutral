@@ -168,43 +168,34 @@ embebido".
 
 ---
 
-# Packs de temporada
+# Packs de temporada — *hecho (octubre 2026)*
 
-## 1. Elegir el capítulo correcto dentro del pack — *chico, es un bug*
+- **Capítulo correcto** (`src-tauri/src/pack.rs`): Torrentio/MediaFusion mandan
+  `fileIdx` y `behaviorHints.filename`; viajan en `Source` hasta `rd_resolver`
+  y `torrent_add` como `Pista`. Orden: nombre del addon → `fileIdx` (salvo que
+  el nombre diga otro capítulo) → capítulo leído del nombre (S01E05, 1x05,
+  Ep 05, Capitulo 5, anime `- 05`) → el más grande solo si NO es un pack. Un
+  pack que no trae el capítulo da error y se prueba otra fuente.
+- **Siguiente capítulo del mismo torrent** (`$lib/pack.ts`, `desdePack` en
+  SourcePicker): RD elige el pack entero si lo tiene cacheado (queda
+  `downloaded` al instante; si no, vuelve a "solo el capítulo") y el
+  siguiente sale de ese mismo torrent de la cuenta, sin `addMagnet` (~1,3 s).
+  Local: el magnet repetido devuelve el torrent de la sesión y el archivo se
+  suma (`bajar_archivo`).
+- **Menú "Capítulos"** en el bar del reproductor (`BarAction::Episodes`,
+  `mpv_capitulos`), con los nombres de TMDb y el actual enfocado. Funciona
+  también con la lista de fuentes cerrada (pill, Esc).
+- Probado en Xvfb contra RD real (Breaking Bad T1: E05 → E06 desde el menú);
+  local con el test `e2e_pack_mismo_torrent`. Sin probar: fin de capítulo →
+  "siguiente" con un pack local de verdad.
 
-Torrentio y MediaFusion mandan `fileIdx` y `behaviorHints.filename` en cada
-stream, pero `StremioStream` (`kodios.rs:262`) no los lee y `Source`
-(`kodios.rs:49`) no tiene dónde guardarlos. Al resolver se elige **el video más
-grande**: `resolve_magnet` en `rd.rs:157` (`max_by_key(bytes)` + `selectFiles`)
-y `pick_file` en `torrent.rs:358`. Con un pack de temporada, pedir el E05 puede
-reproducir otro capítulo.
+## Visto al probar
 
-Trabajo: leer `fileIdx`/`filename`, llevarlos por `Source` hasta `rd_resolve` y
-`torrent_add`, y elegir ese archivo. Sin `fileIdx`, matching por nombre
-(`S01E05`, `1x05`, `E05`, anime `- 05`) antes de caer al más grande.
-
-## 2. El siguiente capítulo usa el mismo torrent — *medio*
-
-Hoy `verSiguienteCapitulo` (`+page.svelte:2171`) cambia temporada/capítulo y
-**busca fuentes desde cero**. Con un pack, el siguiente ya está en el mismo
-torrent.
-
-- RD: `selectFiles` de otro id sobre el mismo torrent. Ojo: `resolve_magnet`
-  hace `addMagnet` cada vez (`rd.rs:146`) y crea un torrent nuevo en RD.
-- Torrent local: `Entry.file_id` es único por torrent (`torrent.rs:624`), y el
-  prebuffer y `stream_url` están atados a él; hace falta `update_only_files` +
-  `stream(file_id)` sobre el mismo handle.
-- Progreso, historial y contexto de sincronía dependen de `season`/`episode` del
-  SourcePicker (`SourcePicker.svelte:481`): hay que actualizarlos a mano.
-
-**Spike primero**: cambiar de archivo en el mismo torrent, en RD y en local.
-
-## 3. Menú de capítulos en el reproductor — *medio*
-
-Con el pack abierto, un menú "Capítulos" para saltar entre ellos: ítem en el bar
-del embed (`BarAction`, `mpv_embed.rs:213`) y en el menú de uosc en Windows,
-usando `mpv_open_picker` + `player:menu-pick` (hoy solo lo usa
-`SubsService.svelte`).
+- `torrents/instantAvailability` de RD responde 403 `disabled_endpoint`: el ⚡
+  "instantáneo" de la lista ya no se marca nunca.
+- En X11 puro (Xvfb) el Esc dentro de un menú del reproductor lo toma el atajo
+  global de la página (`registerBackShortcuts`): cierra la lista de fuentes por
+  debajo y el menú sigue abierto. En Wayland no se vio.
 
 ---
 

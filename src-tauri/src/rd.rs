@@ -6,10 +6,13 @@
 // lo rechaza antes de tiempo, que pasa al vincular la misma cuenta en otro
 // equipo.
 //
-// Flujo resolve: addMagnet → selectFiles(video más grande) → poll hasta
-// "downloaded" (instantáneo si está cacheado) → unrestrict → URL directa.
+// Flujo resolve: addMagnet → selectFiles(el capítulo pedido, o el pack
+// entero) → poll hasta "downloaded" (instantáneo si está cacheado) →
+// unrestrict → URL directa. Ver pack.rs para cómo se elige el archivo.
 
 use serde::{Deserialize, Serialize};
+
+use crate::pack;
 
 const BASE: &str = "https://api.real-debrid.com/rest/1.0";
 const OAUTH: &str = "https://api.real-debrid.com/oauth/v2";
@@ -35,6 +38,9 @@ struct TorrentFile {
     id: u32,
     path: String,
     bytes: u64,
+    /// 1 si se eligió al agregarlo (RD lo manda como número).
+    #[serde(default)]
+    selected: u8,
 }
 
 #[derive(Deserialize)]
@@ -117,33 +123,153 @@ async fn unrestrict(cli: &reqwest::Client, token: &str, link: &str) -> Result<St
         .await
         .map_err(|e| format!("unrestrict red: {e}"))?;
     if !r.status().is_success() {
+        // Mismo bloqueo por DMCA que en addMagnet, solo que RD lo dice recién
+        // al pedir el link (pasa con torrents que ya estaban en la cuenta).
+        if r.status().as_u16() == 451 {
+            return Err("BLOQUEADO_DMCA: RD 451 al desbloquear".into());
+        }
         return Err(format!("unrestrict {}", r.status()));
     }
     let v: Unrestrict = r.json().await.map_err(|e| format!("unrestrict parse: {e}"))?;
     Ok(v.download)
 }
 
-fn is_video(p: &str) -> bool {
-    let l = p.to_lowercase();
-    [".mkv", ".mp4", ".avi", ".mov", ".m4v", ".ts", ".webm"]
-        .iter()
-        .any(|e| l.ends_with(e))
+/// Lo que sale de resolver un magnet: la URL del capítulo y, si el torrent
+/// es un pack de temporada, sus capítulos (ver pack.rs).
+#[derive(Serialize)]
+pub struct Resuelto {
+    pub url: String,
+    pub pack: Vec<pack::ArchivoPack>,
 }
 
-/// Resuelve un magnet a URL directa reproducible. Elige el archivo de video
-/// más grande. Falla si no está cacheado en RD (timeout ~30s).
-async fn resolve_magnet(token: &str, magnet: &str) -> Result<String, String> {
+/// Espera a que RD termine el torrent (instantáneo si está cacheado).
+async fn esperar(
+    cli: &reqwest::Client,
+    token: &str,
+    id: &str,
+    max_s: u64,
+) -> Result<TorrentInfo, String> {
+    let mut info = torrent_info(cli, token, id).await?;
+    let mut waited = 0u64;
+    while info.status != "downloaded" {
+        eprintln!("[rd]   poll status={} ({}s)", info.status, waited);
+        if matches!(
+            info.status.as_str(),
+            "error" | "virus" | "dead" | "magnet_error"
+        ) {
+            return Err(format!("RD torrent falló: {}", info.status));
+        }
+        if waited >= max_s {
+            return Err("RD no cacheado / timeout".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        waited += 1;
+        info = torrent_info(cli, token, id).await?;
+    }
+    Ok(info)
+}
+
+/// Link de RD del archivo `idx` en un torrent ya descargado. Los links van en
+/// el orden de los archivos elegidos (lo mismo hace Torrentio). None si ese
+/// archivo no se eligió al agregarlo.
+fn link_de(info: &TorrentInfo, idx: u32) -> Option<String> {
+    let elegidos: Vec<&TorrentFile> = info.files.iter().filter(|f| f.selected == 1).collect();
+    let pos = elegidos.iter().position(|f| f.id == idx + 1)?;
+    if info.links.len() == 1 && elegidos.len() > 1 {
+        // RD empaquetó todo en un solo archivo comprimido: no sirve.
+        return None;
+    }
+    info.links.get(pos).cloned()
+}
+
+fn archivos(info: &TorrentInfo) -> Vec<pack::Archivo<'_>> {
+    info.files
+        .iter()
+        .map(|f| pack::Archivo { idx: f.id.saturating_sub(1), ruta: &f.path, bytes: f.bytes })
+        .collect()
+}
+
+/// El mismo torrent ya está en la cuenta, terminado y con el archivo pedido:
+/// se desbloquea ese link sin agregar nada. Es lo que hace instantáneo el
+/// siguiente capítulo de un pack. Cualquier tropiezo devuelve None y se sigue
+/// por el camino normal, salvo el bloqueo por DMCA: agregarlo de nuevo daría lo
+/// mismo.
+async fn reusar(
+    cli: &reqwest::Client,
+    token: &str,
+    hash: &str,
+    pista: &pack::Pista,
+) -> Option<Result<Resuelto, String>> {
+    let r = cli
+        .get(format!("{BASE}/torrents?limit=50"))
+        .header("Authorization", bearer(token))
+        .send()
+        .await
+        .ok()?;
+    if !r.status().is_success() {
+        return None;
+    }
+    let lista: Vec<RdTorrentListItem> = r.json().await.ok()?;
+    for t in lista
+        .iter()
+        .filter(|t| t.hash.eq_ignore_ascii_case(hash) && t.status == "downloaded")
+    {
+        let Ok(info) = torrent_info(cli, token, &t.id).await else { continue };
+        let a = archivos(&info);
+        let Ok(idx) = pack::elegir(&a, pista) else { continue };
+        let Some(link) = link_de(&info, idx) else { continue };
+        let pack = pack::listado(&a);
+        drop(a);
+        match unrestrict(cli, token, &link).await {
+            Ok(url) => {
+                eprintln!("[rd]   reusado torrent {} archivo #{idx}", t.id);
+                return Some(Ok(Resuelto { url, pack }));
+            }
+            Err(e) if e.starts_with("BLOQUEADO_DMCA") => {
+                eprintln!("[rd]   reusar {}: {e}", t.id);
+                return Some(Err(e));
+            }
+            Err(e) => eprintln!("[rd]   reusar {}: {e}", t.id),
+        }
+    }
+    None
+}
+
+async fn borrar(cli: &reqwest::Client, token: &str, id: &str) {
+    let _ = cli
+        .delete(format!("{BASE}/torrents/delete/{id}"))
+        .header("Authorization", bearer(token))
+        .send()
+        .await;
+}
+
+/// Si RD tiene el pack entero cacheado, elegir todos los capítulos queda
+/// "downloaded" al instante. Más que esto es que falta alguno.
+const PACK_POLL_S: u64 = 2;
+
+/// Resuelve un magnet a URL directa reproducible del archivo que dice la
+/// pista (ver pack::elegir). Falla si no está cacheado en RD (timeout ~30s).
+///
+/// Con un pack de temporada se eligen TODOS los capítulos: así el siguiente
+/// sale de este mismo torrent (`reusar`) sin agregarlo otra vez. Si RD no los
+/// tiene todos, se vuelve a agregar eligiendo solo el pedido.
+async fn resolve_magnet(token: &str, magnet: &str, pista: &pack::Pista) -> Result<Resuelto, String> {
     let hash = magnet
         .split("btih:")
         .nth(1)
         .map(|s| s.chars().take(40).collect::<String>())
         .unwrap_or_default();
-    eprintln!("[rd] resolve magnet hash={hash}");
+    eprintln!("[rd] resolve magnet hash={hash} pista={pista:?}");
     // Log del magnet completo para verificar a mano que existe / es válido
     // (pegándolo en un cliente torrent o buscando el hash en su tracker).
     eprintln!("[rd]   magnet={magnet}");
     let cli = client()?;
-    let id = match add_magnet(&cli, token, magnet).await {
+    if !hash.is_empty() {
+        if let Some(r) = reusar(&cli, token, &hash, pista).await {
+            return r;
+        }
+    }
+    let mut id = match add_magnet(&cli, token, magnet).await {
         Ok(id) => {
             eprintln!("[rd]   addMagnet OK id={id}");
             id
@@ -154,44 +280,49 @@ async fn resolve_magnet(token: &str, magnet: &str) -> Result<String, String> {
         }
     };
 
-    // Elegir archivo de video más grande
     let info = torrent_info(&cli, token, &id).await?;
     eprintln!("[rd]   files={} status={}", info.files.len(), info.status);
-    let target = info
-        .files
-        .iter()
-        .filter(|f| is_video(&f.path))
-        .max_by_key(|f| f.bytes)
-        .ok_or_else(|| {
-            eprintln!("[rd]   sin archivo de video en torrent");
-            "sin archivo de video".to_string()
-        })?;
-    eprintln!("[rd]   elegido: {} ({} MB)", target.path, target.bytes / 1_048_576);
-    select_files(&cli, token, &id, &target.id.to_string()).await?;
-
-    // Poll hasta "downloaded" (instantáneo si cacheado)
-    let mut info = torrent_info(&cli, token, &id).await?;
-    let mut waited = 0u64;
-    while info.status != "downloaded" {
-        eprintln!("[rd]   poll status={} ({}s)", info.status, waited);
-        if matches!(
-            info.status.as_str(),
-            "error" | "virus" | "dead" | "magnet_error"
-        ) {
-            return Err(format!("RD torrent falló: {}", info.status));
-        }
-        if waited >= POLL_MAX_S {
-            return Err("RD no cacheado / timeout".into());
-        }
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        waited += 2;
-        info = torrent_info(&cli, token, &id).await?;
+    let a = archivos(&info);
+    let idx = pack::elegir(&a, pista).inspect_err(|e| eprintln!("[rd]   {e}"))?;
+    let pack = pack::listado(&a);
+    drop(a);
+    if let Some(f) = info.files.iter().find(|f| f.id == idx + 1) {
+        eprintln!("[rd]   elegido: {} ({} MB)", f.path, f.bytes / 1_048_576);
     }
 
+    if pack.len() >= 2 {
+        let mut ids: Vec<u32> = pack.iter().map(|a| a.idx + 1).collect();
+        if !ids.contains(&(idx + 1)) {
+            ids.push(idx + 1);
+        }
+        let ids = ids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
+        eprintln!("[rd]   pack de {} capítulos: elijo todos", pack.len());
+        select_files(&cli, token, &id, &ids).await?;
+        match esperar(&cli, token, &id, PACK_POLL_S).await {
+            Ok(info) => {
+                let link = link_de(&info, idx).ok_or("sin link del capítulo")?;
+                let url = unrestrict(&cli, token, &link)
+                    .await
+                    .inspect_err(|e| eprintln!("[rd]   {e}"))?;
+                eprintln!("[rd]   unrestrict OK → {url}");
+                return Ok(Resuelto { url, pack });
+            }
+            Err(e) => {
+                eprintln!("[rd]   pack incompleto en RD ({e}): solo el capítulo");
+                borrar(&cli, token, &id).await;
+                id = add_magnet(&cli, token, magnet).await?;
+            }
+        }
+    }
+
+    select_files(&cli, token, &id, &(idx + 1).to_string()).await?;
+    let info = esperar(&cli, token, &id, POLL_MAX_S).await?;
     let link = info.links.first().ok_or("sin link")?.clone();
-    let url = unrestrict(&cli, token, &link).await?;
+    let url = unrestrict(&cli, token, &link)
+                    .await
+                    .inspect_err(|e| eprintln!("[rd]   {e}"))?;
     eprintln!("[rd]   unrestrict OK → {url}");
-    Ok(url)
+    Ok(Resuelto { url, pack })
 }
 
 /// Check batch de instant-availability. Devuelve los hashes (lowercase) que
@@ -357,11 +488,29 @@ where
 
 // ---- Comandos Tauri -----------------------------------------------------
 
-/// Resuelve un magnet → URL directa lista para mpv.
+/// Resuelve un magnet → URL directa lista para mpv (el video más grande).
 #[tauri::command]
 pub async fn rd_resolve(app: tauri::AppHandle, magnet: String) -> Result<String, String> {
     let magnet = magnet.as_str();
-    con_token(&app, |token| async move { resolve_magnet(&token, magnet).await }).await
+    let pista = pack::Pista::default();
+    let pista = &pista;
+    con_token(&app, |token| async move { resolve_magnet(&token, magnet, pista).await })
+        .await
+        .map(|r| r.url)
+}
+
+/// Resuelve el archivo que dice la pista (el capítulo, en un pack) y devuelve
+/// también los capítulos del pack.
+#[tauri::command]
+pub async fn rd_resolver(
+    app: tauri::AppHandle,
+    magnet: String,
+    pista: Option<pack::Pista>,
+) -> Result<Resuelto, String> {
+    let magnet = magnet.as_str();
+    let pista = pista.unwrap_or_default();
+    let pista = &pista;
+    con_token(&app, |token| async move { resolve_magnet(&token, magnet, pista).await }).await
 }
 
 /// Desbloquea un link de hoster (Mega, Streamtape, Voe, Mixdrop, MP4Upload…)
@@ -438,6 +587,10 @@ struct RdTorrentListItem {
     id: String,
     #[serde(default)]
     added: String, // ISO 8601, ej "2026-05-30T18:41:56.000Z"
+    #[serde(default)]
+    hash: String,
+    #[serde(default)]
+    status: String,
 }
 
 /// Días desde epoch (algoritmo de Howard Hinnant, sin deps).

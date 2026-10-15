@@ -220,6 +220,8 @@ pub async fn jkanime_search(titles: &[String], episode: Option<u32>) -> Result<V
             quality: Quality::Unknown,
             rd_cached: None,
             hardsub: Some("lat".into()),
+            file_idx: None,
+            filename: None,
         })
         .collect())
 }

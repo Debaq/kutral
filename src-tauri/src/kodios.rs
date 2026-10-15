@@ -63,6 +63,11 @@ pub struct Source {
     /// depende de las pistas del archivo. El picker lo usa para ordenar según
     /// el idioma de la app y para saltarse la búsqueda de subtítulos externos.
     pub hardsub: Option<String>,
+    /// Archivo del capítulo dentro del torrent, según el addon (Torrentio,
+    /// MediaFusion). En un pack de temporada es lo que separa el E05 del
+    /// resto (ver pack.rs).
+    pub file_idx: Option<u32>,
+    pub filename: Option<String>,
 }
 
 fn http() -> Result<reqwest::Client, String> {
@@ -211,6 +216,11 @@ fn merge_and_sort(all: Vec<Source>) -> Vec<Source> {
                     if e.quality == Quality::Unknown && s.quality != Quality::Unknown {
                         e.quality = s.quality;
                     }
+                    // El capítulo dentro del pack: lo sabe el addon que lo mandó.
+                    if e.file_idx.is_none() && e.filename.is_none() {
+                        e.file_idx = s.file_idx;
+                        e.filename = s.filename.clone();
+                    }
                     // URL pre-resuelta gana (reproducción directa sin addMagnet).
                     if e.url.is_none() && s.url.is_some() {
                         e.url = s.url.clone();
@@ -272,6 +282,16 @@ struct StremioStream {
     /// URL pre-resuelta lista para reproducir.
     #[serde(default)]
     url: Option<String>,
+    #[serde(default, rename = "fileIdx")]
+    file_idx: Option<u32>,
+    #[serde(default, rename = "behaviorHints")]
+    behavior_hints: Option<StremioHints>,
+}
+
+#[derive(serde::Deserialize)]
+struct StremioHints {
+    #[serde(default)]
+    filename: Option<String>,
 }
 
 /// Parser genérico de addon Stremio que devuelve streams con infoHash.
@@ -318,6 +338,8 @@ async fn stremio_search(
             seeders,
             rd_cached: if pre { Some(true) } else { None },
             hardsub: None,
+            file_idx: s.file_idx,
+            filename: s.behavior_hints.and_then(|h| h.filename),
         });
     }
     Ok(out)
@@ -402,6 +424,8 @@ async fn torrentio_kitsu_search(kitsu_id: u64, episode: Option<u32>) -> Result<V
             seeders,
             rd_cached: None,
             hardsub: None,
+            file_idx: s.file_idx,
+            filename: s.behavior_hints.and_then(|h| h.filename),
         });
     }
     Ok(out)
@@ -480,6 +504,8 @@ async fn yts_search(imdb: &str) -> Result<Vec<Source>, String> {
                 seeders: Some(t.seeds),
                 rd_cached: None,
                 hardsub: None,
+                file_idx: None,
+                filename: None,
                 title: name,
             });
         }
@@ -553,6 +579,8 @@ async fn eztv_search(
             seeders: Some(t.seeds),
             rd_cached: None,
             hardsub: None,
+            file_idx: None,
+            filename: None,
             title: t.title,
         });
     }
@@ -608,6 +636,8 @@ async fn animetosho_search(title: &str, episode: Option<u32>) -> Result<Vec<Sour
             seeders: tosho_num(&it["seeders"]).map(|n| n as u32),
             rd_cached: None,
             hardsub: None,
+            file_idx: None,
+            filename: None,
             title: name,
         });
     }
@@ -658,6 +688,8 @@ async fn nyaa_search(title: &str, episode: Option<u32>) -> Result<Vec<Source>, S
             seeders,
             rd_cached: None,
             hardsub: None,
+            file_idx: None,
+            filename: None,
             title,
         });
     }

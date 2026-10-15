@@ -72,6 +72,14 @@
     type OpcionSub,
   } from "$lib/subtitulos";
   import { contextoActual } from "$lib/historial.svelte";
+  import {
+    pistaDe,
+    recordarPack,
+    capituloDelPack,
+    hayPack,
+    type ArchivoPack,
+    type Resuelto,
+  } from "$lib/pack";
 
   // Pista real del contenedor leída de mpv (verdad del archivo).
   type MpvTrack = {
@@ -100,6 +108,7 @@
     retomarSegundos = 0,
     onClose,
     onWeb,
+    onLanzado,
   }: {
     imdbId: string;
     kind: "movie" | "series" | "anime";
@@ -128,6 +137,8 @@
     retomarSegundos?: number;
     onClose: () => void;
     onWeb: () => void;
+    /** Justo antes de entregarle el video a mpv (o a la TV). */
+    onLanzado?: () => void;
   } = $props();
 
   let loading = $state(true);
@@ -151,6 +162,9 @@
   // qué sigue es la página (menú en películas, próximo capítulo en series), así
   // que acá solo hay que no tratarlo como un cierre normal.
   let terminoSolo = false;
+  // Se cerró a propósito el capítulo anterior que seguía en pantalla (ver
+  // desdePack): ese cierre no es "salir".
+  let soltandoVideo = false;
   let mpvPoll: ReturnType<typeof setInterval> | null = null;
 
   // Plan B: descarga local del torrent cuando el debrid lo bloquea (451/DMCA).
@@ -344,6 +358,10 @@
         }
       }
 
+      // Capítulo del pack que venía sonando: sale del mismo torrent, sin
+      // buscar ni elegir de nuevo.
+      if (autoplay && !descargarSolo && !local && (await desdePack())) return;
+
       let srcs: Src[];
       try {
         srcs = await invoke<Src[]>("kodios_search", {
@@ -503,6 +521,7 @@
     const base = desdeSegundos ?? desdeForzado ?? retomarSegundos;
     const desde = base > 5 ? Math.floor(base) - 5 : 0;
     if (desde > 0) dbg(`retomando en ${desde}s`);
+    onLanzado?.();
     if (destinoTv) {
       await lanzarEnTv(url, s, desde);
       return;
@@ -513,6 +532,8 @@
       startSecs: desde > 0 ? desde : null,
       sync: contextoSync(s),
     });
+    // Capítulo de un pack: el bar ofrece saltar a otro del mismo torrent.
+    void invoke("mpv_capitulos", { on: kind !== "movie" && hayPack(clave) }).catch(() => {});
     // El archivo del disco no pasa por la red: no hay cache que vigilar.
     if (!s.local) {
       void iniciarVigilancia({
@@ -536,6 +557,46 @@
     // Niveles 2-3: confirmar audio/subs REALES del archivo y elegir la
     // pista ES; si no existe, bajar subtítulos externos. No bloquea el play.
     void applyPreferredTracks();
+  }
+
+  // El capítulo pedido está en el pack que venía sonando: se abre del mismo
+  // torrent (en RD, el que ya está en la cuenta; en local, el de la sesión).
+  // Si no se puede, sigue la búsqueda normal.
+  async function desdePack(): Promise<boolean> {
+    const cap = capituloDelPack(clave, season ?? null, episode ?? null);
+    if (!cap) return false;
+    const s = cap.src;
+    dbg(`capítulo del pack (${cap.via}): ${s.filename}`);
+    loading = false;
+    try {
+      if (cap.via === "rd" && rdLinked && s.magnet) {
+        resolving = true;
+        resolvingMsg = "Abriendo el capítulo del mismo pack…";
+        const r = await invoke<Resuelto>("rd_resolver", {
+          magnet: s.magnet,
+          pista: pistaDe(s, season ?? null, episode ?? null),
+        });
+        recordarPack(clave, season ?? null, s, "rd", r.pack);
+        await launch(r.url, s);
+        return true;
+      }
+      if (cap.via === "local" && config.torrentLocal && s.magnet) {
+        if (await playViaTorrent(s)) return true;
+      }
+    } catch (e) {
+      dbg(`el pack no dio: ${String(e).slice(0, 80)}`);
+    }
+    resolving = false;
+    torrenting = false;
+    error = "";
+    loading = true;
+    // Saltando de capítulo desde el reproductor, el anterior sigue en
+    // pantalla (pausado) y taparía la búsqueda: se cierra.
+    if (await invoke<boolean>("mpv_running").catch(() => false)) {
+      soltandoVideo = true;
+      await invoke("mpv_stop").catch(() => {});
+    }
+    return false;
   }
 
   // Manda la fuente a la TV en vez de a mpv. Tira un error "TV_…" cuando esta
@@ -902,7 +963,7 @@
     let tvFallas = 0;
     let tvMotivo = "";
     // Mejor fuente que resolvió pero NO trae español: respaldo si ninguna trae.
-    let fallback: { url: string; s: Src } | null = null;
+    let fallback: { url: string; s: Src; archivos: ArchivoPack[] } | null = null;
     // Candidatas a bajar en local: las que el debrid rechazó (el 451 es
     // cumplimiento legal de RD, no falta de seeds, así que suelen bajarse sin
     // problema) y, sin debrid vinculado, todas las que traen magnet.
@@ -928,9 +989,17 @@
       try {
         // URL pre-resuelta (Torrentio+RD, método Kodi) → directo a mpv, sin
         // addMagnet del cliente (evita el 451 de RD). Si no, resuelve el magnet.
-        const url = s.url
-          ? s.url
-          : await invoke<string>("rd_resolve", { magnet: s.magnet });
+        let url = s.url;
+        // Capítulos del torrent si es un pack: el siguiente sale de ahí.
+        let archivos: ArchivoPack[] = [];
+        if (!url) {
+          const r = await invoke<Resuelto>("rd_resolver", {
+            magnet: s.magnet,
+            pista: pistaDe(s, season ?? null, episode ?? null),
+          });
+          url = r.url;
+          archivos = r.pack;
+        }
 
         // Verificación de español real (activable en Configuración).
         // El hardsub no expone pistas ES (está quemado en la imagen): ffprobe
@@ -943,11 +1012,12 @@
           s._es = verdict; // badge en la lista ($state es reactivo profundo)
           if (verdict === "none") {
             sinEs++;
-            if (!fallback) fallback = { url, s };
+            if (!fallback) fallback = { url, s, archivos };
             dbg(`#${i} sin español embebido → siguiente`);
             continue;
           }
         }
+        recordarPack(clave, season ?? null, s, "rd", archivos);
         await launch(url, s);
         return;
       } catch (e) {
@@ -984,6 +1054,7 @@
     if (fallback) {
       dbg(`sin ES embebido en ${sinEs} fuentes → fallback a la mejor`);
       try {
+        recordarPack(clave, season ?? null, fallback.s, "rd", fallback.archivos);
         await launch(fallback.url, fallback.s);
         void mpv(["show-text", "Sin español embebido en las fuentes: usando subtítulos externos", "4000"]);
         return;
@@ -1132,7 +1203,12 @@
       // Sin buffer de arranque: nadie está esperando para ver. El cliente baja
       // igual de forma secuencial, así que si después la abres a mitad de
       // descarga el inicio ya va a estar.
-      const added = await addTorrent(s.magnet, title, config.torrentBufferMb);
+      const added = await addTorrent(
+        s.magnet,
+        title,
+        config.torrentBufferMb,
+        pistaDe(s, season ?? null, episode ?? null),
+      );
       await registrarDescarga({
         clave,
         season,
@@ -1176,8 +1252,16 @@
     torrentId = null;
     torrentMsg = "Buscando peers…";
     const t0 = Date.now();
+    // El torrent ya estaba (otro capítulo del pack): si este falla, se queda.
+    let reutilizado = false;
     try {
-      const added = await addTorrent(s.magnet, title, config.torrentBufferMb);
+      const added = await addTorrent(
+        s.magnet,
+        title,
+        config.torrentBufferMb,
+        pistaDe(s, season ?? null, episode ?? null),
+      );
+      reutilizado = added.reutilizado;
       if (torrentCancel) return false;
       torrentId = added.id;
       // Queda anotado a QUÉ título pertenece este archivo. Se registra ya (con
@@ -1210,6 +1294,7 @@
       desdeTorrent = true;
       // Sigue bajando de fondo mientras se ve: el poll de la cola lo muestra.
       startQueuePoll();
+      recordarPack(clave, season ?? null, s, "local", added.pack);
       await launch(added.stream_url, s);
       notify(
         "warn",
@@ -1230,10 +1315,11 @@
       torrenting = false;
       dbg(`torrent local falló: ${String(e).slice(0, 100)}`);
       error = `Descarga local: ${String(e)}`;
-      // No dejar el torrent muerto ocupando la cola y el disco.
+      // No dejar el torrent muerto ocupando la cola y el disco. Salvo que ya
+      // estuviera: lleva los otros capítulos del pack.
       const id = torrentId;
       torrentId = null;
-      if (id !== null) {
+      if (id !== null && !reutilizado) {
         try {
           await removeTorrent(id, true);
         } catch {
@@ -1435,6 +1521,10 @@
     void listen<boolean>("mpv:state", (e) => {
       if (e.payload === false) {
         stopMpvPoll();
+        if (soltandoVideo) {
+          soltandoVideo = false;
+          return;
+        }
         if (terminoSolo) {
           terminoSolo = false;
           return; // la página ya decidió: menú o siguiente capítulo

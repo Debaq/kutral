@@ -125,6 +125,12 @@ pub mod imp {
         mpv_embed::play(&url, title.as_deref(), start_secs, sync)
     }
 
+    /// Lo que suena es un capítulo de un pack: "Capítulos" en el bar.
+    #[tauri::command]
+    pub fn mpv_capitulos(on: bool) {
+        mpv_embed::set_capitulos(on);
+    }
+
     /// Identidad del subtítulo externo recién cargado (ver mpv_embed::SUB_KEYS).
     #[tauri::command]
     pub fn mpv_sub_key(path: String, key: String) {
@@ -169,10 +175,15 @@ pub mod imp {
     }
 
     #[tauri::command]
-    pub fn mpv_open_picker(title: String, items: Vec<PickerItem>) -> Result<(), String> {
+    pub fn mpv_open_picker(
+        title: String,
+        items: Vec<PickerItem>,
+        sel: Option<usize>,
+    ) -> Result<(), String> {
         mpv_embed::open_picker(
             title,
             items.into_iter().map(|i| (i.label, i.id)).collect(),
+            sel.unwrap_or(0),
         );
         Ok(())
     }

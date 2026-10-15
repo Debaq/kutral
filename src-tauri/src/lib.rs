@@ -16,6 +16,7 @@ mod lan;
 mod net;
 mod omdb;
 mod opensubtitles;
+mod pack;
 mod subs_match;
 mod sub_sync;
 mod sub_autosync;
@@ -711,6 +712,7 @@ pub fn run() {
             cast::cast_soltar,
             lan::cast_red_info,
             rd::rd_resolve,
+            rd::rd_resolver,
             rd::rd_unrestrict,
             rd::rd_instant_available,
             rd::rd_account,
@@ -741,6 +743,7 @@ pub fn run() {
             player::imp::mpv_cache_stats,
             player::imp::mpv_set_cache,
             player::imp::mpv_sub_key,
+            player::imp::mpv_capitulos,
             sub_sync::sub_sync_clear,
             opensubtitles::os_login,
             opensubtitles::os_status,
