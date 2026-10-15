@@ -1,6 +1,8 @@
 # Baja mpv + yt-dlp + uosc a vendor/ (Windows x86_64).
 # Equivalente de fetch.sh para Windows; se corre en la CI antes de tauri build.
 # Los binarios NO se versionan en git (ver vendor/.gitignore).
+# -Embed: además libmpv-2.dll en mpv-dev/ (feature embed-win, en pruebas).
+param([switch]$Embed)
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
@@ -20,6 +22,23 @@ if (-not (Test-Path "mpv.exe")) {
   Get-File $asset.browser_download_url "mpv.7z"
   7z e -y "mpv.7z" "mpv.exe" -o"." | Out-Null
   Remove-Item "mpv.7z"
+}
+
+# --- libmpv (reproductor embebido, feature embed-win) ---
+# build.rs arma mpv.lib desde las exportaciones del DLL; el DLL va al lado
+# del ejecutable.
+if ($Embed -and -not (Test-Path "mpv-dev/libmpv-2.dll")) {
+  Write-Host ">> libmpv"
+  $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/zhongfly/mpv-winbuild/releases/latest" -Headers @{ "User-Agent" = "kutral" }
+  $asset = $rel.assets |
+    Where-Object { $_.name -match "^mpv-dev-x86_64-\d" -and $_.name -match "\.7z$" } |
+    Select-Object -First 1
+  if (-not $asset) { throw "no encontré el build de libmpv para Windows" }
+  Write-Host "  bajando: $($asset.name)"
+  Get-File $asset.browser_download_url "mpv-dev.7z"
+  New-Item -ItemType Directory -Force -Path mpv-dev | Out-Null
+  7z e -y "mpv-dev.7z" "libmpv-2.dll" -o"mpv-dev" | Out-Null
+  Remove-Item "mpv-dev.7z"
 }
 
 # --- yt-dlp (trailers de YouTube: el iframe da error 153 en el webview) ---

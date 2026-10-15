@@ -24,6 +24,8 @@ mod rd;
 mod player;
 #[cfg(target_os = "linux")]
 mod mpv_embed;
+#[cfg(all(windows, feature = "embed-win"))]
+mod mpv_win;
 #[cfg(target_os = "linux")]
 mod reposo;
 #[cfg(windows)]
@@ -602,6 +604,14 @@ pub fn run() {
                     if let Err(e) = mpv_embed::init(app.handle(), &win) {
                         eprintln!("[mpv-embed] init falló: {e}");
                     }
+                }
+            }
+            // Spike del reproductor embebido en Windows (ver mpv_win.rs).
+            #[cfg(all(windows, feature = "embed-win"))]
+            if let Ok(url) = std::env::var("KUTRAL_SPIKE_EMBED") {
+                use tauri::Manager;
+                if let Some(win) = app.get_webview_window("main") {
+                    mpv_win::spike(app.handle(), &win, url);
                 }
             }
             Ok(())

@@ -2942,6 +2942,7 @@ name = "kutral"
 version = "26.10.3"
 dependencies = [
  "argon2",
+ "cc",
  "chacha20poly1305",
  "enigo",
  "gdk",
@@ -2976,6 +2977,7 @@ dependencies = [
  "urlencoding",
  "webkit2gtk",
  "webrtc-vad",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

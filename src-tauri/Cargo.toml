@@ -16,6 +16,14 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# build.rs: lib.exe de MSVC para armar mpv.lib (feature embed-win).
+cc = "1"
+
+[features]
+# Reproductor embebido en Windows (libmpv en una ventana hija de la de Kütral,
+# como el embed de Linux). En pruebas: apagado, el release sigue con mpv.exe
+# de proceso aparte. Necesita vendor/mpv-dev (fetch-windows.ps1).
+embed-win = ["dep:libmpv2_win", "dep:windows-sys"]
 
 [dependencies]
 tauri = { version = "2", features = ["protocol-asset"] }
@@ -75,6 +83,18 @@ libc = "0.2"
 # D-Bus (portal Inhibit) para que el escritorio no se duerma mientras se
 # reproduce. Misma versión que arrastra gtk 0.18.
 gio = "0.18"
+
+# Reproductor embebido en Windows (feature embed-win, ver [features]). Otro
+# nombre para que sea opcional solo acá: en Linux libmpv2 es obligatoria.
+[target.'cfg(windows)'.dependencies]
+libmpv2_win = { package = "libmpv2", version = "6.0.0", default-features = false, optional = true }
+windows-sys = { version = "0.61", optional = true, features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [dev-dependencies]
 # Cliente HTTP bloqueante para el test e2e del servidor de streaming local.
