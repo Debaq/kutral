@@ -596,6 +596,19 @@ pub fn run() {
                             settings.set_media_playback_requires_user_gesture(false);
                             settings.set_enable_webaudio(true);
                         }
+                        // El pellizco del touchpad ampliaba toda la interfaz
+                        // (hasta ~200 %), como en un navegador. Llega por GDK
+                        // y WebKit lo aplica por debajo de la web: ni
+                        // preventDefault ni user-scalable=no lo frenan. Se
+                        // corta acá, antes de que llegue a WebKit.
+                        {
+                            use gtk::prelude::WidgetExt;
+                            wv.connect_event(|_, event| {
+                                webkit2gtk::glib::Propagation::from(
+                                    event.event_type() == gtk::gdk::EventType::TouchpadPinch,
+                                )
+                            });
+                        }
                     });
                 }
             }

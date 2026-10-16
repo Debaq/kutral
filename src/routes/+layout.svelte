@@ -132,6 +132,12 @@
     loadConfig();
     cargarCast();
     initDetection();
+    // Ctrl + rueda no amplía la interfaz (el pellizco del touchpad se corta en
+    // Rust, ver lib.rs: llega por GDK y no pasa por acá).
+    window.addEventListener("wheel", (e) => e.ctrlKey && e.preventDefault(), {
+      passive: false,
+      capture: true,
+    });
     // Historial + favoritos a memoria: el grid pinta ticks sin query por card.
     // Después, con la DB ya migrada, la sincronización con la cuenta (si hay).
     // Después del historial: getDb() abre la DB una sola vez y una segunda
