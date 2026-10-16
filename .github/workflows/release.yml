@@ -257,3 +257,25 @@ jobs:
           prerelease: false
           includeUpdaterJson: true
           args: --target x86_64-pc-windows-msvc
+
+  # En GitHub quedan solo los dos últimos releases: el nuevo y el anterior, por
+  # si hay que volver atrás. Va al final y solo si los tres builds salieron
+  # bien, así un release roto nunca deja sin el último que funcionaba. Los tags
+  # de git no se tocan.
+  limpiar-releases:
+    runs-on: ubuntu-24.04
+    needs: [build-linux, build-flatpak, build-windows]
+    permissions:
+      contents: write
+    steps:
+      - name: Borrar releases viejos (quedan 2)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release list --repo "${{ github.repository }}" -L 200 \
+            --exclude-drafts --json tagName,createdAt \
+            -q 'sort_by(.createdAt) | reverse | .[2:] | .[].tagName' |
+          while read -r tag; do
+            echo "borrando $tag"
+            gh release delete "$tag" --repo "${{ github.repository }}" --yes
+          done
