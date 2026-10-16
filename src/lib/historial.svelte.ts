@@ -450,6 +450,12 @@ export function filaEnCurso(clave: string): FilaHistorial | null {
   );
 }
 
+/** El capítulo de la serie que se vio por última vez (a medias o no). */
+export function ultimoCapitulo(clave: string): FilaHistorial | null {
+  if (!clave) return null;
+  return historial.filas.find((f) => f.imdb_id === clave && f.season >= 0) ?? null;
+}
+
 /** Lo empezado y sin terminar, más reciente primero. */
 export function seguirViendo(limite = 20): FilaHistorial[] {
   return historial.filas

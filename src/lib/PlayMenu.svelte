@@ -52,6 +52,8 @@
     hasLocal = false,
     bajando = false,
     puedeBajar = false,
+    capitulo = null,
+    onCapitulos,
     onContinue,
     onRestart,
     onRealDebrid,
@@ -74,6 +76,10 @@
     bajando?: boolean;
     /** Se puede ofrecer "bajar para después" (descarga local activada). */
     puedeBajar?: boolean;
+    /** Series: el capítulo que reproduce el botón principal ("T1 E5"). */
+    capitulo?: string | null;
+    /** Series: abre el selector de temporada y capítulo. */
+    onCapitulos?: () => void;
     onContinue: () => void;
     onRestart: () => void;
     onRealDebrid: () => void;
@@ -105,6 +111,9 @@
         break;
       case "trailer":
         onTrailer();
+        break;
+      case "caps":
+        onCapitulos?.();
         break;
       // "web" eliminado: era casi igual a "Descubrir" (solo saltaba el check
       // de no-disponible). Si una peli está marcada como no disponible, la
@@ -139,8 +148,10 @@
       a.push({
         id: "rd",
         label: progressLabel
-          ? `${hasLocal ? "📁" : "⚡"}  Continuar (${progressLabel})`
-          : hasLocal
+          ? `${hasLocal ? "📁" : "⚡"}  Continuar ${capitulo ? `${capitulo} ` : ""}(${progressLabel})`
+          : capitulo
+            ? `${hasRd ? "⚡" : "▶"}  Ver ${capitulo}`
+            : hasLocal
             ? "📁  Descubrir desde tu equipo"
             : hasRd
               ? "⚡  Ver con debrid"
@@ -150,6 +161,8 @@
       // El historial guarda el minuto: si hay algo empezado, hace falta la
       // salida para verlo desde el principio otra vez.
       if (progressLabel) a.push({ id: "restart", label: "↻  Empezar de nuevo" });
+      // Serie: cualquier otro capítulo, a pantalla completa.
+      if (onCapitulos) a.push({ id: "caps", label: "📺  Elegir capítulo" });
       a.push({ id: "research", label: "🔄  Rebuscar fuentes" });
       // Bajarla ahora para verla después. No aparece si ya está en el disco ni
       // si ya se está bajando: en esos dos casos no hay nada que pedir.

@@ -8,7 +8,3 @@ export function autofocusFirst(node: HTMLElement) {
   }, 30);
   return {};
 }
-
-export function seasonLabel(n: number): string {
-  return n === 0 ? "Especiales" : `Temporada ${n}`;
-}

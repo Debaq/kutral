@@ -43,6 +43,7 @@
     kind = "series",
     originalTitle = null,
     kitsuId = null,
+    inicio = null,
     onPick,
     onWeb,
     onClose,
@@ -66,6 +67,8 @@
     kind?: Kind;
     originalTitle?: string | null;
     kitsuId?: number | null;
+    /** Dónde arrancar: el capítulo que sigue según el historial. */
+    inicio?: { season: number; episode: number } | null;
     onPick: (season: number, episode: number, ep?: { name: string; still_path: string | null }) => void;
     onWeb: () => void;
     onClose: () => void;
@@ -274,8 +277,22 @@
   }
 
   // Carga inicial de la primera temporada.
-  onMount(() => {
-    if (seasons[0]) void loadEpisodes(seasons[0].season_number);
+  onMount(async () => {
+    // Parado en el capítulo que sigue, no siempre en T1 E1: en una serie
+    // larga, bajar hasta la temporada 4 era la mitad del trámite.
+    const i = inicio ? seasons.findIndex((x) => x.season_number === inicio.season) : -1;
+    if (i < 0) {
+      if (seasons[0]) void loadEpisodes(seasons[0].season_number);
+      return;
+    }
+    seasonIdx = i;
+    await loadEpisodes(seasons[i].season_number);
+    const j = episodes.findIndex((e) => e.episode_number === inicio!.episode);
+    if (j >= 0) {
+      pane = "episodes";
+      epIdx = j;
+      setTimeout(scrollFocused, 50);
+    }
   });
 </script>
 

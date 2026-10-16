@@ -1,9 +1,9 @@
 <script lang="ts">
   // Panel de detalle del título elegido en el catálogo: datos, historial,
-  // acciones (Descubrir / trailer), temporadas, reparto y escenas.
+  // acciones (Descubrir / trailer), reparto y escenas. Las temporadas y los
+  // capítulos se eligen en la ficha de reproducción, como en una película.
   import { IMG, img, art, onImgError } from "$lib/imagenes.svelte";
   import { borrarProgreso, type FilaHistorial, type EstadoMedio } from "$lib/historial.svelte";
-  import { seasonLabel } from "$lib/inicio/util";
   import Recomendar from "$lib/inicio/Recomendar.svelte";
   import GuardarEnLista from "$lib/inicio/GuardarEnLista.svelte";
   import type { Detail } from "$lib/tipos";
@@ -19,12 +19,10 @@
     local,
     bajando,
     enCola,
-    temporadaAbierta,
     onFavorito,
     onVisto,
     onDescubrir,
     onTrailer,
-    onTemporada,
     onPersona,
     onEscenas,
   }: {
@@ -38,12 +36,10 @@
     local: boolean;
     bajando: boolean;
     enCola: boolean;
-    temporadaAbierta: number | null;
     onFavorito: () => void;
     onVisto: (visto: boolean) => void;
     onDescubrir: () => void;
     onTrailer: () => void;
-    onTemporada: (n: number) => void;
     onPersona: (id: number) => void;
     onEscenas: (imagenes: string[], idx: number) => void;
   } = $props();
@@ -170,24 +166,6 @@
           ⚠ Intentar de todas formas
         </button>
       {/if}
-    </div>
-  {/if}
-  {#if titulo.media_type === "tv" && titulo.seasons && titulo.seasons.length}
-    <div class="people-row seasons-row">
-      <h4 class="people-title">Temporadas</h4>
-      <div class="season-list">
-        {#each titulo.seasons as s (s.season_number)}
-          <button
-            data-nav
-            class="season-item"
-            class:active={temporadaAbierta === s.season_number}
-            onclick={() => onTemporada(s.season_number)}
-          >
-            <span class="season-num">{seasonLabel(s.season_number)}</span>
-            <span class="season-count">{s.episode_count} cap.</span>
-          </button>
-        {/each}
-      </div>
     </div>
   {/if}
   {#if titulo.directors.length}
@@ -441,36 +419,4 @@
     font-size: 12px;
     color: #9a9aa4;
   }
-  .season-list {
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-  }
-  .season-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    background: rgba(20, 20, 28, 0.6);
-    border: 2px solid rgba(255, 255, 255, 0.1);
-    border-radius: 10px;
-    padding: 10px 14px;
-    cursor: pointer;
-    color: #e6e6ec;
-    text-align: left;
-  }
-  .season-item:focus-visible,
-  .season-item:hover {
-    outline: none;
-    border-color: #f3a951;
-    background: rgba(243, 169, 81, 0.16);
-    color: #fff;
-  }
-  .season-item.active {
-    border-color: #f3a951;
-    background: rgba(243, 169, 81, 0.22);
-    color: #fff;
-  }
-  .season-num { font-size: 14px; font-weight: 600; }
-  .season-count { font-size: 12px; color: #9a9aa4; }
 </style>

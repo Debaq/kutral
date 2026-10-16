@@ -40,7 +40,7 @@
     type TrailerPick,
   } from "$lib/trailers";
   import { sugerenciasPara, type SugerenciaFin, type SiguienteFin } from "$lib/sugerenciasFin";
-  import { autofocusFirst, seasonLabel } from "$lib/inicio/util";
+  import { autofocusFirst } from "$lib/inicio/util";
   import FichaPersona from "$lib/inicio/FichaPersona.svelte";
   import Carrusel from "$lib/inicio/Carrusel.svelte";
   import FichaTitulo from "$lib/inicio/FichaTitulo.svelte";
@@ -71,6 +71,7 @@
     estadoEpisodio,
     filaPelicula,
     filaEnCurso,
+    ultimoCapitulo,
     segundosParaRetomar,
     guardarProgreso,
     borrarProgreso,
@@ -132,7 +133,10 @@
   // Despacha el cierre correcto según el modo actual al momento de presionar Esc/Backspace.
   // Evita el bug donde Esc en playmenu llamaba a stopDiscover (que no-op) y dejaba la vista colgada.
   function dispatchBack() {
-    if (mode === "playmenu" || mode === "episodes" || mode === "sources" || mode === "fin") {
+    // Del selector de capítulos se vuelve a la ficha, de donde se abrió.
+    if (mode === "episodes") {
+      mode = "playmenu";
+    } else if (mode === "playmenu" || mode === "sources" || mode === "fin") {
       closeSources();
     } else if (mode === "discover" || mode === "trailer" || mode === "unavailable") {
       stopDiscover();
@@ -376,11 +380,11 @@
   }
 
   // El contenedor del grid renace con scrollTop 0 cada vez que <main> deja
-  // paso al player, al menú de fuentes o al listado de capítulos. Restaurarlo
-  // acá — cuando el elemento aparece — cubre TODOS los caminos de vuelta de
-  // una vez. Hacerlo en cada cierre se olvidaba de la mitad: closeSources y
-  // closeSeasonView mandan el foco al panel de info, nunca llaman a
-  // volverAlGrid, y el catálogo aparecía rebobinado al principio.
+  // paso al player o al menú de fuentes. Restaurarlo acá — cuando el
+  // elemento aparece — cubre TODOS los caminos de vuelta de una vez. Hacerlo
+  // en cada cierre se olvidaba de la mitad: closeSources manda el foco al
+  // panel de info, nunca llama a volverAlGrid, y el catálogo aparecía
+  // rebobinado al principio.
   $effect(() => {
     const el = gridWrapEl;
     if (!el) return;
@@ -1546,9 +1550,7 @@
           ? await invoke<Detail>("anilist_detail", { id: it.id, apiKey })
           : await invoke<Detail>("tmdb_detail", { mediaType: tabToMediaType(tab), id: it.id, apiKey });
         selected = d;
-        // Nuevo título → resetear vista de capítulos y episodio elegido.
-        seriesSeason = null;
-        seriesEpisodes = [];
+        // Nuevo título → resetear el capítulo elegido.
         sourcesSeason = null;
         sourcesEpisode = null;
         return d;
@@ -1583,16 +1585,8 @@
     }
     const d = await pick(it);
     if (!d) return;
-    // Series con temporadas: drill-in in-place → enfocar la lista de
-    // temporadas del panel derecho (el grid mostrará los capítulos).
-    if (d.media_type === "tv" && d.seasons && d.seasons.length) {
-      setTimeout(() => {
-        document
-          .querySelector<HTMLElement>('[data-section="info"] .season-item')
-          ?.focus();
-      }, 60);
-      return;
-    }
+    // Series y anime igual que una película: la ficha de reproducción. El
+    // capítulo se elige desde ahí (Continuar o Elegir capítulo).
     if (d.imdb_id || d.kitsu_id) goDescubrir();
   }
 
@@ -1751,94 +1745,12 @@
       : segundosParaRetomar(claveSel, sourcesSeason ?? -1, sourcesEpisode ?? -1),
   );
 
-  // --- Navegación in-place de series: temporada elegida en el panel derecho →
-  // el grid de carátulas muestra los capítulos de esa temporada. ---
-  // null = catálogo normal; nº = mostrando capítulos de esa temporada.
-  let seriesSeason = $state<number | null>(null);
-  let seriesEpisodes = $state<EpisodeMini[]>([]);
-  let episodesLoading = $state(false);
-  let episodesError = $state("");
-  // Cache por `${tmdbId}:${season}` para no rebajar episodios al volver.
-  const seasonEpCache = new Map<string, EpisodeMini[]>();
 
-  // Abre una temporada: carga capítulos (cacheado) y el grid los muestra.
-  async function openSeason(seasonNumber: number) {
-    if (!selected) return;
-    seriesSeason = seasonNumber;
-    episodesError = "";
-    const key = `${selected.id}:${seasonNumber}`;
-    if (seasonEpCache.has(key)) {
-      seriesEpisodes = seasonEpCache.get(key)!;
-      return;
-    }
-    episodesLoading = true;
-    seriesEpisodes = [];
-    try {
-      const eps = selected.is_anime
-        ? await invoke<EpisodeMini[]>("anizip_episodes", { anilistId: selected.id })
-        : await invoke<EpisodeMini[]>("tmdb_season", {
-            id: selected.id,
-            seasonNumber,
-            apiKey,
-          });
-      seasonEpCache.set(key, eps);
-      seriesEpisodes = eps;
-    } catch (e) {
-      episodesError = String(e);
-      seriesEpisodes = [];
-    } finally {
-      episodesLoading = false;
-    }
-  }
-
-  // Cambia de temporada sin salir del listado de capítulos ([ ] o RePág/AvPág
-  // en teclado). Con el grid abierto la lista de temporadas
-  // queda al fondo del panel de info, casi siempre fuera de pantalla, así que
-  // este atajo es la vía corta.
-  function cambiarTemporada(d: number) {
-    const ss = selected?.seasons;
-    if (!ss || ss.length < 2 || seriesSeason == null) return;
-    const i = ss.findIndex((x) => x.season_number === seriesSeason);
-    if (i < 0) return;
-    const prox = ss[(i + d + ss.length) % ss.length];
-    void openSeason(prox.season_number);
-    // El foco vive en el grid: dejarlo en el primer capítulo de la temporada nueva.
-    setTimeout(() => {
-      document
-        .querySelector<HTMLElement>('[data-section="gallery"] [data-nav]:not([disabled])')
-        ?.focus();
-    }, 60);
-  }
-
-  // Sin capítulos abiertos, [ ] rotan la pestaña del catálogo, igual que en
-  // /historial.
+  // [ ] rotan la pestaña del catálogo, igual que en /historial.
   function ciclarTab(d: number) {
     const orden: Tab[] = ["movie", "tv", "anime"];
     const i = orden.indexOf(tab);
     switchTab(orden[(i + d + orden.length) % orden.length]);
-  }
-
-  // Vuelve del listado de capítulos al catálogo normal.
-  function closeSeasonView() {
-    seriesSeason = null;
-    seriesEpisodes = [];
-    episodesError = "";
-    sourcesSeason = null;
-    sourcesEpisode = null;
-    setTimeout(() => {
-      document
-        .querySelector<HTMLElement>('[data-section="info"] .season-item')
-        ?.focus();
-    }, 30);
-  }
-
-  // Elige un capítulo → abre el menú de reproducción apuntando a ese episodio.
-  function chooseEpisode(ep: EpisodeMini) {
-    if (seriesSeason == null) return;
-    sourcesSeason = seriesSeason;
-    sourcesEpisode = ep.episode_number;
-    setContexto(metaDe(seriesSeason, ep.episode_number, ep));
-    goDescubrir();
   }
 
   // Tipo para el scraper: movie / anime (tab) / series.
@@ -1847,9 +1759,80 @@
     return tab === "anime" ? "anime" : "series";
   }
 
+  // Series y anime: el capítulo que reproduce el botón principal de la ficha,
+  // como "Continuar" en una película. El último que se vio si quedó a medias,
+  // el que sigue si se terminó, o el primero si nunca se vio. Para otro está
+  // "Elegir capítulo".
+  type CapituloSigue = {
+    season: number;
+    episode: number;
+    nombre: string | null;
+    fila: FilaHistorial | null;
+  };
+  let capituloSigue = $state<CapituloSigue | null>(null);
+
+  async function prepararCapitulo() {
+    capituloSigue = null;
+    const d = selected;
+    const clave = claveSel;
+    if (!d || d.media_type === "movie" || !clave) return;
+    let cap: CapituloSigue | null = null;
+    if (sourcesSeason != null && sourcesEpisode != null) {
+      // Elegido antes de abrir la ficha (viene del historial).
+      const fila = estadoEpisodio(clave, sourcesSeason, sourcesEpisode);
+      cap = { season: sourcesSeason, episode: sourcesEpisode, nombre: fila?.episode_title ?? null, fila };
+    } else {
+      const u = ultimoCapitulo(clave);
+      if (u && u.completed !== 1) {
+        cap = { season: u.season, episode: u.episode, nombre: u.episode_title, fila: u };
+      } else if (u) {
+        const sig = await siguienteEpisodio(u.season, u.episode);
+        if (sig) cap = { season: sig.season, episode: sig.episode, nombre: sig.ep?.name ?? null, fila: null };
+      } else {
+        const t =
+          (d.seasons ?? [])
+            .filter((x) => x.season_number > 0 && x.episode_count > 0)
+            .sort((a, b) => a.season_number - b.season_number)[0] ?? d.seasons?.[0];
+        if (t) cap = { season: t.season_number, episode: 1, nombre: null, fila: null };
+      }
+    }
+    if (selected?.id === d.id) capituloSigue = cap;
+  }
+
+  function etiquetaCapitulo(c: CapituloSigue | null): string | null {
+    if (!c) return null;
+    return selected?.is_anime ? `Cap. ${c.episode}` : `T${c.season} E${c.episode}`;
+  }
+
+  // Lo que reproduce el botón principal en una serie: el capítulo de
+  // capituloSigue, salvo que ya haya uno elegido.
+  function fijarCapitulo() {
+    if (!selected || selected.media_type === "movie") return;
+    if (sourcesSeason != null && sourcesEpisode != null) return;
+    const c = capituloSigue;
+    if (!c) return;
+    sourcesSeason = c.season;
+    sourcesEpisode = c.episode;
+    const ep = c.nombre
+      ? ({ episode_number: c.episode, name: c.nombre, still_path: c.fila?.still_path ?? null } as EpisodeMini)
+      : null;
+    setContexto(metaDe(c.season, c.episode, ep));
+  }
+
+  // "Elegir capítulo": el selector a pantalla completa, parado en el que sigue.
+  function menuCapitulos() {
+    sourcesDescargar = false;
+    sourcesAutoplay = true;
+    empezarDeCero = false;
+    sourcesSeason = null;
+    sourcesEpisode = null;
+    mode = "episodes";
+  }
+
   // Etiqueta de progreso para el menú ("45%" / "12m 3s" / null si no hay).
   function progressLabelFor(): string | null {
-    const p = progressForSelected;
+    const p =
+      selected && selected.media_type !== "movie" ? (capituloSigue?.fila ?? null) : progressForSelected;
     if (!p || p.completed === 1 || p.watched_seconds <= 5) return null;
     if (p.runtime_seconds && p.runtime_seconds > 0) {
       return Math.round((p.watched_seconds / p.runtime_seconds) * 100) + "%";
@@ -1869,6 +1852,7 @@
     mode = "playmenu";
     setFs(true);
     void prefetchMenuExtras();
+    void prepararCapitulo();
     // Atajos OS-level para asegurar que Esc/Backspace cierren incluso si el
     // foco quedó atrapado en un iframe/embed.
     void registerBackShortcuts(false);
@@ -1993,6 +1977,7 @@
       void restartDiscover();
       return;
     }
+    fijarCapitulo();
     openDebrid(true, true);
   }
   // Abre la ruta debrid. Películas → lista directa. Series/anime → elegir
@@ -2015,8 +2000,9 @@
       mode = "episodes";
     }
   }
-  function menuRealDebrid() { openDebrid(true); }  // auto mejor
-  function menuResearch() { openDebrid(false); }   // elegir
+  // En series, el capítulo de la ficha (fijarCapitulo); sin él, el selector.
+  function menuRealDebrid() { fijarCapitulo(); openDebrid(true); }  // auto mejor
+  function menuResearch() { fijarCapitulo(); openDebrid(false); }   // elegir
   // "Bajar para después": la misma lista de fuentes, pero al elegir encola en
   // vez de reproducir. Con sourceSelect en automático ni se muestra: agarra la
   // mejor que quepa en el tope y vuelve.
@@ -2342,7 +2328,9 @@
     return null;
   }
 
-  // Episodios de una temporada, con el mismo cache que usa el grid.
+  // Episodios de una temporada (cacheados: el menú Capítulos y la pantalla de
+  // fin los piden seguido).
+  const seasonEpCache = new Map<string, EpisodeMini[]>();
   async function cargarEpisodios(seasonNumber: number): Promise<EpisodeMini[]> {
     if (!selected) return [];
     const key = `${selected.id}:${seasonNumber}`;
@@ -2508,20 +2496,6 @@
       const sameSec = all.filter((el) => seccionDe(el) === curSection);
       best = mejor(cur, sameSec, dir);
     }
-    // Borde izquierdo del grid de capítulos: salir vuelve SIEMPRE a la
-    // temporada abierta, no a lo que quede más cerca (que era el botón de
-    // Trailer, lo único que hay arriba del listado en una serie). Va después
-    // del pass 1 para no romper el ← que recorre los capítulos.
-    if (!best && seriesSeason != null && curSection === "gallery" && dir === "left") {
-      const activa =
-        document.querySelector<HTMLElement>('[data-section="info"] .season-item.active') ??
-        document.querySelector<HTMLElement>('[data-section="info"] .season-item');
-      if (activa) {
-        activa.focus();
-        activa.scrollIntoView({ block: "center", behavior: "smooth" });
-        return;
-      }
-    }
     // Pass 2: cross-section solo si la sección lo permite en esa dirección
     if (!best) {
       // info SOLO puede salir lateralmente; vertical queda cautivo
@@ -2574,13 +2548,6 @@
     }
     if (sortOpen && e.key === "Escape") { sortOpen = false; e.preventDefault(); return; }
 
-    // Vista de capítulos abierta: Esc/Backspace vuelve al catálogo.
-    if (seriesSeason != null && !inInput && (e.key === "Escape" || e.key === "Backspace")) {
-      e.preventDefault();
-      closeSeasonView();
-      return;
-    }
-
     if (inInput) {
       // Sliders (brillo, volumen de la barra): las cuatro flechas son del
       // control, no de la navegación. Robárselas dejaba el popover abierto y
@@ -2629,12 +2596,12 @@
       case "[":
       case "PageUp":
         e.preventDefault();
-        if (seriesSeason != null) cambiarTemporada(-1); else ciclarTab(-1);
+        ciclarTab(-1);
         break;
       case "]":
       case "PageDown":
         e.preventDefault();
-        if (seriesSeason != null) cambiarTemporada(1); else ciclarTab(1);
+        ciclarTab(1);
         break;
     }
   }
@@ -2710,6 +2677,8 @@
     hasLocal={localSel && selected.media_type !== "tv"}
     bajando={bajandoSel || enColaSel}
     puedeBajar={config.torrentLocal && selected.media_type === "movie"}
+    capitulo={etiquetaCapitulo(capituloSigue)}
+    onCapitulos={selected.media_type !== "movie" ? menuCapitulos : undefined}
     onContinue={menuContinue}
     onRestart={menuRestart}
     onRealDebrid={menuRealDebrid}
@@ -2733,9 +2702,10 @@
     kind={currentKind()}
     originalTitle={selected.original_title ?? null}
     kitsuId={selected.kitsu_id ?? null}
+    inicio={capituloSigue}
     onPick={onPickEpisode}
     onWeb={menuWeb}
-    onClose={closeSources}
+    onClose={() => (mode = "playmenu")}
   />
 {:else if mode === "fin"}
   <PostCreditos
@@ -2799,12 +2769,18 @@
           local={localSel}
           bajando={bajandoSel}
           enCola={enColaSel}
-          temporadaAbierta={seriesSeason}
           onFavorito={() => void alternarFavorito(metaDe()!)}
           onVisto={(v) => void marcarVisto(metaDe()!, v)}
-          onDescubrir={goDescubrir}
+          onDescubrir={() => {
+            // Entrar de nuevo a la ficha: el capítulo lo vuelve a decidir el
+            // historial, no el último que se abrió.
+            if (selected?.media_type !== "movie") {
+              sourcesSeason = null;
+              sourcesEpisode = null;
+            }
+            goDescubrir();
+          }}
           onTrailer={watchTrailer}
-          onTemporada={openSeason}
           onPersona={openPerson}
           onEscenas={openCarousel}
         />
@@ -2822,64 +2798,6 @@
     </aside>
 
     <section class="gallery">
-      {#if seriesSeason != null}
-        <header class="ep-head-bar" data-section="filters">
-          <button data-nav class="ep-back-inline" onclick={closeSeasonView}>← Volver</button>
-          <span class="ep-crumb">
-            {selected?.title} · {seasonLabel(seriesSeason)}
-          </span>
-        </header>
-        {#if episodesError}<p class="err">{episodesError}</p>{/if}
-        {#if episodesLoading}
-          <div class="empty">Cargando capítulos…</div>
-        {:else}
-          <div class="grid-wrap">
-            <div class="grid" data-section="gallery">
-              {#each seriesEpisodes as ep (ep.episode_number)}
-                {@const fila = seriesSeason != null ? estadoEpisodio(claveSel, seriesSeason, ep.episode_number) : null}
-                {@const epPct = fila
-                  ? Math.round(
-                      (fila.progress_real ??
-                        (fila.runtime_seconds ? fila.watched_seconds / fila.runtime_seconds : 0)) * 100,
-                    )
-                  : 0}
-                <button
-                  data-nav
-                  class="card ep-card"
-                  class:ep-visto={fila?.completed === 1}
-                  onclick={() => chooseEpisode(ep)}
-                  title={ep.name}
-                >
-                  {#if ep.still_path}
-                    <img src={art(ep.still_path, "w300", 300)} alt={ep.name} loading="lazy" onerror={onImgError} />
-                  {:else if selected?.poster_path}
-                    <!-- Sin captura del capítulo: la portada de la serie antes
-                         que un cuadro gris con el número. -->
-                    <img
-                      class="ep-fallback"
-                      src={art(selected.poster_path, "w300", 300)}
-                      alt={ep.name}
-                      loading="lazy"
-                      onerror={onImgError}
-                    />
-                    <span class="ep-num">E{ep.episode_number}</span>
-                  {:else}
-                    <div class="no-poster ep-noimg">E{ep.episode_number}</div>
-                  {/if}
-                  {#if fila?.completed === 1}
-                    <span class="card-tick" title="Ya lo viste">✓</span>
-                  {:else if fila && epPct > 0}
-                    <span class="card-barra"><span class="card-barra-fill" style:width="{Math.max(3, epPct)}%"></span></span>
-                  {/if}
-                </button>
-              {/each}
-              {#if !seriesEpisodes.length}
-                <div class="empty">Sin capítulos</div>
-              {/if}
-            </div>
-          </div>
-        {/if}
-      {:else}
       <header data-section="filters">
         {#if webRemoteUrl}
           <div class="qr-col">
@@ -3210,7 +3128,6 @@
             </div>
           {/if}
         </div>
-      {/if}
       {/if}
     </section>
   </main>
@@ -3781,10 +3698,6 @@
     z-index: 3;
     white-space: nowrap;
   }
-  /* Fila de acciones de historial del panel de info. */
-  .ep-card.ep-visto img {
-    opacity: 0.45;
-  }
   /* --- Marcas de historial en la tarjeta -------------------------------
      Tick verde = terminado. Píldora + barra naranja = a medias. La estrella
      de favorito va abajo a la izquierda porque arriba viven los premios. */
@@ -3901,55 +3814,6 @@
   .card img, .no-poster { width: 100%; aspect-ratio: 2/3; object-fit: cover; background: #222; }
   .no-poster { display: flex; align-items: center; justify-content: center; color: #555; font-size: 13px; }
 
-  /* Capítulos: thumbnail apaisado 16/9 en vez del poster 2/3. */
-  .ep-card img, .ep-card .ep-noimg { aspect-ratio: 16/9; }
-  /* Sin captura propia usamos la portada, recortada al mismo 16/9 y algo
-     apagada para que no compita con los capítulos que sí tienen imagen. El
-     número va encima, que si no todos los capítulos se ven idénticos. */
-  .ep-card .ep-fallback { object-position: center 30%; filter: brightness(0.6); }
-  .ep-card .ep-num {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 20px;
-    font-weight: 800;
-    color: #fff;
-    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.9);
-    pointer-events: none;
-  }
-
-  /* Barra de encabezado del listado de capítulos (back + breadcrumb). */
-  .ep-head-bar {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-  }
-  .ep-back-inline {
-    background: rgba(20, 20, 28, 0.6);
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    color: #d8d8e0;
-    border-radius: 8px;
-    padding: 8px 14px;
-    cursor: pointer;
-    font-size: 13px;
-  }
-  .ep-back-inline:focus-visible {
-    outline: none;
-    border-color: #f3a951;
-    background: rgba(243, 169, 81, 0.16);
-  }
-  .ep-crumb {
-    font-size: 15px;
-    font-weight: 600;
-    color: #e6e6ec;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  /* Lista vertical de temporadas en el panel derecho. */
 
   /* PLAY mode */
 
