@@ -18,7 +18,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::net::TcpListener;
 use std::num::NonZeroU32;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -105,6 +105,9 @@ async fn init(app: &tauri::AppHandle, custom: Option<&str>) -> Result<Arc<Tor>, 
 
     // Sesión persistida: la cola de descargas sobrevive a reiniciar la app.
     let state_dir = app.path().app_data_dir().ok().map(|p| p.join("torrent-session"));
+    // Se mira ANTES de levantar la sesión: al restaurar, librqbit recrea el
+    // archivo vacío y ya no se distingue de una descarga recién empezada.
+    let borrados = state_dir.as_deref().map(borrados_a_mano).unwrap_or_default();
     let opts = SessionOptions {
         persistence: Some(SessionPersistenceConfig::Json { folder: state_dir }),
         fastresume: true,
@@ -117,6 +120,7 @@ async fn init(app: &tauri::AppHandle, custom: Option<&str>) -> Result<Arc<Tor>, 
     let session = Session::new_with_opts(dir.clone(), opts)
         .await
         .map_err(|e| format!("sesión torrent: {e:#}"))?;
+    olvidar_borrados(&session, borrados).await;
 
     let port = start_stream_server(session.clone())?;
     eprintln!("[torrent] sesión lista, stream en 127.0.0.1:{port}, destino {}", dir.display());
@@ -126,6 +130,108 @@ async fn init(app: &tauri::AppHandle, custom: Option<&str>) -> Result<Arc<Tor>, 
         port,
         entries: Mutex::new(HashMap::new()),
     }))
+}
+
+// ---- Archivos borrados a mano ---------------------------------------------
+//
+// librqbit restaura la cola guardada sin preguntar: si el usuario borró la
+// película del disco, la recrea vacía y la baja entera otra vez. Borrar el
+// archivo es la forma más clara de decir "no la quiero", así que esos torrents
+// se sacan de la sesión.
+
+/// Lo que se lee de `session.json` (formato de librqbit; el resto se ignora).
+#[derive(serde::Deserialize)]
+struct SesionGuardada {
+    #[serde(default)]
+    torrents: HashMap<String, TorrentGuardado>,
+}
+
+#[derive(serde::Deserialize)]
+struct TorrentGuardado {
+    info_hash: String,
+    output_folder: PathBuf,
+    #[serde(default)]
+    only_files: Option<Vec<usize>>,
+}
+
+struct Borrado {
+    info_hash: librqbit::dht::Id20,
+    carpeta: PathBuf,
+    /// Archivos elegidos del torrent; ninguno estaba en disco.
+    rutas: Vec<PathBuf>,
+}
+
+/// Torrents guardados que ya habían bajado algo y cuyos archivos no están.
+fn borrados_a_mano(state_dir: &Path) -> Vec<Borrado> {
+    let Ok(json) = std::fs::read(state_dir.join("session.json")) else {
+        return Vec::new();
+    };
+    let Ok(sesion) = serde_json::from_slice::<SesionGuardada>(&json) else {
+        return Vec::new();
+    };
+    sesion
+        .torrents
+        .into_values()
+        .filter_map(|t| {
+            // Sin la carpeta (disco desmontado, carpeta cambiada) no hay forma
+            // de saber si se borró: mejor no tocar nada.
+            if !t.output_folder.is_dir() {
+                return None;
+            }
+            let hash = t.info_hash.to_lowercase();
+            // Sin piezas anotadas no se bajó nada: que falte el archivo es normal.
+            let bitv = std::fs::read(state_dir.join(format!("{hash}.bitv"))).ok()?;
+            if bitv.iter().all(|b| *b == 0) {
+                return None;
+            }
+            let bytes = std::fs::read(state_dir.join(format!("{hash}.torrent"))).ok()?;
+            let meta = librqbit::torrent_from_bytes(&bytes).ok()?;
+            let info_hash = meta.info_hash;
+            let info = meta.info.data.validate().ok()?;
+            let rutas: Vec<PathBuf> = info
+                .iter_file_details()
+                .enumerate()
+                .filter(|(i, f)| {
+                    !f.attrs().padding && t.only_files.as_ref().is_none_or(|o| o.contains(i))
+                })
+                .map(|(_, f)| t.output_folder.join(f.filename.to_pathbuf()))
+                .collect();
+            if rutas.is_empty() || rutas.iter().any(|p| p.exists()) {
+                return None;
+            }
+            Some(Borrado {
+                info_hash,
+                carpeta: t.output_folder,
+                rutas,
+            })
+        })
+        .collect()
+}
+
+/// Saca de la sesión los torrents borrados a mano, y lo que librqbit alcanzó a
+/// recrear al restaurarlos (antes no estaba, así que es todo suyo).
+async fn olvidar_borrados(session: &Arc<Session>, borrados: Vec<Borrado>) {
+    for b in borrados {
+        if let Err(e) = session.delete(TorrentIdOrHash::Hash(b.info_hash), false).await {
+            eprintln!("[torrent] no se pudo olvidar {:?}: {e:#}", b.info_hash);
+            continue;
+        }
+        for ruta in &b.rutas {
+            let _ = std::fs::remove_file(ruta);
+            // Packs: la subcarpeta del torrent, si quedó vacía.
+            let mut dir = ruta.parent();
+            while let Some(d) = dir.filter(|d| *d != b.carpeta && d.starts_with(&b.carpeta)) {
+                if std::fs::remove_dir(d).is_err() {
+                    break;
+                }
+                dir = d.parent();
+            }
+        }
+        eprintln!(
+            "[torrent] archivo borrado a mano, se saca de la cola: {}",
+            b.rutas[0].display()
+        );
+    }
 }
 
 async fn ensure(app: &tauri::AppHandle, custom: Option<&str>) -> Result<Arc<Tor>, String> {
@@ -833,7 +939,7 @@ fn espacio_libre(_p: &std::path::Path) -> Result<u64, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{local_file_size, mime_for, parse_range, stream_url};
+    use super::{borrados_a_mano, local_file_size, mime_for, parse_range, stream_url};
     use crate::pack::es_video as is_video;
 
     #[test]
@@ -1091,5 +1197,57 @@ mod tests {
             u,
             "http://127.0.0.1:9000/t/3/1/Mi%20Peli%20%5B1080p%5D.mkv"
         );
+    }
+
+    /// Arma una sesión guardada de librqbit con un torrent de un archivo.
+    fn sesion_falsa(nombre: &str, bitv: &[u8]) -> (std::path::PathBuf, std::path::PathBuf) {
+        let base = std::env::temp_dir().join(format!("kutral-borrados-{nombre}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let estado = base.join("estado");
+        let descargas = base.join("descargas");
+        std::fs::create_dir_all(&estado).unwrap();
+        std::fs::create_dir_all(&descargas).unwrap();
+
+        let mut torrent = b"d4:infod6:lengthi5e4:name5:a.mkv12:piece lengthi16384e6:pieces20:".to_vec();
+        torrent.extend_from_slice(&[7u8; 20]);
+        torrent.extend_from_slice(b"ee");
+        let hash = librqbit::torrent_from_bytes(&torrent).unwrap().info_hash.as_string();
+        std::fs::write(estado.join(format!("{hash}.torrent")), &torrent).unwrap();
+        std::fs::write(estado.join(format!("{hash}.bitv")), bitv).unwrap();
+        let json = serde_json::json!({ "torrents": { "0": {
+            "info_hash": hash,
+            "output_folder": descargas,
+            "only_files": [0],
+        }}});
+        std::fs::write(estado.join("session.json"), json.to_string()).unwrap();
+        (estado, descargas)
+    }
+
+    #[test]
+    fn archivo_borrado_con_datos_se_olvida() {
+        let (estado, descargas) = sesion_falsa("borrado", &[0x80]);
+        let b = borrados_a_mano(&estado);
+        assert_eq!(b.len(), 1);
+        assert_eq!(b[0].rutas, vec![descargas.join("a.mkv")]);
+    }
+
+    #[test]
+    fn archivo_presente_no_se_toca() {
+        let (estado, descargas) = sesion_falsa("presente", &[0x80]);
+        std::fs::write(descargas.join("a.mkv"), b"hola!").unwrap();
+        assert!(borrados_a_mano(&estado).is_empty());
+    }
+
+    #[test]
+    fn sin_piezas_bajadas_no_se_toca() {
+        let (estado, _) = sesion_falsa("vacio", &[0]);
+        assert!(borrados_a_mano(&estado).is_empty());
+    }
+
+    #[test]
+    fn carpeta_ausente_no_se_toca() {
+        let (estado, descargas) = sesion_falsa("sincarpeta", &[0x80]);
+        std::fs::remove_dir_all(&descargas).unwrap();
+        assert!(borrados_a_mano(&estado).is_empty());
     }
 }
