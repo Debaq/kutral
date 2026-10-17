@@ -39,6 +39,7 @@
     fmtBps,
     type MotivoRendicion,
   } from "$lib/cacheWatch.svelte";
+  import { fallaRd, anotarFallaRd, olvidarFallaRd, type FallaRd } from "$lib/rdFallas.svelte";
   import {
     descargaUsable,
     registrarDescarga,
@@ -241,6 +242,10 @@
   // La red no da para ver esto en vivo: pantalla con las dos salidas reales
   // (bajarla y verla después, o seguir igual). Ver cacheWatch.
   let rendicion = $state<MotivoRendicion | null>(null);
+  // Se eligió una fuente que RD ya no pudo abrir (rdFallas): se explica y se
+  // ofrece verla por torrent en vez de volver a gastar el intento.
+  let avisoRd = $state<{ i: number; s: Src; falla: FallaRd } | null>(null);
+  let avisoRdFoco = $state(0);
   // Lo que estaba sonando cuando la red se rindió, para poder retomarlo.
   let rendicionSrc: { url: string; s: Src } | null = null;
   // El usuario eligió seguir viendo igual: no se le vuelve a ofrecer nada.
@@ -1212,7 +1217,23 @@
   // Con config.verifyEsTracks: además INSPECCIONA las pistas reales (ffprobe)
   // y salta las fuentes sin español embebido; si ninguna de las inspeccionadas
   // trae, reproduce la mejor igual (los subs externos siguen de respaldo).
-  async function playFrom(startIdx: number) {
+  // Capítulo para las marcas de RD ("" en películas): un pack puede no traer
+  // un capítulo y sí el siguiente.
+  const capRd = $derived(season != null && episode != null ? `T${season}E${episode}` : "");
+
+  // Hash de la fuente: el del scraper o, si no vino, el del magnet.
+  function hashDe(s: Src): string | null {
+    return s.info_hash || /btih:([0-9a-z]{40})/i.exec(s.magnet || "")?.[1] || null;
+  }
+
+  // Lo que RD ya no pudo abrir de esta fuente (solo cuenta si se resuelve por RD).
+  function marcaRd(s: Src): FallaRd | null {
+    return rdLinked && s.magnet && !s.url ? fallaRd(hashDe(s), capRd) : null;
+  }
+
+  // `elegida`: el usuario tocó ESTA fuente (no es el autoplay ni el paso a la
+  // siguiente). Si RD ya no pudo con ella, se le pregunta en vez de saltarla.
+  async function playFrom(startIdx: number, elegida = false) {
     dbg(`playFrom start=${startIdx} n=${view.length} fam=${famFilter} rd=${rdLinked} local=${config.torrentLocal} verify=${config.verifyEsTracks}`);
     // Sin debrid quedan dos vías: las fuentes que ya traen URL directa (web
     // tipo jkanime) y la descarga local. Sin ninguna de las dos no hay nada
@@ -1230,6 +1251,8 @@
     let tried = 0;
     let probes = 0;
     let sinEs = 0;
+    // Saltadas porque RD ya no pudo con ellas antes (rdFallas).
+    let marcadas = 0;
     let lastErr = "";
     // TV: versiones que ya se sabe que no le sirven, y las que rechazó ahora.
     let tvIncompatibles = 0;
@@ -1252,6 +1275,20 @@
         dbg(`#${i} -> local (magnet sin debrid)`);
         continue;
       }
+      const marca = marcaRd(s);
+      if (marca) {
+        if (elegida && i === startIdx) {
+          resolving = false;
+          avisoRd = { i, s, falla: marca };
+          avisoRdFoco = 0;
+          return;
+        }
+        // Sigue siendo candidata a bajarse en local: lo que falló es RD.
+        if (s.magnet) rechazadas.push(s);
+        marcadas++;
+        dbg(`#${i} SKIP (RD ya no pudo: ${marca.corto})`);
+        continue;
+      }
       dbg(`#${i} intento url=${!!s.url} magnet=${!!s.magnet} ${(s.title || "").slice(0, 40)}`);
       tried++;
       focusIdx = i;
@@ -1272,6 +1309,7 @@
           });
           url = r.url;
           archivos = r.pack;
+          olvidarFallaRd(hashDe(s), capRd);
         }
 
         // Verificación de español real (activable en Configuración).
@@ -1317,6 +1355,11 @@
           continue;
         }
         if (lastErr.includes("BLOQUEADO_DMCA")) blocked++;
+        // Queda marcada en la lista (y no se vuelve a intentar sola).
+        if (s.magnet && !s.url) {
+          const f = anotarFallaRd(hashDe(s), capRd, lastErr);
+          if (f) dbg(`#${i} RD no pudo: ${f.corto}`);
+        }
         if (s.magnet) rechazadas.push(s);
         // sigue con la próxima fuente
       }
@@ -1387,12 +1430,47 @@
         `Sube el tope en Configuración o busca una versión más liviana.`;
     } else if (blocked > 0) {
       error = `Sin fuentes reproducibles: ${blocked} bloqueada(s) por el debrid (DMCA) y la descarga local tampoco pudo. Prueba "🔄 Rebuscar fuentes" u otra calidad.`;
+    } else if (marcadas > 0 && tried === 0) {
+      error =
+        `Real-Debrid ya no pudo con ${marcadas === 1 ? "la fuente que queda" : `las ${marcadas} fuentes que quedan`} ` +
+        "(están marcadas ⛔). Elige una para verla por torrent, o prueba \"🔄 Rebuscar fuentes\".";
     } else if (!rdLinked && rechazadas.length) {
       error =
         "La descarga local no pudo arrancar ninguna fuente. Casi siempre es falta de " +
         'gente compartiendo: prueba otra calidad o "🔄 Rebuscar fuentes".';
     } else {
       error = `No se pudo reproducir ninguna fuente. ${lastErr}`;
+    }
+  }
+
+  // ---- RD ya no pudo con la fuente elegida ----------------------------------
+
+  type BotonRd = { id: "torrent" | "reintentar" | "otra"; label: string };
+  const botonesRd = $derived<BotonRd[]>(
+    avisoRd
+      ? [
+          ...(avisoRd.s.magnet ? [{ id: "torrent" as const, label: "🧲 Verla por torrent" }] : []),
+          { id: "reintentar", label: "🔁 Probar RD otra vez" },
+          { id: "otra", label: "↩ Elegir otra" },
+        ]
+      : [],
+  );
+
+  async function accionRd(id: BotonRd["id"]) {
+    const a = avisoRd;
+    if (!a) return;
+    avisoRd = null;
+    if (id === "otra") return;
+    if (id === "reintentar") {
+      olvidarFallaRd(hashDe(a.s), capRd);
+      await playFrom(a.i);
+      return;
+    }
+    // Pedida a mano: vale aunque la descarga local no esté activada (es lo
+    // único que abre la sesión torrent sin esa opción).
+    focusIdx = a.i;
+    if (!(await playViaTorrent(a.s)) && !error && !torrentCancel) {
+      error = "El torrent no arrancó: casi siempre es falta de gente compartiéndolo. Prueba otra fuente.";
     }
   }
 
@@ -1880,7 +1958,7 @@
     if (focusIdx === webIdx) return onWeb();
     if (!view[focusIdx]) return;
     if (descargarSolo) return void encolar(view[focusIdx]);
-    void playFrom(focusIdx);
+    void playFrom(focusIdx, true);
   }
 
   function scrollFocused() {
@@ -1953,6 +2031,15 @@
     // Encolando: addTorrent está esperando la metadata del magnet y no se puede
     // cortar a mitad. Se ignora el teclado hasta que responda.
     if (encolando) return;
+    if (avisoRd) {
+      e.preventDefault();
+      const n = botonesRd.length;
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") avisoRdFoco = (avisoRdFoco + 1) % n;
+      else if (e.key === "ArrowLeft" || e.key === "ArrowUp") avisoRdFoco = (avisoRdFoco - 1 + n) % n;
+      else if (e.key === "Enter" || e.key === " ") void accionRd(botonesRd[avisoRdFoco].id);
+      else if (e.key === "Escape" || e.key === "Backspace") void accionRd("otra");
+      return;
+    }
     if (rendicion) {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
@@ -2160,6 +2247,30 @@
         <span class="sp-spinner"></span>
         <p>Buscando fuentes…</p>
       </div>
+    {:else if avisoRd}
+      {@const a = avisoRd}
+      <div class="sp-center">
+        <p class="sp-tor-head">⛔ Real-Debrid no pudo con esta fuente</p>
+        <p class="sp-playing-title">{a.s.title}</p>
+        <p class="sp-tor-why">
+          Ya se intentó: {a.falla.motivo}. Por eso quedó marcada y no se vuelve
+          a probar sola.
+          {#if a.s.magnet}
+            Por torrent se baja directo de la gente que la comparte, sin pasar
+            por RD (se baja y se comparte desde tu equipo).
+          {/if}
+        </p>
+        <div class="sp-cast-btns">
+          {#each botonesRd as b, k (b.id)}
+            <button
+              class="sp-foot-btn"
+              class:focused={avisoRdFoco === k}
+              onclick={() => void accionRd(b.id)}
+              onmouseenter={() => (avisoRdFoco = k)}
+            >{b.label}</button>
+          {/each}
+        </div>
+      </div>
     {:else if rendicion}
       {@const m = rendicion}
       <div class="sp-center">
@@ -2272,7 +2383,7 @@
             onclick={() => {
               focusIdx = i;
               if (descargarSolo) void encolar(s);
-              else void playFrom(i);
+              else void playFrom(i, true);
             }}
             onmouseenter={() => (focusIdx = i)}
           >
@@ -2281,6 +2392,7 @@
               <span class="sp-title">{s.title}</span>
               <div class="sp-chips">
                 {#if descartadas.includes(s.title)}<span class="sp-probada">↩ Ya probada</span>{/if}
+                {#if marcaRd(s)}{@const f = marcaRd(s)}<span class="sp-es-no" title="Real-Debrid: {f?.motivo}">⛔ RD: {f?.corto}</span>{/if}
                 {#if s.local}<span class="sp-en-disco">📁 En tu equipo</span>{/if}
                 {#if prefScore(s, kind)}<span class="sp-pref">★ Preferida</span>{/if}
                 {#if s.rd_cached}<span class="sp-cached">⚡ Instantáneo</span>{/if}
