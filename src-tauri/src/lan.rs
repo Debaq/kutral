@@ -26,6 +26,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
+use crate::pista_tv::{ConParche, Parche};
+
 #[derive(Clone)]
 struct Video {
     /// URL http(s) o ruta de un archivo del disco.
@@ -33,6 +35,8 @@ struct Video {
     content_type: String,
     /// URL del .srt para la cabecera `CaptionInfo.sec` (subtítulos Samsung).
     caption: Option<String>,
+    /// Cabecera reescrita para que suene otra pista de audio (pista_tv.rs).
+    parche: Option<Arc<Parche>>,
 }
 
 #[derive(Default)]
@@ -97,9 +101,16 @@ impl Lan {
         Ok(format!("http://{}:{}", ip_hacia(tv_ip, tv_puerto)?, self.puerto))
     }
 
-    /// Publica el subtítulo en los dos formatos. Devuelve (url_vtt, url_srt).
-    pub fn publicar_subs(&self, bytes: &[u8], tv_ip: &str, tv_puerto: u16) -> Result<(String, String), String> {
-        let texto = texto_de(bytes);
+    /// Publica el subtítulo en los dos formatos, corrido `desfase` segundos
+    /// (el `sub-delay` de mpv: positivo = más tarde). Devuelve (url_vtt, url_srt).
+    pub fn publicar_subs(
+        &self,
+        bytes: &[u8],
+        desfase: f64,
+        tv_ip: &str,
+        tv_puerto: u16,
+    ) -> Result<(String, String), String> {
+        let texto = desfasar(&texto_de(bytes), desfase);
         let mut e = self.estado.lock().unwrap_or_else(|e| e.into_inner());
         e.vtt = srt_a_vtt(&texto);
         e.srt = vtt_a_srt(&texto);
@@ -112,12 +123,14 @@ impl Lan {
     }
 
     /// Publica un video (URL o archivo del disco) por la pasarela y devuelve
-    /// la URL HTTP para la TV.
+    /// la URL HTTP para la TV. Con `parche`, la TV recibe la cabecera
+    /// reescrita (otra pista de audio primero).
     pub fn publicar_video(
         &self,
         url: &str,
         content_type: &str,
         caption: Option<String>,
+        parche: Option<Parche>,
         tv_ip: &str,
         tv_puerto: u16,
     ) -> Result<String, String> {
@@ -141,6 +154,7 @@ impl Lan {
                 url: url.strip_prefix("file://").unwrap_or(url).to_string(),
                 content_type: content_type.to_string(),
                 caption,
+                parche: parche.map(Arc::new),
             },
         );
         drop(e);
@@ -365,10 +379,21 @@ fn pasarela(req: Request, v: &Video) {
     if let Some(cr) = resp.headers().get("content-range").and_then(|x| x.to_str().ok()) {
         cabeceras.push(h("Content-Range", cr));
     }
-    let cuerpo: Box<dyn std::io::Read + Send> = if es_head {
-        Box::new(std::io::empty())
-    } else {
-        Box::new(resp)
+    // Desde qué byte del archivo viene el cuerpo, para pisar la cabecera.
+    let desde = resp
+        .headers()
+        .get("content-range")
+        .and_then(|x| x.to_str().ok())
+        .and_then(|cr| cr.strip_prefix("bytes ")?.split('-').next()?.parse::<u64>().ok())
+        .unwrap_or(0);
+    let cuerpo: Box<dyn std::io::Read + Send> = match &v.parche {
+        _ if es_head => Box::new(std::io::empty()),
+        Some(p) => Box::new(ConParche {
+            interno: resp,
+            pos: desde,
+            parche: p.clone(),
+        }),
+        None => Box::new(resp),
     };
     // Si la TV corta (salto, stop) falla la escritura y se suelta la descarga.
     let _ = req.respond(Response::new(StatusCode(status), cabeceras, cuerpo, largo, None));
@@ -426,10 +451,14 @@ fn archivo(req: Request, v: &Video) {
         let _ = req.respond(Response::empty(416));
         return;
     }
-    let cuerpo: Box<dyn Read + Send> = if *req.method() == Method::Head {
-        Box::new(std::io::empty())
-    } else {
-        Box::new(f.take(largo))
+    let cuerpo: Box<dyn Read + Send> = match &v.parche {
+        _ if *req.method() == Method::Head => Box::new(std::io::empty()),
+        Some(p) => Box::new(ConParche {
+            interno: f.take(largo),
+            pos: ini,
+            parche: p.clone(),
+        }),
+        None => Box::new(f.take(largo)),
     };
     let _ = req.respond(Response::new(StatusCode(status), cab, cuerpo, Some(largo as usize), None));
 }
@@ -445,6 +474,54 @@ pub fn texto_de(b: &[u8]) -> String {
     t.trim_start_matches('\u{feff}')
         .replace("\r\n", "\n")
         .replace('\r', "\n")
+}
+
+/// Corre todos los tiempos `s` segundos (SRT o VTT). Lo que quedaría antes
+/// del 0 se pega al 0.
+pub fn desfasar(texto: &str, s: f64) -> String {
+    if s.abs() < 0.001 {
+        return texto.to_string();
+    }
+    let mut out = String::with_capacity(texto.len());
+    for linea in texto.split_inclusive('\n') {
+        let Some((a, b)) = linea.split_once("-->") else {
+            out.push_str(linea);
+            continue;
+        };
+        // "00:01:02,500 --> 00:01:04,000 align:start": se corre el primer
+        // token de cada lado y el resto (ajustes de VTT) queda igual.
+        let correr = |lado: &str| -> Option<String> {
+            let ini = lado.len() - lado.trim_start().len();
+            let tok = lado.split_whitespace().next()?;
+            let coma = tok.contains(',');
+            let partes: Vec<&str> = tok.split([':', ',', '.']).collect();
+            let n: Vec<f64> = partes.iter().map(|p| p.parse().ok()).collect::<Option<_>>()?;
+            let seg = match n.as_slice() {
+                [h, m, s, ms] => h * 3600.0 + m * 60.0 + s + ms / 1000.0,
+                [m, s, ms] => m * 60.0 + s + ms / 1000.0,
+                _ => return None,
+            };
+            let t = ((seg + s).max(0.0) * 1000.0).round() as u64;
+            let nuevo = format!(
+                "{:02}:{:02}:{:02}{}{:03}",
+                t / 3_600_000,
+                t / 60_000 % 60,
+                t / 1000 % 60,
+                if coma { ',' } else { '.' },
+                t % 1000
+            );
+            Some(format!("{}{}{}", &lado[..ini], nuevo, &lado.trim_start()[tok.len()..]))
+        };
+        match (correr(a), correr(b)) {
+            (Some(a), Some(b)) => {
+                out.push_str(&a);
+                out.push_str("-->");
+                out.push_str(&b);
+            }
+            _ => out.push_str(linea),
+        }
+    }
+    out
 }
 
 pub fn srt_a_vtt(srt: &str) -> String {
@@ -499,6 +576,10 @@ pub fn vtt_a_srt(t: &str) -> String {
 mod tests {
     use super::*;
 
+    /// El servidor es uno y publicar un video borra el anterior: las pruebas
+    /// que publican van de a una.
+    static SERIE: Mutex<()> = Mutex::new(());
+
     #[test]
     fn srt_a_vtt_solo_toca_los_tiempos() {
         let srt = texto_de("\u{feff}1\r\n00:00:01,500 --> 00:00:03,000\r\nHola, ¿cómo estás?\r\n\r\n".as_bytes());
@@ -521,13 +602,14 @@ mod tests {
 
     #[test]
     fn archivo_con_rango_por_http() {
+        let _g = SERIE.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("kutral-lan-{}", marca()));
         std::fs::create_dir_all(&dir).unwrap();
         let ruta = dir.join("peli.mkv");
         std::fs::write(&ruta, (0..=255u8).cycle().take(10_000).collect::<Vec<_>>()).unwrap();
         let l = lan().unwrap();
         let v = l
-            .publicar_video(ruta.to_str().unwrap(), "video/x-matroska", None, "127.0.0.1", 80)
+            .publicar_video(ruta.to_str().unwrap(), "video/x-matroska", None, None, "127.0.0.1", 80)
             .unwrap();
         let r = reqwest::blocking::Client::new()
             .get(&v)
@@ -540,6 +622,41 @@ mod tests {
         assert_eq!(b.len(), 256);
         assert_eq!(b[0], 0);
         assert_eq!(crate::lan::pedidos().0, 1);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn desfasar_corre_srt_y_vtt() {
+        let srt = "1\n00:00:01,500 --> 00:00:03,000\nHola --> chao\n";
+        assert_eq!(desfasar(srt, 2.25), "1\n00:00:03,750 --> 00:00:05,250\nHola --> chao\n");
+        let vtt = "WEBVTT\n\n00:59.900 --> 01:00.100 align:start\nx\n";
+        assert_eq!(desfasar(vtt, 0.2), "WEBVTT\n\n00:01:00.100 --> 00:01:00.300 align:start\nx\n");
+        // Antes del 0 se pega al 0.
+        assert_eq!(desfasar("00:00:01,000 --> 00:00:02,000\n", -1.5), "00:00:00,000 --> 00:00:00,500\n");
+        assert_eq!(desfasar(srt, 0.0), srt);
+    }
+
+    #[test]
+    fn archivo_con_parche_de_cabecera() {
+        let _g = SERIE.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("kutral-lan-p-{}", marca()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ruta = dir.join("peli.mkv");
+        std::fs::write(&ruta, vec![0u8; 1000]).unwrap();
+        let l = lan().unwrap();
+        let p = Parche { ini: 100, bytes: vec![9; 50] };
+        let v = l
+            .publicar_video(ruta.to_str().unwrap(), "video/x-matroska", None, Some(p), "127.0.0.1", 80)
+            .unwrap();
+        let b = reqwest::blocking::Client::new()
+            .get(&v)
+            .header("Range", "bytes=120-199")
+            .send()
+            .unwrap()
+            .bytes()
+            .unwrap();
+        assert_eq!(b.len(), 80);
+        assert!(b[..30].iter().all(|&x| x == 9) && b[30..].iter().all(|&x| x == 0));
         std::fs::remove_dir_all(dir).ok();
     }
 
@@ -558,7 +675,7 @@ mod tests {
     fn pasarela_real() {
         let url = std::env::var("KUTRAL_URL").expect("KUTRAL_URL");
         let l = lan().unwrap();
-        let v = l.publicar_video(&url, "video/mp4", None, "192.168.100.1", 80).unwrap();
+        let v = l.publicar_video(&url, "video/mp4", None, None, "192.168.100.1", 80).unwrap();
         eprintln!("pasarela: {v}");
         let r = reqwest::blocking::Client::new()
             .get(&v)

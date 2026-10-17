@@ -415,7 +415,7 @@ async fn bloqueante<T: Send + 'static>(
 /// Baja (o lee del disco) el subtítulo y lo publica en la LAN en VTT (Cast)
 /// y SRT (Samsung). Sin subtítulos se transmite igual: mejor la película sin
 /// subs que nada, así que el error solo se loguea.
-async fn subs_para(origen: Option<&str>, tv: &CastTv) -> Option<(String, String)> {
+async fn subs_para(origen: Option<&str>, desfase: f64, tv: &CastTv) -> Option<(String, String)> {
     const TOPE: usize = 5 << 20;
     let origen = origen.filter(|o| !o.is_empty())?;
     let bytes = if origen.starts_with("http://") || origen.starts_with("https://") {
@@ -433,7 +433,7 @@ async fn subs_para(origen: Option<&str>, tv: &CastTv) -> Option<(String, String)
         return None;
     }
     let lan = crate::lan::lan().ok()?;
-    match lan.publicar_subs(&bytes, &tv.ip, tv.puerto) {
+    match lan.publicar_subs(&bytes, desfase, &tv.ip, tv.puerto) {
         Ok(u) => Some(u),
         Err(e) => {
             eprintln!("[cast] sin subtítulos: {e}");
@@ -538,6 +538,11 @@ pub async fn cast_ping(tv: CastTv) -> Result<bool, String> {
 
 /// Manda un video a la TV. Devuelve cuando la TV aceptó el video; si el
 /// formato no le sirve lo dice después, en `cast_status` (IDLE + ERROR).
+///
+/// `audio`: qué pista de audio suena (1 = la primera del archivo, el orden de
+/// `aid` en mpv). `subs_desfase`: segundos que se corren los subtítulos (el
+/// `sub-delay` de mpv). Devuelve si suena la pista pedida: false = la
+/// cabecera no se dejó reescribir y suena la primera.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn cast_play(
@@ -549,19 +554,32 @@ pub async fn cast_play(
     desde: Option<f64>,
     subs: Option<String>,
     subs_idioma: Option<String>,
+    subs_desfase: Option<f64>,
+    audio: Option<u32>,
     archivo: Option<String>,
-) -> Result<(), String> {
-    let pista = subs_para(subs.as_deref(), &tv).await;
+) -> Result<bool, String> {
+    let pista = subs_para(subs.as_deref(), subs_desfase.unwrap_or(0.0), &tv).await;
     let con_subs = pista.is_some();
     let desde = desde.unwrap_or(0.0).max(0.0);
     // El stream del torrent local (127.0.0.1:…/stream/0) no dice la extensión:
     // el frontend pasa el nombre del archivo para deducir el formato.
     let ct = content_type(archivo.as_deref().filter(|a| !a.is_empty()).unwrap_or(&url));
     let srt = pista.as_ref().map(|(_, s)| s.clone());
+    // Otra pista de audio que la primera: la TV tiene que recibir la cabecera
+    // reescrita (pista_tv.rs), así que el video pasa por la pasarela.
+    let n = audio.unwrap_or(1).max(1) as usize;
+    let parche = if n > 1 && matches!(ct, "video/x-matroska" | "video/webm" | "video/mp4") {
+        let (origen, mkv) = (url.clone(), ct != "video/mp4");
+        bloqueante(move || Ok(crate::pista_tv::para(&origen, mkv, n))).await?
+    } else {
+        None
+    };
+    let audio_ok = n == 1 || parche.is_some();
     // DLNA siempre por la pasarela (HTTPS, cabeceras DLNA, subs Samsung). Cast
-    // baja directo de RD; solo lo local de este equipo pasa por la pasarela.
-    let uri = if tv.es_dlna() || !url_transmitible(&url) {
-        crate::lan::lan()?.publicar_video(&url, ct, srt.clone(), &tv.ip, tv.puerto)?
+    // baja directo de RD; lo local de este equipo y lo que lleva la cabecera
+    // reescrita pasan por la pasarela.
+    let uri = if tv.es_dlna() || !url_transmitible(&url) || parche.is_some() {
+        crate::lan::lan()?.publicar_video(&url, ct, srt.clone(), parche, &tv.ip, tv.puerto)?
     } else {
         url.clone()
     };
@@ -586,7 +604,7 @@ pub async fn cast_play(
         ultima_dur: 0.0,
         con_subs,
     });
-    Ok(())
+    Ok(audio_ok)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -910,6 +928,30 @@ mod tests {
         let largo = format!(r#"{{"x":"{}"}}"#, "a".repeat(300));
         let m = decodificar(&codificar("a", "b", NS_MEDIA, &largo)).unwrap();
         assert_eq!(m.json["x"].as_str().unwrap().len(), 300);
+    }
+
+    /// TV real con otra pista de audio (pasa por la pasarela y pista_tv.rs).
+    /// `KUTRAL_TV_IP=… KUTRAL_URL=http://…/peli.mkv KUTRAL_AUDIO=3 cargo test
+    /// --lib cast::tests::audio_real -- --ignored --nocapture`. Queda sonando
+    /// 90 s (lo que vive el servidor de la prueba).
+    #[tokio::test]
+    #[ignore]
+    async fn audio_real() {
+        let tv = cast_tv_por_ip(std::env::var("KUTRAL_TV_IP").expect("KUTRAL_TV_IP")).await.unwrap();
+        let url = std::env::var("KUTRAL_URL").expect("KUTRAL_URL");
+        let audio = std::env::var("KUTRAL_AUDIO").ok().and_then(|s| s.parse().ok());
+        let subs = std::env::var("KUTRAL_SUBS").ok();
+        let desfase = std::env::var("KUTRAL_DESFASE").ok().and_then(|s| s.parse().ok());
+        let ok = cast_play(tv, url, "Prueba audio".into(), None, None, None, subs, None, desfase, audio, None)
+            .await
+            .unwrap();
+        eprintln!("audio aplicado: {ok}");
+        for _ in 0..18 {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            let st = cast_status().await.unwrap();
+            eprintln!("{} {:.0}/{:.0} pedidos {:?}", st.estado, st.pos, st.duracion, crate::lan::pedidos());
+        }
+        cast_control("detener".into(), None).await.ok();
     }
 
     /// Red real, sin tocar la pantalla: busca TVs y lee su estado.

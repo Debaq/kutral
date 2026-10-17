@@ -17,6 +17,7 @@ mod net;
 mod omdb;
 mod opensubtitles;
 mod pack;
+mod pista_tv;
 mod subs_match;
 mod sub_sync;
 mod sub_autosync;
