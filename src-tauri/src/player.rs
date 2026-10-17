@@ -131,6 +131,18 @@ pub mod imp {
         mpv_embed::set_capitulos(on);
     }
 
+    /// Hay una TV elegida: "Pasar a la TV" en el bar.
+    #[tauri::command]
+    pub fn mpv_tv(on: bool) {
+        mpv_embed::set_tv(on);
+    }
+
+    /// Minuto, audio y subtítulos de lo que suena, para seguir en la TV.
+    #[tauri::command]
+    pub fn mpv_para_tv() -> mpv_embed::ParaTv {
+        mpv_embed::para_tv()
+    }
+
     /// Identidad del subtítulo externo recién cargado (ver mpv_embed::SUB_KEYS).
     #[tauri::command]
     pub fn mpv_sub_key(path: String, key: String) {

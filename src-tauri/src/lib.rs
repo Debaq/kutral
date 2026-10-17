@@ -758,6 +758,8 @@ pub fn run() {
             player::imp::mpv_set_cache,
             player::imp::mpv_sub_key,
             player::imp::mpv_capitulos,
+            player::imp::mpv_tv,
+            player::imp::mpv_para_tv,
             sub_sync::sub_sync_clear,
             opensubtitles::os_login,
             opensubtitles::os_status,

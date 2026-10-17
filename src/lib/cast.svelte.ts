@@ -46,6 +46,19 @@ export type CastStatus = {
   silencio: boolean;
 };
 
+/** Lo que suena en el reproductor al "Pasar a la TV" (mpv_embed::ParaTv). */
+export type ParaTv = {
+  pos: number;
+  /** Pista de audio en el orden del archivo (1 = la primera). 0 = externa. */
+  audio: number;
+  audio_codec: string;
+  /** Subtítulo externo puesto y visible ("" = ninguno). */
+  sub_archivo: string;
+  sub_interno: boolean;
+  sub_imagen: boolean;
+  sub_desfase: number;
+};
+
 /** Pista reportada por ffprobe (probe.rs). */
 export type ProbeTrack = {
   kind: string; // video | audio | subtitle
@@ -67,14 +80,11 @@ type Leccion = { ok: boolean; veces: number; cuando: number };
 type Aprendido = Record<string, Record<string, Leccion>>;
 
 const K_TV = "cast_tv";
-const K_USAR = "cast_usar_tv";
 const K_APRENDIDO = "cast_aprendido";
 
 export const cast = $state({
   /** TV recordada. null = nunca se eligió una. */
   tv: null as CastTv | null,
-  /** Descubrir en la TV por defecto (si no, en este equipo). */
-  usarTv: false,
   buscando: false,
   /** La búsqueda normal no trajo nada y va equipo por equipo (tarda más). */
   busquedaLarga: false,
@@ -106,7 +116,6 @@ function escribir(k: string, v: unknown) {
 
 export function cargarCast() {
   cast.tv = leer<CastTv | null>(K_TV, null);
-  cast.usarTv = !!cast.tv && leer<boolean>(K_USAR, false);
   cast.aprendido = leer<Aprendido>(K_APRENDIDO, {});
 }
 
@@ -157,23 +166,17 @@ export async function agregarTvPorIp(ip: string): Promise<CastTv> {
   }
 }
 
+// Elegir una TV no la vuelve el destino: todo empieza en este equipo, donde
+// se elige audio y subtítulos con control total, y "Pasar a la TV" (bar del
+// reproductor) la manda tal cual. T en la lista de fuentes la manda directo.
 export function elegirTv(tv: CastTv) {
-  const nueva = cast.tv?.id !== tv.id;
   cast.tv = tv;
   escribir(K_TV, tv);
-  // Elegir una TV por primera vez es decir "quiero ver en la TV".
-  if (nueva) setUsarTv(true);
 }
 
 export function olvidarTv() {
   cast.tv = null;
   escribir(K_TV, null);
-  setUsarTv(false);
-}
-
-export function setUsarTv(v: boolean) {
-  cast.usarTv = v && !!cast.tv;
-  escribir(K_USAR, cast.usarTv);
 }
 
 /**
@@ -194,21 +197,25 @@ export async function tvLista(): Promise<CastTv> {
 
 // ---- Aprender ----------------------------------------------------------------
 
-/** Lo que va a sonar/verse en la TV según el probe. null = no se pudo saber. */
-export function rasgosDe(tracks: ProbeTrack[]): Rasgos | null {
+/**
+ * Lo que va a sonar/verse en la TV según el probe, con la pista de audio `n`
+ * (1 = la primera del archivo; ver pista_tv.rs). null = no se pudo saber.
+ */
+export function rasgosDe(tracks: ProbeTrack[], n = 1): Rasgos | null {
   const v = tracks.find((t) => t.kind === "video");
-  const audios = tracks.filter((t) => t.kind === "audio");
-  // El receptor Cast no deja elegir pista embebida: suena la predeterminada.
-  const a = audios.find((t) => t.default) ?? audios[0];
+  const a = audioQueSuena(tracks, n);
   if (!v) return null;
   const video = [v.codec, v.profile].filter(Boolean).join("/").toLowerCase();
   return { video, audio: (a?.codec || "sin audio").toLowerCase() };
 }
 
-/** La pista de audio que sonará en la TV. */
-export function audioQueSuena(tracks: ProbeTrack[]): ProbeTrack | null {
+/**
+ * La pista de audio que sonará en la TV. La TV toca la PRIMERA del archivo;
+ * para otra, Kütral le reescribe la cabecera y pasa a ser la primera.
+ */
+export function audioQueSuena(tracks: ProbeTrack[], n = 1): ProbeTrack | null {
   const audios = tracks.filter((t) => t.kind === "audio");
-  return audios.find((t) => t.default) ?? audios[0] ?? null;
+  return audios[n - 1] ?? audios[0] ?? null;
 }
 
 const kV = (r: Rasgos) => `v:${r.video}`;

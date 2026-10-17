@@ -51,6 +51,9 @@ static TRAILER: AtomicBool = AtomicBool::new(false);
 /// "Capítulos" para saltar a otro del mismo torrent. Lo prende el front
 /// después de cada `play()` (que lo apaga).
 static CAPITULOS: AtomicBool = AtomicBool::new(false);
+/// Hay una TV elegida: el bar ofrece "Pasar a la TV". Lo prende el front
+/// después de cada `play()` (que lo apaga).
+static TV: AtomicBool = AtomicBool::new(false);
 /// Generación de la sesión en pantalla. La sube cualquier cosa que reemplace
 /// lo que sonaba (play, trailer, IPTV) y con eso invalida al vigía de fin de
 /// archivo de la sesión anterior, que si no seguiría mirando lo nuevo.
@@ -101,6 +104,7 @@ enum BarAction {
     Video,
     Episodes,
     Sources,
+    Tv,
     Exit,
 }
 
@@ -115,6 +119,7 @@ impl BarAction {
             BarAction::Video => "Video",
             BarAction::Episodes => "Capítulos",
             BarAction::Sources => "Cambiar fuente",
+            BarAction::Tv => "Pasar a la TV",
             BarAction::Exit => "Salir",
         }
     }
@@ -185,6 +190,15 @@ impl BarAction {
                 vec![(-8.0, 13.0), (40.0, 13.0), (40.0, 25.0), (-8.0, 25.0)],
                 vec![(-8.0, 1.0), (-42.0, 19.0), (-8.0, 37.0)],
             ],
+            // Pantalla con pie: marco (cuatro barras) + cuello + base.
+            BarAction::Tv => vec![
+                vec![(-46.0, -36.0), (46.0, -36.0), (46.0, -28.0), (-46.0, -28.0)],
+                vec![(-46.0, 14.0), (46.0, 14.0), (46.0, 22.0), (-46.0, 22.0)],
+                vec![(-46.0, -36.0), (-38.0, -36.0), (-38.0, 22.0), (-46.0, 22.0)],
+                vec![(38.0, -36.0), (46.0, -36.0), (46.0, 22.0), (38.0, 22.0)],
+                vec![(-5.0, 22.0), (5.0, 22.0), (5.0, 30.0), (-5.0, 30.0)],
+                vec![(-24.0, 30.0), (24.0, 30.0), (24.0, 37.0), (-24.0, 37.0)],
+            ],
             // ✕ — dos barras cruzadas a 45°, como rectángulos girados.
             BarAction::Exit => vec![
                 vec![(-28.3, -39.7), (39.7, 28.3), (28.3, 39.7), (-39.7, -28.3)],
@@ -245,6 +259,9 @@ fn build_bar_actions() -> Vec<BarAction> {
             v.push(BarAction::Episodes);
         }
         v.push(BarAction::Sources);
+        if TV.load(Ordering::SeqCst) {
+            v.push(BarAction::Tv);
+        }
     }
     v.push(BarAction::Exit);
     v
@@ -947,6 +964,14 @@ fn activate_focus() {
             if let Some(app) = APP.get() {
                 use tauri::Emitter;
                 let _ = app.emit("player:capitulos", ());
+            }
+        }
+        // El front junta lo que suena (minuto, audio, subtítulos), avisa qué
+        // cambia en la TV y suspende esto si se transmite.
+        Some(BarAction::Tv) => {
+            if let Some(app) = APP.get() {
+                use tauri::Emitter;
+                let _ = app.emit("player:a-tv", ());
             }
         }
         Some(BarAction::Exit) => {
@@ -1828,6 +1853,50 @@ pub fn set_capitulos(on: bool) {
     CAPITULOS.store(on, Ordering::SeqCst);
 }
 
+pub fn set_tv(on: bool) {
+    TV.store(on, Ordering::SeqCst);
+}
+
+/// Lo que suena ahora, para seguir igual en la TV.
+#[derive(serde::Serialize)]
+pub struct ParaTv {
+    pub pos: f64,
+    /// Pista de audio en el orden del archivo (1 = la primera). 0 = ninguna o
+    /// un audio externo, que la TV no puede tocar.
+    pub audio: i64,
+    pub audio_codec: String,
+    /// Subtítulo puesto y visible: archivo/URL si es externo.
+    pub sub_archivo: String,
+    /// El subtítulo puesto viene dentro del archivo (la TV no lo ve).
+    pub sub_interno: bool,
+    /// …y además es de imagen (PGS/VobSub): ni bajándolo aparte.
+    pub sub_imagen: bool,
+    pub sub_desfase: f64,
+}
+
+pub fn para_tv() -> ParaTv {
+    let hay_sub = get_bool("sub-visibility") && get_i64("current-tracks/sub/id") > 0;
+    let externo = get_bool("current-tracks/sub/external");
+    let codec = get_string("current-tracks/sub/codec");
+    ParaTv {
+        pos: get_f64("time-pos"),
+        audio: if get_bool("current-tracks/audio/external") {
+            0
+        } else {
+            get_i64("current-tracks/audio/id")
+        },
+        audio_codec: get_string("current-tracks/audio/codec"),
+        sub_archivo: if hay_sub && externo {
+            get_string("current-tracks/sub/external-filename")
+        } else {
+            String::new()
+        },
+        sub_interno: hay_sub && !externo,
+        sub_imagen: hay_sub && !externo && matches!(codec.as_str(), "hdmv_pgs_subtitle" | "dvd_subtitle" | "dvb_subtitle"),
+        sub_desfase: get_f64("sub-delay"),
+    }
+}
+
 pub fn set_sub_key(path: &str, key: &str) {
     crate::sub_sync::set_sub_key(path, key);
 }
@@ -2289,6 +2358,7 @@ pub fn play(
     // Empezar algo nuevo descarta cualquier trailer y su sesión guardada.
     TRAILER.store(false, Ordering::SeqCst);
     CAPITULOS.store(false, Ordering::SeqCst);
+    TV.store(false, Ordering::SeqCst);
     clear_pending();
     // Una película no hereda la pista de audio externa de un trailer previo.
     let _ = mpv.set_property("audio-files", "");
@@ -2360,6 +2430,7 @@ pub fn play_iptv(playlist_path: &str, start: usize) -> Result<(), String> {
     let _ = mpv.set_property("sid", "no");
     TRAILER.store(false, Ordering::SeqCst);
     CAPITULOS.store(false, Ordering::SeqCst);
+    TV.store(false, Ordering::SeqCst);
     clear_pending();
     let _ = mpv.set_property("playlist-start", start as i64);
     begin_loading(None);
@@ -2847,6 +2918,9 @@ mod tests {
             BarAction::Subs,
             BarAction::Audio,
             BarAction::Video,
+            BarAction::Episodes,
+            BarAction::Sources,
+            BarAction::Tv,
             BarAction::Exit,
         ] {
             let polys = a.shapes();
@@ -2898,7 +2972,7 @@ mod tests {
 mod icon_dump {
     use super::*;
 
-    /// Escupe un .ass con los 7 iconos para mirarlos renderizados de verdad:
+    /// Escupe un .ass con los iconos para mirarlos renderizados de verdad:
     ///   cargo test --lib volcar_iconos -- --ignored --nocapture
     ///   mpv --sub-file=/tmp/iconos.ass --vo=image ...
     #[test]
@@ -2911,11 +2985,12 @@ mod icon_dump {
             BarAction::Subs,
             BarAction::Audio,
             BarAction::Video,
+            BarAction::Tv,
             BarAction::Exit,
         ];
         let mut ev = String::new();
         for (i, a) in acts.iter().enumerate() {
-            let cx = 130.0 + i as f64 * 170.0;
+            let cx = 100.0 + i as f64 * 150.0;
             ev.push_str(&format!(
                 "Dialogue: 0,0:00:00.00,0:00:05.00,D,,0,0,0,,{{\\an7\\pos(0,0)\\bord0\\shad1.5\\4c&H000000&\\1c&HE8E0D0&\\p1}}{}{{\\p0}}\n",
                 icon_drawing(*a, cx, 200.0, 96.0)

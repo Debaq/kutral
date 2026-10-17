@@ -10,7 +10,6 @@
     agregarTvPorIp,
     elegirTv,
     olvidarTv,
-    setUsarTv,
     leccionesDe,
     olvidarAprendido,
     protocolo,
@@ -1732,15 +1731,12 @@
               </span>
               <button data-nav class="btn-sec" onclick={olvidarTv}>Olvidar</button>
             </div>
-            <label class="toggle-row">
-              <input
-                data-nav
-                type="checkbox"
-                checked={cast.usarTv}
-                onchange={(e) => setUsarTv(e.currentTarget.checked)}
-              />
-              <span>Descubrir en la TV por defecto (T en la lista de fuentes lo cambia)</span>
-            </label>
+            <p class="hint">
+              Todo empieza en este equipo, donde eliges audio y subtítulos. Para
+              verlo en la TV, «Pasar a la TV» en el reproductor la manda en el
+              mismo minuto, con lo que tengas puesto. En la lista de fuentes,
+              <kbd>T</kbd> la manda directo.
+            </p>
           {/if}
           <button data-nav class="btn-sec" onclick={() => void buscarTvs()} disabled={cast.buscando}>
             {cast.buscando ? "Buscando…" : "🔍 Buscar TVs en la red"}
