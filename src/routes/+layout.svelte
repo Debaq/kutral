@@ -83,9 +83,12 @@
     input.focus();
   }
 
-  // Dispatcha un KeyboardEvent sintético en window y document para que
-  // tanto handlers globales (svelte:window onkeydown) como locales (modals)
-  // reaccionen. Reemplaza inyección OS-level (enigo no anda en Wayland).
+  // Dispatcha un KeyboardEvent sintético en el elemento enfocado: burbujea
+  // hasta document y window, así que lo ven tanto los handlers locales
+  // (modals) como los globales (svelte:window onkeydown). Una sola vez: un
+  // segundo dispatch en window hacía que cada tecla del control llegara doble
+  // a los globales (flechas de a dos, "i" que abría y cerraba). Reemplaza
+  // inyección OS-level (enigo no anda en Wayland).
   function dispatchRemoteKey(key: string) {
     const ev = new KeyboardEvent("keydown", {
       key,
@@ -94,7 +97,6 @@
       cancelable: true,
     });
     (document.activeElement ?? document.body).dispatchEvent(ev);
-    window.dispatchEvent(new KeyboardEvent("keydown", { key, code: keyToCode(key), bubbles: true }));
   }
   function keyToCode(k: string): string {
     switch (k) {
