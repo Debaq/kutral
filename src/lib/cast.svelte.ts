@@ -461,6 +461,17 @@ export async function redInfo(): Promise<RedInfo | null> {
   return invoke<RedInfo>("cast_red_info").catch(() => null);
 }
 
+/**
+ * Otra pista de audio en la TV: lo aprendido y "No se oye" pasan a ser de
+ * esa, y el minuto de prueba vuelve a contar desde `desde`.
+ */
+export function cambiarRasgos(r: Rasgos | null, desde: number) {
+  if (!seg) return;
+  seg.rasgos = r;
+  seg.aprendio = false;
+  seg.desde = desde;
+}
+
 /** Rasgos de lo que está sonando ahora (para "No se oye"). */
 export function rasgosActuales(): { tvId: string; rasgos: Rasgos | null } | null {
   return seg ? { tvId: seg.tvId, rasgos: seg.rasgos } : null;

@@ -55,6 +55,7 @@
     aprenderMudo,
     rasgosActuales,
     seguir as seguirEnTv,
+    cambiarRasgos,
     control as castControl,
     darGracia,
     detener as castDetener,
@@ -194,8 +195,16 @@
   let aTvFoco = $state(0);
   let aTvBuscando = $state(false);
   // Pista de audio y corrimiento de subtítulos en la TV (para recargar igual).
-  let castAudio = 1;
-  let castDesfase = 0;
+  let castAudio = $state(1);
+  let castDesfase = $state(0);
+  // Pistas del archivo en la TV (menú Audio) y el subtítulo que lleva.
+  let castTracks = $state<ProbeTrack[]>([]);
+  let castSubs: string | null = null;
+  // Submenú de los controles de la TV. null = los botones de siempre.
+  let menuTv = $state<"audio" | "sync" | null>(null);
+  // Corrimiento elegido que todavía no se mandó (se junta: cada envío recarga).
+  let syncPendiente = $state<number | null>(null);
+  let syncTimer: ReturnType<typeof setTimeout> | null = null;
   // Transmitiendo: el picker muestra los controles de la TV en vez de mpv.
   let casting = $state(false);
   let castFoco = $state(0);
@@ -695,6 +704,10 @@
       castEnvio = envio;
       castAudio = audioN;
       castDesfase = desfase;
+      castTracks = tracks;
+      castSubs = subs;
+      menuTv = null;
+      syncPendiente = null;
       subsTv = null;
       subsTvActual = subs ? "automáticos" : "";
       tvTermino = null;
@@ -862,6 +875,8 @@
 
   // ---- Controles con la película en la TV ----
 
+  const audiosTv = $derived(castTracks.filter((t) => t.kind === "audio"));
+
   type CastBtn = { id: string; label: string };
   const castBtns = $derived<CastBtn[]>(
     tvTermino != null
@@ -875,17 +890,122 @@
           ...subsTv.map((o, i) => ({ id: `sub:${i}`, label: o.label })),
           { id: "sub:volver", label: "↩ Volver" },
         ]
+      : menuTv === "audio"
+      ? [
+          ...audiosTv.map((a, i) => ({
+            id: `aud:${i + 1}`,
+            label: `${i + 1 === castAudio ? "● " : ""}${etiquetaAudio(a, i)}`,
+          })),
+          { id: "menu:volver", label: "↩ Volver" },
+        ]
+      : menuTv === "sync"
+      ? [
+          { id: "sync:-1", label: "⏪ Antes 1 s" },
+          { id: "sync:-0.25", label: "◀ Antes 0,25 s" },
+          { id: "sync:0.25", label: "▶ Después 0,25 s" },
+          { id: "sync:1", label: "⏩ Después 1 s" },
+          { id: "sync:0", label: "↺ Sin corrimiento" },
+          { id: "menu:volver", label: "↩ Volver" },
+        ]
       : [
           { id: "pausa", label: cast.estado?.estado === "PAUSED" ? "▶ Seguir" : "⏸ Pausa" },
           { id: "atras", label: "⏪ 30 s" },
           { id: "adelante", label: "⏩ 30 s" },
-          { id: "mudo", label: "🔇 No se oye" },
+          { id: "vol-", label: "🔉 Bajar volumen" },
+          { id: "vol+", label: "🔊 Subir volumen" },
+          ...(audiosTv.length > 1 ? [{ id: "audio", label: "🎧 Audio" }] : []),
           { id: "subs", label: buscandoSubsTv ? "💬 Buscando…" : "💬 Subtítulos" },
+          ...(castSubs ? [{ id: "sync", label: "⏱ Sincronía" }] : []),
+          { id: "mudo", label: "🔇 No se oye" },
           { id: "aqui", label: "💻 Seguir aquí" },
           { id: "detener", label: "⏹ Detener" },
           { id: "navegar", label: "↩ Seguir navegando" },
         ],
   );
+
+  // "Latino · E-AC3 5.1" / "Pista 2 · AAC". Sin idioma ni título, el número.
+  function etiquetaAudio(a: ProbeTrack, i: number): string {
+    const nombre = [a.lang && a.lang !== "und" ? a.lang.toUpperCase() : "", a.title]
+      .filter(Boolean)
+      .join(" — ");
+    return `${nombre || `Pista ${i + 1}`} · ${nombreAudio(a.codec)}`;
+  }
+
+  // Vuelve a cargar lo mismo en la TV, en el mismo minuto, con otro audio,
+  // subtítulo o corrimiento (la TV no deja cambiarlos en caliente: guarda el
+  // subtítulo del principio y solo toca la primera pista de audio).
+  async function recargarTv(
+    cambio: { audio?: number; subs?: string | null; desfase?: number },
+    titulo: string,
+  ): Promise<boolean> {
+    if (!castEnvio) return false;
+    const audio = cambio.audio ?? castAudio;
+    const subs = cambio.subs !== undefined ? cambio.subs : castSubs;
+    const desfase = cambio.desfase ?? castDesfase;
+    const desde = Math.max(0, Math.floor(cast.estado?.pos ?? tvPos) - 3);
+    darGracia(45_000);
+    try {
+      const audioOk = await invoke<boolean>("cast_play", {
+        ...castEnvio,
+        audio,
+        desde,
+        subs,
+        subsDesfase: subs ? desfase : 0,
+      });
+      castEnvio = { ...castEnvio, audio };
+      if (audio !== castAudio) cambiarRasgos(rasgosDe(castTracks, audio), desde);
+      castAudio = audio;
+      castSubs = subs;
+      castDesfase = desfase;
+      notify(
+        "info",
+        titulo,
+        audioOk ? "La TV retoma en el mismo minuto." : "Esta versión no deja elegir el audio en la TV: suena el primero.",
+      );
+      return true;
+    } catch (e) {
+      notify("warn", "La TV no aceptó el cambio", String(e));
+      return false;
+    }
+  }
+
+  function corrimientoTxt(s: number): string {
+    if (Math.abs(s) < 0.001) return "sin corrimiento";
+    const v = Math.abs(s).toFixed(2).replace(".", ",");
+    return s > 0 ? `${v} s después` : `${v} s antes`;
+  }
+
+  // Cada toque suma; se manda a la TV cuando se deja de tocar (una recarga,
+  // no una por toque).
+  function correrSubs(d: number) {
+    const base = syncPendiente ?? castDesfase;
+    syncPendiente = d === 0 ? 0 : Math.round((base + d) * 100) / 100;
+    if (syncTimer) clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => {
+      syncTimer = null;
+      const v = syncPendiente;
+      syncPendiente = null;
+      if (v == null || v === castDesfase) return;
+      void recargarTv({ desfase: v }, `Subtítulos: ${corrimientoTxt(v)}`);
+    }, 1500);
+  }
+
+  async function volumenTv(d: number) {
+    const st = cast.estado;
+    if (!st) return;
+    const v = Math.max(0, Math.min(1, Math.round((st.volumen + d) * 10) / 10));
+    if (st.silencio) await castControl("silencio", 0);
+    await castControl("volumen", v);
+    cast.estado = { ...st, volumen: v, silencio: false };
+  }
+
+  function saltarConBarra(e: MouseEvent) {
+    const st = cast.estado;
+    if (!st || !(st.duracion > 0)) return;
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const f = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    void castControl("saltar", Math.floor(f * st.duracion));
+  }
 
   // Seguimiento de la TV mientras está en pantalla: si deja de reportar (la
   // cortaron desde la TV) se pasa a "terminó" en vez de quedar en "Cargando…".
@@ -944,14 +1064,9 @@
       notify("warn", "No se pudo bajar el subtítulo", String(e));
       return;
     }
-    const desde = Math.max(0, Math.floor(cast.estado?.pos ?? tvPos) - 3);
-    darGracia(45_000);
-    try {
-      await invoke("cast_play", { ...castEnvio, desde, subs });
+    // Otro subtítulo viene con su propio tiempo: el corrimiento vuelve a 0.
+    if (await recargarTv({ subs, desfase: 0 }, o ? "Subtítulos cambiados" : "Subtítulos apagados")) {
       subsTvActual = o ? o.label : "";
-      notify("info", o ? "Subtítulos cambiados" : "Subtítulos apagados", "La TV retoma en el mismo minuto.");
-    } catch (e) {
-      notify("warn", "La TV no aceptó el cambio", String(e));
     }
   }
 
@@ -978,8 +1093,35 @@
 
   async function castAccion(id: string) {
     if (id.startsWith("sub:")) return void elegirSubTv(id);
+    if (id === "menu:volver") {
+      menuTv = null;
+      castFoco = 0;
+      return;
+    }
+    if (id.startsWith("aud:")) {
+      const n = Number(id.slice(4));
+      menuTv = null;
+      castFoco = 0;
+      if (n !== castAudio) void recargarTv({ audio: n }, `Audio: ${etiquetaAudio(audiosTv[n - 1], n - 1)}`);
+      return;
+    }
+    if (id.startsWith("sync:")) return correrSubs(Number(id.slice(5)));
     try {
       switch (id) {
+        case "audio":
+          menuTv = "audio";
+          castFoco = Math.max(0, castAudio - 1);
+          break;
+        case "sync":
+          menuTv = "sync";
+          castFoco = 0;
+          break;
+        case "vol-":
+          await volumenTv(-0.1);
+          break;
+        case "vol+":
+          await volumenTv(0.1);
+          break;
         case "subs":
           await abrirSubsTv();
           break;
@@ -1771,6 +1913,9 @@
         if (subsTv != null) {
           subsTv = null;
           castFoco = 0;
+        } else if (menuTv != null) {
+          menuTv = null;
+          castFoco = 0;
         } else void castAccion("navegar");
       }
       return;
@@ -1907,15 +2052,28 @@
         {:else}
         <p class="sp-playing">📺 En {castTvNombre}</p>
         <p class="sp-playing-title">{playingTitle}</p>
-        <div class="sp-bar sp-cast-bar"><div class="sp-bar-fill" style="width: {pct}%"></div></div>
+        <button
+          class="sp-bar sp-cast-bar"
+          aria-label="Saltar a otro minuto"
+          title="Clic para saltar a ese minuto"
+          onclick={saltarConBarra}
+        ><div class="sp-bar-fill" style="width: {pct}%"></div></button>
         <p class="sp-tor-line">
           {#if !st || st.estado === "LOADING" || st.estado === "BUFFERING"}Cargando…
           {:else if st.estado === "PAUSED"}En pausa · {fmtTiempo(st.pos)} de {fmtTiempo(st.duracion)}
           {:else if st.estado === "SIN_CONEXION"}La TV no responde…
           {:else}{fmtTiempo(st.pos)} de {fmtTiempo(st.duracion)}{/if}
         </p>
+        {#if audiosTv.length > 1 && audiosTv[castAudio - 1]}
+          <p class="sp-tor-line">🎧 Audio: {etiquetaAudio(audiosTv[castAudio - 1], castAudio - 1)}</p>
+        {/if}
         {#if subsTvActual}
           <p class="sp-tor-line">💬 Subtítulos: {subsTvActual}</p>
+        {/if}
+        {#if st && st.estado !== "LOADING"}
+          <p class="sp-tor-meta">
+            {st.silencio ? "🔇 En silencio" : `🔊 Volumen ${Math.round(st.volumen * 100)}%`}
+          </p>
         {/if}
         {#if st?.aviso === "SUBS_SIN_ACCESO"}
           <p class="sp-tor-slow">
@@ -1925,6 +2083,14 @@
         {/if}
         {#if subsTv != null}
           <p class="sp-tor-line">Elige subtítulos · la TV retoma en el mismo minuto</p>
+        {:else if menuTv === "audio"}
+          <p class="sp-tor-line">Elige el audio · la TV retoma en el mismo minuto</p>
+        {:else if menuTv === "sync"}
+          <p class="sp-tor-line">
+            Subtítulos {corrimientoTxt(syncPendiente ?? castDesfase)}{syncPendiente != null
+              ? " · se aplica al dejar de tocar"
+              : ""}
+          </p>
         {/if}
         <div class="sp-cast-btns" class:sp-cast-subs={subsTv != null}>
           {#each castBtns as b, i (b.id)}
@@ -2494,7 +2660,10 @@
     border-radius: 4px;
     padding: 0 5px;
   }
-  .sp-cast-bar { width: min(460px, 80vw); }
+  .sp-cast-bar {
+    width: min(460px, 80vw); height: 10px; padding: 0; border: 0;
+    display: block; cursor: pointer;
+  }
   .sp-tv-avisos {
     margin: 2px 0 6px; max-width: 520px; padding-left: 1.2em;
     text-align: left; color: #9a9aa6; font-size: 13px; line-height: 1.5;
