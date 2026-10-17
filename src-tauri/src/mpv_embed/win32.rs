@@ -52,6 +52,10 @@ thread_local! {
     static CURSOR_GEN: Cell<u64> = const { Cell::new(0) };
     /// Ya se pidió WM_MOUSELEAVE (hay que pedirlo de nuevo tras cada salida).
     static SIGUIENDO_MOUSE: Cell<bool> = const { Cell::new(false) };
+    /// Último punto de WM_MOUSEMOVE (lParam crudo). Windows manda movimientos
+    /// sintéticos sin que el mouse se mueva (cambia algo bajo el cursor, se
+    /// oculta el puntero…): sin comparar, la barra aparecía sola cada tanto.
+    static ULTIMO_MOUSE: Cell<Option<LPARAM>> = const { Cell::new(None) };
     static VISIBLE: Cell<bool> = const { Cell::new(false) };
 }
 
@@ -328,6 +332,9 @@ unsafe extern "system" fn wndproc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LR
             return 0;
         }
         WM_MOUSEMOVE => {
+            if ULTIMO_MOUSE.with(|u| u.replace(Some(lp))) == Some(lp) {
+                return 0;
+            }
             if !SIGUIENDO_MOUSE.with(|s| s.replace(true)) {
                 let mut t = TRACKMOUSEEVENT {
                     cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
@@ -344,6 +351,8 @@ unsafe extern "system" fn wndproc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LR
         }
         WM_MOUSELEAVE => {
             SIGUIENDO_MOUSE.with(|s| s.set(false));
+            // Volver a entrar por el mismo punto sí es movimiento.
+            ULTIMO_MOUSE.with(|u| u.set(None));
             super::raton_sale();
             return 0;
         }
