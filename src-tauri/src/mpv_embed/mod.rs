@@ -715,6 +715,113 @@ fn hide_overlay(id: &str) {
     mpv_cmd2("osd-overlay", &[id, "none", "", "0", "0", "0", "no", "no"]);
 }
 
+// ─────────────────────────────── diagnóstico ───────────────────────────────
+//
+// Tecla "i": lo necesario para saber POR QUÉ se traba un video. ¿Decodifica
+// la GPU o el procesador? ¿Se pierden cuadros al mostrar (GPU/compositor) o
+// al decodificar? ¿O es la red, que no llena el búfer? Se refresca cada
+// segundo mientras está a la vista.
+
+/// Encima de todo, portada incluida (z = id, ver `put_overlay`).
+const DIAG_ID: &str = "50";
+
+thread_local! {
+    /// Generación del diagnóstico: 0 = apagado. Cada encendido invalida el
+    /// tick anterior (mismo truco que BAR_GEN), así apagar y prender rápido
+    /// no deja dos timers dibujando.
+    static DIAG_GEN: Cell<u64> = const { Cell::new(0) };
+    static DIAG_PROX: Cell<u64> = const { Cell::new(1) };
+}
+
+fn toggle_diagnostico() {
+    if DIAG_GEN.with(|g| g.replace(0)) != 0 {
+        hide_overlay(DIAG_ID);
+        return;
+    }
+    let gen = DIAG_PROX.with(|p| {
+        let n = p.get();
+        p.set(n + 1);
+        n
+    });
+    DIAG_GEN.with(|g| g.set(gen));
+    draw_diagnostico();
+    superficie::cada(1000, move || {
+        if DIAG_GEN.with(|g| g.get()) != gen {
+            return false;
+        }
+        // Suspendido o detenido: se apaga, no queda esperando al volver.
+        if !RUNNING.load(Ordering::SeqCst) {
+            DIAG_GEN.with(|g| g.set(0));
+            hide_overlay(DIAG_ID);
+            return false;
+        }
+        draw_diagnostico();
+        true
+    });
+}
+
+fn texto_diagnostico() -> Vec<String> {
+    let hw = get_string("hwdec-current");
+    let deco = if hw.is_empty() || hw == "no" {
+        "procesador (la GPU no decodifica)".to_string()
+    } else {
+        format!("GPU ({hw})")
+    };
+    let ctx = get_string("current-gpu-context");
+    let salida = if ctx.is_empty() {
+        get_string("current-vo")
+    } else {
+        format!("{} / {ctx}", get_string("current-vo"))
+    };
+    let esperando = if get_bool("paused-for-cache") {
+        " · ESPERANDO DATOS"
+    } else {
+        ""
+    };
+    vec![
+        "Diagnóstico  (i para cerrar)".into(),
+        format!("Decodifica: {deco}"),
+        format!("Salida: {salida}"),
+        format!(
+            "Video: {} {}×{} {}",
+            get_string("video-format"),
+            get_i64("width"),
+            get_i64("height"),
+            get_string("video-params/pixelformat")
+        ),
+        format!(
+            "Cuadros: {:.1} de {:.3} fps · pantalla {:.0} Hz",
+            get_f64("estimated-vf-fps"),
+            get_f64("container-fps"),
+            get_f64("display-fps")
+        ),
+        format!(
+            "Perdidos: {} al mostrar · {} al decodificar · {} a destiempo",
+            get_i64("frame-drop-count"),
+            get_i64("decoder-frame-drop-count"),
+            get_i64("mistimed-frame-count")
+        ),
+        format!(
+            "Red: búfer {:.0} s · {:.1} MB/s{esperando}",
+            get_f64("demuxer-cache-duration"),
+            get_i64("cache-speed") as f64 / 1e6
+        ),
+    ]
+}
+
+fn draw_diagnostico() {
+    let o = osd();
+    let size = fs(o.k, 17.0);
+    let m = (20.0 * o.k) as i32;
+    let txt = texto_diagnostico().join("\\N");
+    put_overlay(
+        DIAG_ID,
+        &format!(
+            "{{\\an7\\pos({m},{m})\\fs{size}\\bord2\\shad0\\1c&HFFFFFF&\\3c&H000000&}}{txt}"
+        ),
+    );
+}
+
 /// Quita el bar (fondo + textos).
 fn clear_bar() {
     for id in [BAR_BG_ID, BAR_FG_ID, BAR_SEEK_ID] {
@@ -2079,6 +2186,10 @@ fn tecla(kn: &str, mpv: Option<String>) {
         }
         "v" => {
             open_video_menu();
+            return;
+        }
+        "i" => {
+            toggle_diagnostico();
             return;
         }
         _ => {}

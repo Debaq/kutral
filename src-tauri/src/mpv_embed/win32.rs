@@ -196,6 +196,16 @@ pub(super) fn mostrar() {
         ShowWindow(hijo(), SW_SHOW);
         SetFocus(hijo());
     }
+    // WebView2 debajo del video seguía dibujando (animaciones, sondeos) y
+    // Windows componía las dos capas en cada cuadro: le quitaba GPU al video.
+    // Oculto deja de pintar, igual que el webview en Linux (gtk.rs). Los
+    // timers del front (cacheWatch, historial) siguen a su ritmo porque
+    // `additionalBrowserArgs` de tauri.conf.json apaga el estrangulamiento de
+    // Chromium para páginas ocultas (sin eso, a los 5 min: uno por minuto).
+    if let Some(win) = super::APP.get().and_then(|a| tauri::Manager::get_webview_window(a, "main")) {
+        let wv: &tauri::Webview = win.as_ref();
+        let _ = wv.hide();
+    }
 }
 
 /// Oculta el video; el teclado vuelve a la interfaz (hilo main).
@@ -206,7 +216,10 @@ pub(super) fn ocultar() {
         ShowWindow(hijo(), SW_HIDE);
     }
     if let Some(win) = super::APP.get().and_then(|a| tauri::Manager::get_webview_window(a, "main")) {
+        let wv: &tauri::Webview = win.as_ref();
+        let _ = wv.show();
         let _ = win.set_focus();
+        let _ = wv.set_focus();
     }
 }
 
