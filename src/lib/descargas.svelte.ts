@@ -185,6 +185,52 @@ export async function descargaEnCurso(
 }
 
 /**
+ * El torrent de alguna de estas fuentes ya está en la sesión, pero sin fila
+ * que lo ate al título (se perdió, o se bajó antes de que existiera): sin
+ * esto Descubrir lo ignoraba, probaba el debrid fuente por fuente y recién al
+ * final caía en el torrent que ya estaba bajado. Se adopta: queda la fila
+ * (completa si terminó) y desde ahí la ficha y Descubrir lo ven solos.
+ *
+ * Solo películas: en una serie el torrent suele ser un pack y la ruta del
+ * primer archivo no es la del capítulo pedido.
+ */
+export async function adoptarDeSesion(
+  clave: string,
+  fuentes: { info_hash: string | null; title: string; quality: string }[],
+): Promise<{ fila: FilaDescarga; torrent: TorrentStatus } | null> {
+  if (!clave || !fuentes.length) return null;
+  let lista: TorrentStatus[];
+  try {
+    lista = await invoke<TorrentStatus[]>("torrent_list");
+  } catch {
+    return null;
+  }
+  const porHash = new Map(lista.map((t) => [t.info_hash.toLowerCase(), t]));
+  for (const s of fuentes) {
+    const t = s.info_hash ? porHash.get(s.info_hash.toLowerCase()) : undefined;
+    if (!t || t.state === "error" || !t.path) continue;
+    if (t.finished) {
+      const size = await invoke<number | null>("local_file_size", { path: t.path }).catch(
+        () => null,
+      );
+      if (size === null) continue;
+    }
+    await registrarDescarga({
+      clave,
+      infoHash: t.info_hash,
+      ruta: t.path,
+      releaseTitle: s.title,
+      quality: s.quality,
+      sizeBytes: t.size_bytes,
+      completa: t.finished,
+    });
+    const fila = descargas.filas.find((f) => f.clave === clave && f.season === -1 && f.episode === -1);
+    if (fila) return { fila, torrent: t };
+  }
+  return null;
+}
+
+/**
  * Lo mismo que `descargaEnCurso`, para todas las filas a medias de una vez.
  * Va al arrancar, con la sesión torrent ya restaurada: lo que terminó con la
  * app cerrada queda completo y lo que ya no está en la cola deja de figurar

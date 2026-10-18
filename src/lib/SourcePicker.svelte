@@ -43,6 +43,7 @@
   import {
     descargaUsable,
     descargaEnCurso,
+    adoptarDeSesion,
     registrarDescarga,
     olvidarDescarga,
     estadoDescarga,
@@ -259,6 +260,14 @@
   // (array y no Set: $state no rastrea mutaciones de Set sin svelte/reactivity)
   let descartadas = $state<string[]>([]);
   let torrentCancel = false;
+  // Cerrado el selector, lo que quedaba en vuelo (probar fuentes en el debrid,
+  // esperar un torrent) no puede terminar abriendo el reproductor: volver a
+  // entrar arrancaba otra búsqueda y las dos lanzaban mpv una encima de otra.
+  let vivo = true;
+  $effect(() => () => {
+    vivo = false;
+    torrentCancel = true;
+  });
   const SLOW_AFTER_MS = 45_000;
 
   // Índices de navegación: filas (0..n-1), luego "web" (n), luego "volver" (n+1).
@@ -461,6 +470,22 @@
         }
       }
       ordenarFuentes(srcs, kind);
+      if (!vivo) return;
+
+      // El torrent de una de estas fuentes ya está en la sesión aunque no
+      // haya fila que lo ate al título: se ve desde ahí, no desde el debrid.
+      if (!local && !descargarSolo && season == null && episode == null) {
+        const adoptada = await adoptarDeSesion(
+          clave,
+          srcs.map((s) => ({ info_hash: hashDe(s), title: s.title, quality: s.quality })),
+        );
+        if (adoptada) {
+          local = adoptada.torrent.finished
+            ? srcDeDescarga(adoptada.fila)
+            : srcDeBajada(adoptada.fila);
+          dbg(`ya estaba en la sesión torrent: ${adoptada.fila.ruta}`);
+        }
+      }
 
       if (descargarSolo) {
         // Solo se puede bajar lo que es torrent: un enlace directo de web no
@@ -577,6 +602,7 @@
   }
 
   async function launch(url: string, s: Src, desdeSegundos?: number) {
+    if (!vivo) return;
     resolvingMsg = "Abriendo reproductor…";
     desdeLocal = !!s.local;
     // Contexto para el buscador de subtítulos global (SubsService).
@@ -1305,6 +1331,7 @@
     const rechazadas: Src[] = [];
 
     for (let i = startIdx; i < view.length && tried < MAX_TRIES; i++) {
+      if (!vivo) return;
       const s = view[i];
       if (!s.magnet && !s.url) { dbg(`#${i} SKIP (sin magnet ni url)`); continue; }
       // La que ya baja en este equipo: del torrent de la sesión, sin debrid.
