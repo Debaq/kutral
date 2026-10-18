@@ -239,10 +239,21 @@ pub struct WebStatus {
     pub url: Option<String>,
 }
 
+/// IP que va en la URL del control. Primero la de la interfaz con la ruta por
+/// defecto (la del wifi/cable de la casa): en Windows `local_ip()` puede
+/// devolver la de un adaptador virtual (Hyper-V, WSL, VirtualBox, VPN), que el
+/// celular nunca alcanza. El `connect` de UDP no manda nada: solo elige ruta.
 fn local_ip() -> String {
-    local_ip_address::local_ip()
+    let por_ruta = std::net::UdpSocket::bind("0.0.0.0:0")
+        .and_then(|s| s.connect("8.8.8.8:80").map(|_| s))
+        .and_then(|s| s.local_addr())
+        .map(|a| a.ip())
+        .ok()
+        .filter(|ip| !ip.is_loopback() && !ip.is_unspecified());
+    por_ruta
+        .or_else(|| local_ip_address::local_ip().ok())
         .map(|i| i.to_string())
-        .unwrap_or_else(|_| "127.0.0.1".into())
+        .unwrap_or_else(|| "127.0.0.1".into())
 }
 
 /// Key de TMDb que usa el control web para buscar y listar. El backend no la

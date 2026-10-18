@@ -2,6 +2,8 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import type { WebStatus } from "$lib/tipos";
+  import RemoteQr from "$lib/RemoteQr.svelte";
+  import { redInfo } from "$lib/cast.svelte";
 
   let {
     open = $bindable(false),
@@ -18,6 +20,24 @@
   let busy = $state(false);
   let copied = $state(false);
   let err = $state<string | null>(null);
+  // Firewall activo en este equipo: el celular puede no llegar al puerto.
+  let firewall = $state("");
+  let copiedCmd = $state(false);
+
+  // Comando para abrir el puerto del control, según el firewall que haya.
+  const comandoFirewall = $derived.by(() => {
+    const p = st.port ?? portInput;
+    switch (firewall) {
+      case "Windows Defender":
+        return `netsh advfirewall firewall add rule name="Kutral control" dir=in action=allow protocol=TCP localport=${p}`;
+      case "firewalld":
+        return `sudo firewall-cmd --permanent --add-port=${p}/tcp && sudo firewall-cmd --reload`;
+      case "ufw":
+        return `sudo ufw allow ${p}/tcp`;
+      default:
+        return "";
+    }
+  });
   let card: HTMLDivElement | null = $state(null);
 
   async function refresh() {
@@ -31,7 +51,10 @@
     }
   }
 
-  onMount(refresh);
+  onMount(() => {
+    void refresh();
+    void redInfo().then((r) => (firewall = r?.firewall ?? ""));
+  });
 
   $effect(() => {
     if (open) {
@@ -80,6 +103,15 @@
     }
   }
 
+  async function copyCmd() {
+    if (!comandoFirewall) return;
+    try {
+      await navigator.clipboard.writeText(comandoFirewall);
+      copiedCmd = true;
+      setTimeout(() => (copiedCmd = false), 1500);
+    } catch {}
+  }
+
   async function copy() {
     if (!st.url) return;
     try {
@@ -109,10 +141,27 @@
         <span class="title">Servidor web activo</span>
       </div>
       {#if st.url}
+        <!-- La URL lleva el token: a mano no se copia. El QR es la vía. -->
+        <div class="qr">
+          <RemoteQr url={st.url} label="Escanea con el celular" size={160} />
+        </div>
         <div class="url-row">
           <code class="url">{st.url}</code>
           <button data-nav class="copy" onclick={copy} title="Copiar">
             {copied ? "✓" : "⧉"}
+          </button>
+        </div>
+      {/if}
+      {#if comandoFirewall}
+        <p class="fw">
+          ¿El celular no abre la página? El firewall ({firewall}) puede estar
+          tapando el puerto {st.port}. Ábrelo una vez con
+          {firewall === "Windows Defender" ? "este comando en una terminal de administrador" : "este comando"}:
+        </p>
+        <div class="url-row">
+          <code class="url">{comandoFirewall}</code>
+          <button data-nav class="copy" onclick={copyCmd} title="Copiar comando">
+            {copiedCmd ? "✓" : "⧉"}
           </button>
         </div>
       {/if}
@@ -213,4 +262,6 @@
   .btn-stop:hover { background: #d8392b; }
   .btn-start:disabled, .btn-stop:disabled { opacity: 0.5; cursor: not-allowed; }
   .err { margin: 8px 0 0; font-size: 11px; color: #d8392b; }
+  .qr { display: flex; justify-content: center; margin-bottom: 4px; }
+  .fw { margin: 10px 0 6px; font-size: 11.5px; line-height: 1.4; color: #c9c9d4; max-width: 320px; }
 </style>
