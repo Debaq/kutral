@@ -1791,7 +1791,7 @@
             <h3 class="subhead">Lo que aprendió de esta TV</h3>
             {#if lecciones.length}
               <ul class="cast-lecciones">
-                {#each lecciones as l (l.rasgo)}
+                {#each lecciones as l (l.clave)}
                   <li class:no={!l.ok}>{l.ok ? "✅" : "❌"} {l.rasgo}</li>
                 {/each}
               </ul>

@@ -128,7 +128,10 @@ export async function buscarTvs(): Promise<CastTv[]> {
   // equipo (routers que no dejan pasar multicast): avisar que tarda.
   const lenta = setTimeout(() => (cast.busquedaLarga = true), 4000);
   try {
-    cast.encontradas = await invoke<CastTv[]>("cast_scan", { ms: 3000 });
+    // Una TV puede contestar por más de una vía (multicast y la búsqueda
+    // directa): una sola entrada por id, que la lista va con clave.
+    const vistas = await invoke<CastTv[]>("cast_scan", { ms: 3000 });
+    cast.encontradas = vistas.filter((t, i) => vistas.findIndex((x) => x.id === t.id) === i);
     // La recordada pudo cambiar de IP: se actualiza sola al reaparecer.
     const misma = cast.tv && cast.encontradas.find((t) => t.id === cast.tv!.id);
     if (misma && (misma.ip !== cast.tv!.ip || misma.puerto !== cast.tv!.puerto)) {
@@ -306,11 +309,19 @@ export function olvidarAprendido(tvId: string) {
 }
 
 /** Lecciones de una TV para mostrarlas en Configuración (sin combinaciones). */
-export function leccionesDe(tvId: string): { rasgo: string; ok: boolean; veces: number }[] {
+/**
+ * `clave` es la del rasgo tal como se aprendió (`v:h264/high`): el nombre que
+ * se muestra NO sirve de clave, porque perfiles distintos del mismo códec
+ * salen iguales ("Video H.264") y la lista de Configuración se rompía.
+ */
+export function leccionesDe(
+  tvId: string,
+): { clave: string; rasgo: string; ok: boolean; veces: number }[] {
   const t = cast.aprendido[tvId] ?? {};
   return Object.entries(t)
     .filter(([k]) => !k.startsWith("c:"))
     .map(([k, l]) => ({
+      clave: k,
       rasgo: k.startsWith("v:") ? `Video ${nombreVideo(k.slice(2))}` : `Audio ${nombreAudio(k.slice(2))}`,
       ok: l.ok,
       veces: l.veces,
