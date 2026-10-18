@@ -50,6 +50,8 @@
     hasTrailer = false,
     hasRd,
     hasLocal = false,
+    localInfo = null,
+    bajandoAhora = false,
     bajando = false,
     puedeBajar = false,
     capitulo = null,
@@ -72,6 +74,10 @@
     hasRd: boolean;
     /** La copia ya está bajada en este equipo: se abre sin red ni debrid. */
     hasLocal?: boolean;
+    /** Calidad y peso de la copia en disco ("1080p · 2.6 GB"). */
+    localInfo?: string | null;
+    /** Lo que reproduce el botón principal se está bajando: se puede ver ya. */
+    bajandoAhora?: boolean;
     /** Ya está en la cola, bajando ahora mismo. */
     bajando?: boolean;
     /** Se puede ofrecer "bajar para después" (descarga local activada). */
@@ -148,14 +154,16 @@
       a.push({
         id: "rd",
         label: progressLabel
-          ? `${hasLocal ? "📁" : "⚡"}  Continuar ${capitulo ? `${capitulo} ` : ""}(${progressLabel})`
-          : capitulo
-            ? `${hasRd ? "⚡" : "▶"}  Ver ${capitulo}`
-            : hasLocal
-            ? "📁  Descubrir desde tu equipo"
-            : hasRd
-              ? "⚡  Ver con debrid"
-              : "▶  Descubrir",
+          ? `${hasLocal ? "📁" : bajandoAhora ? "📥" : "⚡"}  Continuar ${capitulo ? `${capitulo} ` : ""}(${progressLabel})`
+          : hasLocal
+            ? `📁  Ver la versión descargada${capitulo ? ` (${capitulo})` : ""}`
+            : bajandoAhora
+              ? `📥  Ver mientras se baja${capitulo ? ` (${capitulo})` : ""}`
+              : capitulo
+                ? `${hasRd ? "⚡" : "▶"}  Ver ${capitulo}`
+                : hasRd
+                  ? "⚡  Ver con debrid"
+                  : "▶  Descubrir",
         primary: true,
       });
       // El historial guarda el minuto: si hay algo empezado, hace falta la
@@ -163,7 +171,11 @@
       if (progressLabel) a.push({ id: "restart", label: "↻  Empezar de nuevo" });
       // Serie: cualquier otro capítulo, a pantalla completa.
       if (onCapitulos) a.push({ id: "caps", label: "📺  Elegir capítulo" });
-      a.push({ id: "research", label: "🔄  Rebuscar fuentes" });
+      // Con copia en disco es la otra salida: dejarla de lado y elegir de la red.
+      a.push({
+        id: "research",
+        label: hasLocal || bajandoAhora ? "🔎  Buscar otras fuentes" : "🔄  Rebuscar fuentes",
+      });
       // Bajarla ahora para verla después. No aparece si ya está en el disco ni
       // si ya se está bajando: en esos dos casos no hay nada que pedir.
       if (puedeBajar && !hasLocal) {
@@ -502,6 +514,14 @@
     </div>
 
     <aside class="pm-panel" bind:this={panelRef}>
+      {#if hasLocal}
+        <p class="pm-local">
+          📁 Tienes una versión descargada{localInfo ? ` (${localInfo})` : ""}.
+          Arranca al instante, sin internet.
+        </p>
+      {:else if bajandoAhora}
+        <p class="pm-local">📥 Se está bajando en tu equipo: puedes verla mientras termina.</p>
+      {/if}
       <p class="pm-sub">¿Cómo quieres verla?</p>
       <p class="pm-keyhint">↑↓ opciones y trailer · ←→ scroll info · Esc cerrar</p>
       <div class="pm-list">
@@ -810,6 +830,16 @@
     width: 380px;
     align-self: end;
     padding-bottom: 4px;
+  }
+  .pm-local {
+    margin: 0 0 14px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: rgba(120, 190, 120, 0.12);
+    border: 1px solid rgba(120, 190, 120, 0.35);
+    color: #cfe8c8;
+    font-size: 13px;
+    line-height: 1.4;
   }
   .pm-sub {
     margin: 0 0 4px;

@@ -16,6 +16,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { getDb } from "$lib/vera/db";
+import type { TorrentStatus } from "$lib/torrents.svelte";
 
 export type FilaDescarga = {
   clave: string;
@@ -136,6 +137,78 @@ export async function descargaUsable(
 }
 
 /**
+ * La descarga de este título/capítulo que quedó a medias, contrastada con la
+ * sesión torrent. Sin esto, Descubrir no la veía (solo cuenta lo completo),
+ * salía a la red y arrancaba OTRO torrent encima, que además pisaba la fila:
+ * el primero seguía bajando, pero ya nadie sabía de qué título era.
+ *
+ * - Terminó y el poll no alcanzó a verlo: se marca completa y devuelve null
+ *   (desde ahí `descargaUsable` la encuentra).
+ * - Sigue en la sesión: devuelve la fila y su torrent, para verla desde ahí.
+ * - Ya no está en la sesión: es un resto (se quitó de la cola, se borró el
+ *   archivo) y se olvida; si no, la ficha diría "ya se está bajando" siempre.
+ *
+ * Sin sesión torrent (descarga local apagada) no hay cómo saberlo: no se toca.
+ */
+export async function descargaEnCurso(
+  clave: string,
+  season = -1,
+  episode = -1,
+): Promise<{ fila: FilaDescarga; torrent: TorrentStatus } | null> {
+  if (!clave) return null;
+  const fila = descargas.filas.find(
+    (f) =>
+      f.completa === 0 &&
+      f.clave === clave &&
+      f.season === season &&
+      f.episode === episode,
+  );
+  if (!fila) return null;
+  let lista: TorrentStatus[];
+  try {
+    lista = await invoke<TorrentStatus[]>("torrent_list");
+  } catch {
+    return null;
+  }
+  const hash = fila.info_hash.toLowerCase();
+  const t = lista.find((x) => x.info_hash.toLowerCase() === hash);
+  if (!t) {
+    await olvidarDescarga(fila.clave, fila.season, fila.episode, fila.info_hash);
+    return null;
+  }
+  if (t.finished) {
+    await marcarCompleta(t.info_hash);
+    return null;
+  }
+  if (t.state === "error") return null;
+  return { fila, torrent: t };
+}
+
+/**
+ * Lo mismo que `descargaEnCurso`, para todas las filas a medias de una vez.
+ * Va al arrancar, con la sesión torrent ya restaurada: lo que terminó con la
+ * app cerrada queda completo y lo que ya no está en la cola deja de figurar
+ * como "bajando" en la ficha y en la lista de capítulos.
+ */
+export async function reconciliarDescargas(): Promise<void> {
+  if (!descargas.cargado) await cargarDescargas();
+  const pendientes = descargas.filas.filter((f) => f.completa === 0);
+  if (!pendientes.length) return;
+  let lista: TorrentStatus[];
+  try {
+    lista = await invoke<TorrentStatus[]>("torrent_list");
+  } catch {
+    return;
+  }
+  const vivos = new Map(lista.map((t) => [t.info_hash.toLowerCase(), t]));
+  for (const f of pendientes) {
+    const t = vivos.get(f.info_hash.toLowerCase());
+    if (!t) await olvidarDescarga(f.clave, f.season, f.episode, f.info_hash);
+    else if (t.finished) await marcarCompleta(t.info_hash);
+  }
+}
+
+/**
  * Registra (o pisa) la descarga de un título. Se llama al ARRANCAR la bajada,
  * con `completa` en 0: así, si la app se cierra a mitad, la fila ya existe y
  * el poll de la cola la marca completa cuando termine.
@@ -226,27 +299,45 @@ export async function marcarCompleta(infoHash: string): Promise<void> {
   );
 }
 
-/** Olvida la fila (archivo borrado, o el usuario quitó la descarga). */
+/**
+ * Olvida la fila (archivo borrado, o el usuario quitó la descarga). Con
+ * `infoHash`, solo si la fila es de ESE torrent: un intento fallido con otra
+ * fuente no tiene por qué borrar lo que ya estaba bajado o bajando.
+ */
 export async function olvidarDescarga(
   clave: string,
   season = -1,
   episode = -1,
+  infoHash?: string,
 ): Promise<void> {
+  const k = claveEp(clave, season, episode);
+  const hash = infoHash?.toLowerCase();
+  const fila = descargas.filas.find((f) => claveEp(f.clave, f.season, f.episode) === k);
+  if (hash && fila && fila.info_hash.toLowerCase() !== hash) return;
   const db = await getDb();
   if (db) {
     try {
-      await db.execute(
-        "DELETE FROM descargas WHERE clave = $1 AND season = $2 AND episode = $3",
-        [clave, season, episode],
-      );
+      if (hash) {
+        await db.execute(
+          `DELETE FROM descargas WHERE clave = $1 AND season = $2 AND episode = $3
+             AND lower(info_hash) = $4`,
+          [clave, season, episode, hash],
+        );
+      } else {
+        await db.execute(
+          "DELETE FROM descargas WHERE clave = $1 AND season = $2 AND episode = $3",
+          [clave, season, episode],
+        );
+      }
     } catch (e) {
       console.warn("[descargas] no se pudo olvidar:", e);
       return;
     }
   }
-  const k = claveEp(clave, season, episode);
   descargas.filas = descargas.filas.filter(
-    (f) => claveEp(f.clave, f.season, f.episode) !== k,
+    (f) =>
+      claveEp(f.clave, f.season, f.episode) !== k ||
+      (!!hash && f.info_hash.toLowerCase() !== hash),
   );
 }
 

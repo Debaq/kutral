@@ -22,7 +22,7 @@
   import { cargarListas } from "$lib/listas.svelte";
   import { cargarPerfiles } from "$lib/perfiles.svelte";
   import QuienVe from "$lib/QuienVe.svelte";
-  import { cargarDescargas } from "$lib/descargas.svelte";
+  import { cargarDescargas, reconciliarDescargas } from "$lib/descargas.svelte";
   import { cola, cargarCola, arrancarMotor } from "$lib/colaDescargas.svelte";
   import { ayuda } from "$lib/atajos/store.svelte";
   let { children } = $props();
@@ -167,6 +167,8 @@
         // La cola de pendientes se retoma después de levantar la sesión: el
         // motor necesita saber cuántas descargas hay vivas para decidir si
         // puede arrancar la siguiente.
+        // Las filas "bajando" contra lo que de verdad quedó en la sesión.
+        .then(() => reconciliarDescargas())
         .then(() => cargarCola())
         .then(() => { if (cola.filas.length) arrancarMotor(); })
         .catch((e) => console.warn("[torrent init]", e));

@@ -11,7 +11,8 @@
   import { setPlaying } from "$lib/playerState.svelte";
   import { config } from "$lib/config.svelte";
   import SourcePicker from "$lib/SourcePicker.svelte";
-  import { tieneDescarga, estadoDescarga } from "$lib/descargas.svelte";
+  import { tieneDescarga, estadoDescarga, descargaDe } from "$lib/descargas.svelte";
+  import { QLABEL, fmtSize } from "$lib/fuentes";
   import { encolar, yaEnCola } from "$lib/colaDescargas.svelte";
   import { notify } from "$lib/notifStore.svelte";
   import PlayMenu from "$lib/PlayMenu.svelte";
@@ -509,6 +510,21 @@
       ? estadoDescarga(claveSel) === "bajando"
       : false,
   );
+  // Lo que reproduce el botón principal del menú: la película, o en series el
+  // capítulo que sigue. Si ESO está bajado, el menú lo dice y ofrece verlo
+  // desde el disco o salir a buscar fuentes.
+  const localMenu = $derived.by(() => {
+    if (!claveSel || !selected) return null;
+    if (selected.media_type === "movie") return descargaDe(claveSel);
+    const c = capituloSigue;
+    return c ? descargaDe(claveSel, c.season, c.episode) : null;
+  });
+  const bajandoMenu = $derived.by(() => {
+    if (!claveSel || !selected || localMenu) return false;
+    if (selected.media_type === "movie") return bajandoSel;
+    const c = capituloSigue;
+    return c ? estadoDescarga(claveSel, c.season, c.episode) === "bajando" : false;
+  });
   // Pedida pero todavía sin empezar: espera que se libere un lugar.
   const enColaSel = $derived(
     claveSel && selected?.media_type === "movie" ? yaEnCola(claveSel) : false,
@@ -2674,7 +2690,11 @@
     backdropUrl={selected.backdrop_path ? art(selected.backdrop_path, "w1280", 1280) : null}
     hasTrailer={!!(menuTrailerPick.ytKey || menuTrailerPick.apple)}
     hasRd={config.rdLinked}
-    hasLocal={localSel && selected.media_type !== "tv"}
+    hasLocal={!!localMenu}
+    localInfo={localMenu
+      ? [QLABEL[localMenu.quality], fmtSize(localMenu.size_bytes)].filter((x) => x && x !== "—").join(" · ")
+      : null}
+    bajandoAhora={bajandoMenu}
     bajando={bajandoSel || enColaSel}
     puedeBajar={config.torrentLocal && selected.media_type === "movie"}
     capitulo={etiquetaCapitulo(capituloSigue)}

@@ -42,6 +42,7 @@
   import { fallaRd, anotarFallaRd, olvidarFallaRd, type FallaRd } from "$lib/rdFallas.svelte";
   import {
     descargaUsable,
+    descargaEnCurso,
     registrarDescarga,
     olvidarDescarga,
     estadoDescarga,
@@ -178,6 +179,9 @@
   // Swarm lento: pasado este tiempo sin buffer listo ofrecemos pasarlo a la cola.
   let torrentSlow = $state(false);
   let torrentId: number | null = null;
+  // El torrent de la espera ya estaba en la sesión: cancelar no lo borra.
+  let torrentReutilizado = false;
+  let torrentHash = "";
   let torrentSrc: Src | null = null;
   // Lo que suena viene de la descarga local, no del debrid. Se avisa en pantalla
   // y en el centro de notificaciones: el usuario tiene que saber que ahí está
@@ -327,6 +331,25 @@
     };
   }
 
+  // La que todavía está bajando: se ve desde el MISMO torrent de la sesión
+  // (el magnet con solo el hash basta, ya está gestionado), que sigue bajando
+  // en orden mientras se mira. Sin `url`: playFrom la manda a playViaTorrent.
+  function srcDeBajada(f: {
+    release_title: string;
+    ruta: string;
+    info_hash: string;
+    quality: string;
+    size_bytes: number;
+  }): Src {
+    return {
+      ...srcDeDescarga(f),
+      source: "En tu equipo (bajando)",
+      url: null,
+      magnet: `magnet:?xt=urn:btih:${f.info_hash}`,
+      filename: f.ruta.split(/[\\/]/).pop() || null,
+    };
+  }
+
   async function load() {
     loading = true;
     error = "";
@@ -337,6 +360,11 @@
         error = "Falta temporada/episodio.";
         return;
       }
+
+      // La que quedó bajando de antes, mirada contra la sesión torrent: si
+      // terminó la marca completa, si ya no existe la olvida. Va antes que
+      // todo lo demás para que lo de abajo vea el estado real.
+      const enCurso = await descargaEnCurso(clave, season ?? -1, episode ?? -1);
 
       if (descargarSolo) {
         // Bajar dos veces lo mismo es exactamente lo que esto viene a evitar.
@@ -360,28 +388,39 @@
       // ¿Ya la bajaste antes? La copia en disco gana a cualquier fuente de la
       // red, así que se busca ANTES de scrapear: en modo automático ni
       // siquiera hace falta salir a buscar nada.
+      // A medias también cuenta: se ve desde el torrent que ya baja en vez
+      // de arrancar otro.
       let local: Src | null = null;
       const fila = await descargaUsable(clave, season ?? -1, episode ?? -1);
       if (fila) {
         local = srcDeDescarga(fila);
         dbg(`copia local: ${fila.ruta}`);
-        if (autoplay && config.sourceSelect === "auto") {
-          sources = [local];
-          loading = false;
-          await playFrom(0);
-          if (playing || casting) return;
-          // No abrió (archivo corrupto, códec imposible): se olvida y se sigue
-          // por el camino normal. Un archivo que no se puede ver no es una
-          // copia local. Salvo en la TV: ahí puede ser solo que ESA TV no la
-          // reproduce, y en el equipo sí se ve.
-          dbg("la copia local no abrió → a buscar fuentes");
-          if (!destinoTv) {
-            await olvidarDescarga(fila.clave, fila.season, fila.episode);
-            local = null;
-          }
-          loading = true;
-          error = "";
+      } else if (enCurso) {
+        local = srcDeBajada(enCurso.fila);
+        dbg(`bajando en local (${Math.round(enCurso.torrent.pct)}%): ${enCurso.fila.ruta}`);
+      }
+      // El botón del menú ya avisó que es la versión del equipo: se abre aunque
+      // la selección de fuentes esté en manual. Para elegir otra está
+      // "Buscar otras fuentes" (sin autoplay).
+      if (local && autoplay) {
+        sources = [local];
+        loading = false;
+        await playFrom(0);
+        if (playing || casting || torrentCancel) return;
+        dbg("la copia local no abrió → a buscar fuentes");
+        // No abrió (archivo corrupto, códec imposible): se olvida y se sigue
+        // por el camino normal. Un archivo que no se puede ver no es una
+        // copia local. Salvo en la TV: ahí puede ser solo que ESA TV no la
+        // reproduce, y en el equipo sí se ve. La que baja no se olvida: lo
+        // que falló puede ser solo que todavía no hay peers.
+        if (fila && !destinoTv) {
+          await olvidarDescarga(fila.clave, fila.season, fila.episode, fila.info_hash);
+          local = null;
+        } else if (!fila) {
+          local = null;
         }
+        loading = true;
+        error = "";
       }
 
       // Capítulo del pack que venía sonando: sale del mismo torrent, sin
@@ -1268,6 +1307,13 @@
     for (let i = startIdx; i < view.length && tried < MAX_TRIES; i++) {
       const s = view[i];
       if (!s.magnet && !s.url) { dbg(`#${i} SKIP (sin magnet ni url)`); continue; }
+      // La que ya baja en este equipo: del torrent de la sesión, sin debrid.
+      if (s.local && !s.url) {
+        if (await playViaTorrent(s)) return;
+        if (torrentCancel) return;
+        error = "";
+        continue;
+      }
       // Sin debrid no hay a quién pedirle que resuelva el magnet: la fuente
       // pasa directo a la lista de descarga local, sin gastar un intento.
       if (!rdLinked && !s.url) {
@@ -1601,10 +1647,13 @@
     torrentStat = null;
     torrentSrc = s;
     torrentId = null;
+    torrentReutilizado = false;
+    torrentHash = "";
     torrentMsg = "Buscando peers…";
     const t0 = Date.now();
     // El torrent ya estaba (otro capítulo del pack): si este falla, se queda.
     let reutilizado = false;
+    let hashNuevo = "";
     try {
       const added = await addTorrent(
         s.magnet,
@@ -1613,6 +1662,8 @@
         pistaDe(s, season ?? null, episode ?? null),
       );
       reutilizado = added.reutilizado;
+      torrentReutilizado = reutilizado;
+      hashNuevo = torrentHash = added.info_hash;
       if (torrentCancel) return false;
       torrentId = added.id;
       // Queda anotado a QUÉ título pertenece este archivo. Se registra ya (con
@@ -1678,7 +1729,11 @@
         }
       }
       // Se borró el archivo: no hay copia local de este título que ofrecer.
-      void olvidarDescarga(clave, season ?? -1, episode ?? -1);
+      // Solo la fila de ESTE torrent, y solo si se borró: si ya estaba en la
+      // sesión sigue bajando y la fila sigue valiendo.
+      if (hashNuevo && !reutilizado) {
+        void olvidarDescarga(clave, season ?? -1, episode ?? -1, hashNuevo);
+      }
       return false;
     }
   }
@@ -1703,13 +1758,20 @@
     torrenting = false;
     const id = torrentId;
     torrentId = null;
+    // Ya bajaba de antes (la descarga de este título, u otro capítulo del
+    // pack): cancelar la espera no es tirar lo bajado. Queda en la cola.
+    if (id !== null && torrentReutilizado) {
+      startQueuePoll();
+      return;
+    }
     if (id !== null) {
+      const hash = torrentHash || undefined;
       try {
         await removeTorrent(id, true);
       } catch {
         /* si ya no existe, da igual */
       }
-      void olvidarDescarga(clave, season ?? -1, episode ?? -1);
+      void olvidarDescarga(clave, season ?? -1, episode ?? -1, hash);
     }
   }
 
