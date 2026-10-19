@@ -306,17 +306,107 @@ struct Genre {
 }
 
 pub(crate) async fn fetch_json<T: for<'de> Deserialize<'de>>(url: &str) -> Result<T, String> {
-    let resp = client()?
+    if !url.starts_with(TMDB_BASE) {
+        let body = pedir(url).await.map_err(|f| f.texto())?;
+        return parsear(&body);
+    }
+    // TMDb: se pide a la red, y cada respuesta buena queda de respaldo. Si
+    // TMDb no responde se sirve la última copia: la app sigue andando con lo
+    // ya visto en vez de quedarse sin catálogo, fichas ni temporadas.
+    let clave = cache::clave(&["tmdb", &sin_api_key(url)]);
+    let mut falla = String::from("red: TMDb no responde");
+    if !tmdb_caido() {
+        match pedir(url).await {
+            Ok(body) => {
+                let v = parsear(&body)?;
+                cache::respaldo_put(&clave, &body);
+                return Ok(v);
+            }
+            // 4xx dice algo de la petición (clave mala, título inexistente):
+            // una copia vieja lo taparía.
+            Err(f) if !f.es_caida() => return Err(f.texto()),
+            Err(f) => {
+                marcar_caido();
+                falla = f.texto();
+            }
+        }
+    }
+    match cache::respaldo_get(&clave) {
+        Some((body, edad)) => {
+            eprintln!("[tmdb] sin respuesta, uso la copia de hace {} h", edad / 3_600_000);
+            parsear(&body)
+        }
+        None => Err(falla),
+    }
+}
+
+enum Falla {
+    Red(String),
+    Http(reqwest::StatusCode, String),
+}
+
+impl Falla {
+    /// Caída de TMDb (no de la petición): sin red, timeout, 5xx o 429.
+    fn es_caida(&self) -> bool {
+        match self {
+            Falla::Red(_) => true,
+            Falla::Http(st, _) => st.is_server_error() || st.as_u16() == 429,
+        }
+    }
+    fn texto(self) -> String {
+        match self {
+            Falla::Red(e) => format!("red: {}", e),
+            Falla::Http(st, body) => format!("TMDb {}: {}", st, body),
+        }
+    }
+}
+
+async fn pedir(url: &str) -> Result<String, Falla> {
+    let resp = client()
+        .map_err(Falla::Red)?
         .get(url)
         .send()
         .await
-        .map_err(|e| format!("red: {}", e))?;
+        .map_err(|e| Falla::Red(e.to_string()))?;
     let status = resp.status();
-    let body = resp.text().await.map_err(|e| e.to_string())?;
+    let body = resp.text().await.map_err(|e| Falla::Red(e.to_string()))?;
     if !status.is_success() {
-        return Err(format!("TMDb {}: {}", status, body));
+        return Err(Falla::Http(status, body));
     }
-    serde_json::from_str(&body).map_err(|e| format!("parse: {} :: {}", e, body))
+    Ok(body)
+}
+
+fn parsear<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, String> {
+    serde_json::from_str(body).map_err(|e| format!("parse: {} :: {}", e, body))
+}
+
+/// La clave del respaldo sin la api key: dos keys ven lo mismo.
+fn sin_api_key(url: &str) -> String {
+    let Some(i) = url.find("api_key=") else { return url.to_string() };
+    let fin = url[i..].find('&').map(|j| i + j + 1).unwrap_or(url.len());
+    format!("{}{}", &url[..i], &url[fin..])
+}
+
+// Con TMDb caído, cada petición esperaría su timeout (5 s de conexión, 15 de
+// respuesta) antes de caer a la copia: una pantalla con veinte llamadas se
+// congelaba. Tras una caída, durante un minuto se va directo al respaldo.
+static TMDB_CAIDO_HASTA: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+const PAUSA_CAIDA_SECS: u64 = 60;
+
+fn ahora_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn tmdb_caido() -> bool {
+    ahora_secs() < TMDB_CAIDO_HASTA.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn marcar_caido() {
+    TMDB_CAIDO_HASTA.store(ahora_secs() + PAUSA_CAIDA_SECS, std::sync::atomic::Ordering::Relaxed);
+    eprintln!("[tmdb] no responde: {PAUSA_CAIDA_SECS} s con lo guardado");
 }
 
 #[derive(Serialize, Deserialize)]
@@ -374,7 +464,7 @@ pub(crate) async fn tmdb_overview_es(
         "{}/{}/{}?api_key={}&language={}&append_to_response=translations",
         TMDB_BASE, kind, tmdb_id, api_key, espanol
     );
-    let v: serde_json::Value = client().ok()?.get(&url).send().await.ok()?.json().await.ok()?;
+    let v: serde_json::Value = fetch_json(&url).await.ok()?;
 
     let clean = |x: &serde_json::Value| {
         x.as_str().map(str::trim).filter(|t| !t.is_empty()).map(str::to_string)
@@ -1127,5 +1217,18 @@ mod overview_tests {
         assert!(super::tmdb_overview_es(Some("TV"), 209867, "").await.is_none());
         // Id inexistente tampoco explota.
         assert!(super::tmdb_overview_es(Some("TV"), 99999999, &key).await.is_none());
+    }
+}
+
+#[cfg(test)]
+mod respaldo_tests {
+    #[test]
+    fn la_clave_no_lleva_la_api_key() {
+        assert_eq!(
+            super::sin_api_key("https://x/3/movie/1?api_key=K&language=es-MX"),
+            "https://x/3/movie/1?language=es-MX"
+        );
+        assert_eq!(super::sin_api_key("https://x/3/movie/1?language=es&api_key=K"), "https://x/3/movie/1?language=es&");
+        assert_eq!(super::sin_api_key("https://x/3/movie/1"), "https://x/3/movie/1");
     }
 }

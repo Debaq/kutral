@@ -27,6 +27,16 @@ pub const TTL_STATUS_MS: i64 = 30 * 24 * 3600 * 1000;
 pub const TTL_AWARDS_VACIO_MS: i64 = 7 * 24 * 3600 * 1000;
 /// Páginas de catálogo: el orden por popularidad se mueve a diario.
 pub const TTL_LISTA_MS: i64 = 12 * 3600 * 1000;
+/// Respaldo de TMDb: la última respuesta buena de cada URL. Mientras TMDb
+/// responde no se lee; si se cae, la app sigue andando con lo ya visto.
+pub const TTL_RESPALDO_MS: i64 = 30 * 24 * 3600 * 1000;
+
+/// El respaldo se pide desde `fetch_json`, que no recibe el AppHandle.
+static APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
+
+pub fn init(app: &AppHandle) {
+    let _ = APP.set(app.clone());
+}
 
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
@@ -191,9 +201,61 @@ pub fn lista_put(app: &AppHandle, clave: &str, json: &str) {
     }
 }
 
+// --- respaldo de TMDb --------------------------------------------------------
+//
+// El cuerpo crudo de la respuesta, un archivo por URL. La edad sale del mtime:
+// no hace falta envolverlo como las listas porque nunca se lee "fresco".
+
+fn dir_respaldo() -> Option<PathBuf> {
+    let dir = APP.get()?.path().app_cache_dir().ok()?.join("tmdb");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
+}
+
+pub fn respaldo_put(clave: &str, body: &str) {
+    let Some(dir) = dir_respaldo() else { return };
+    if let Err(e) = std::fs::write(dir.join(format!("{clave}.json")), body) {
+        eprintln!("[cache] respaldo_put: {e}");
+    }
+}
+
+/// Cuerpo guardado y su edad en ms, si no pasó de TTL_RESPALDO_MS.
+pub fn respaldo_get(clave: &str) -> Option<(String, i64)> {
+    let f = dir_respaldo()?.join(format!("{clave}.json"));
+    let edad = std::fs::metadata(&f)
+        .and_then(|m| m.modified())
+        .ok()?
+        .elapsed()
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    if edad > TTL_RESPALDO_MS {
+        return None;
+    }
+    Some((std::fs::read_to_string(&f).ok()?, edad))
+}
+
+fn purgar_respaldo() {
+    let Some(dir) = dir_respaldo() else { return };
+    let Ok(rd) = std::fs::read_dir(&dir) else { return };
+    let max = std::time::Duration::from_millis(TTL_RESPALDO_MS as u64);
+    for e in rd.flatten() {
+        let vencido = e
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .map(|d| d > max)
+            .unwrap_or(true);
+        if vencido {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
+}
+
 /// Borra páginas vencidas. Se llama una vez al arrancar: el directorio crece
 /// con cada combinación de filtros y nadie más lo limpia.
 pub fn purgar(app: &AppHandle) {
+    purgar_respaldo();
     let Some(dir) = dir_listas(app) else { return };
     let Ok(rd) = std::fs::read_dir(&dir) else { return };
     let corte = now_ms() - TTL_LISTA_MS;
