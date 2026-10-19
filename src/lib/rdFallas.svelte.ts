@@ -29,6 +29,49 @@ const VENCE: Record<FallaRd["tipo"], number> = {
 /** clave (hash, o hash:TxE si es del capítulo) → falla. */
 export const rdFallas = $state<Record<string, FallaRd>>(leer());
 
+// Y lo contrario: las que RD sí abrió. Quedan en la cuenta de RD, así que la
+// próxima vez abren al instante y van primero. Vencen antes que un DMCA: RD
+// limpia los torrents viejos de la cuenta.
+const K_OK = "rd_ok";
+const VENCE_OK = 7 * DIA;
+
+/** hash → cuándo abrió en RD. */
+export const rdOk = $state<Record<string, number>>(leerOk());
+
+function leerOk(): Record<string, number> {
+  try {
+    const v = JSON.parse(localStorage.getItem(K_OK) || "{}") as Record<string, number>;
+    const ahora = Date.now();
+    for (const [k, t] of Object.entries(v)) {
+      if (typeof t !== "number" || ahora - t > VENCE_OK) delete v[k];
+    }
+    return v;
+  } catch {
+    return {};
+  }
+}
+
+function guardarOk() {
+  try {
+    localStorage.setItem(K_OK, JSON.stringify(rdOk));
+  } catch {
+    /* sin storage: dura lo que dure la sesión */
+  }
+}
+
+/** ¿RD ya abrió esta fuente hace poco? */
+export function okRd(hash: string | null | undefined): boolean {
+  if (!hash) return false;
+  const t = rdOk[hash.toLowerCase()];
+  return !!t && Date.now() - t <= VENCE_OK;
+}
+
+export function anotarOkRd(hash: string | null | undefined) {
+  if (!hash) return;
+  rdOk[hash.toLowerCase()] = Date.now();
+  guardarOk();
+}
+
 function leer(): Record<string, FallaRd> {
   try {
     const v = JSON.parse(localStorage.getItem(K) || "{}") as Record<string, FallaRd>;
@@ -95,6 +138,10 @@ export function anotarFallaRd(hash: string | null | undefined, cap: string, err:
   const f = { ...c, cuando: Date.now() };
   rdFallas[k] = f;
   guardar();
+  if (h in rdOk) {
+    delete rdOk[h];
+    guardarOk();
+  }
   return f;
 }
 

@@ -39,7 +39,14 @@
     fmtBps,
     type MotivoRendicion,
   } from "$lib/cacheWatch.svelte";
-  import { fallaRd, anotarFallaRd, olvidarFallaRd, type FallaRd } from "$lib/rdFallas.svelte";
+  import {
+    fallaRd,
+    anotarFallaRd,
+    olvidarFallaRd,
+    okRd,
+    anotarOkRd,
+    type FallaRd,
+  } from "$lib/rdFallas.svelte";
   import {
     descargaUsable,
     descargaEnCurso,
@@ -251,6 +258,16 @@
   // ofrece verla por torrent en vez de volver a gastar el intento.
   let avisoRd = $state<{ i: number; s: Src; falla: FallaRd } | null>(null);
   let avisoRdFoco = $state(0);
+  // RD abrió una, pero hubo otras que bloqueó por DMCA: antes de reproducir
+  // se ofrece probar esas por torrent (pueden traer el audio o los subtítulos
+  // que la de RD no tiene). Sin respuesta, a los OFERTA_SEG arranca la de RD.
+  const OFERTA_SEG = 10;
+  let ofertaDmca = $state<{ url: string; s: Src; n: number; fallback: boolean } | null>(null);
+  let ofertaSeg = $state(0);
+  let ofertaFoco = $state(0);
+  let ofertaTimer: ReturnType<typeof setInterval> | null = null;
+  // Aviso sobre la lista (no es un error): "ninguna abrió en RD, elige una".
+  let avisoLista = $state("");
   // Lo que estaba sonando cuando la red se rindió, para poder retomarlo.
   let rendicionSrc: { url: string; s: Src } | null = null;
   // El usuario eligió seguir viendo igual: no se le vuelve a ofrecer nada.
@@ -267,6 +284,7 @@
   $effect(() => () => {
     vivo = false;
     torrentCancel = true;
+    if (ofertaTimer) clearInterval(ofertaTimer);
   });
   const SLOW_AFTER_MS = 45_000;
 
@@ -468,6 +486,8 @@
         } catch {
           /* cache check best-effort */
         }
+        // La que RD ya abrió hace poco sigue en la cuenta: abre al instante.
+        for (const s of srcs) if (okRd(hashDe(s))) s.rd_cached = true;
       }
       ordenarFuentes(srcs, kind);
       if (!vivo) return;
@@ -512,6 +532,7 @@
 
       // La copia local va SIEMPRE primera: ninguna fuente de la red le gana.
       sources = local ? [local, ...stack(srcs)] : stack(srcs);
+      agrupar();
       if (!sources.length) {
         error = "No encontramos fuentes para esta película.";
       } else if (autoplay && config.sourceSelect === "auto") {
@@ -1311,6 +1332,7 @@
     }
     resolving = true;
     error = "";
+    avisoLista = "";
     desdeTorrent = false;
     let blocked = 0;
     let tried = 0;
@@ -1352,6 +1374,12 @@
       if (marca) {
         if (elegida && i === startIdx) {
           resolving = false;
+          // Está en el grupo de "se ven por torrent": un DMCA no se levanta y
+          // lo que RD no tenía en caché tampoco va a estar, así que va derecho.
+          if (s.magnet && (marca.tipo === "dmca" || marca.tipo === "sin_cache")) {
+            await verPorTorrent(i, s);
+            return;
+          }
           avisoRd = { i, s, falla: marca };
           avisoRdFoco = 0;
           return;
@@ -1383,6 +1411,7 @@
           url = r.url;
           archivos = r.pack;
           olvidarFallaRd(hashDe(s), capRd);
+          anotarOkRd(hashDe(s));
         }
 
         // Verificación de español real (activable en Configuración).
@@ -1402,6 +1431,7 @@
           }
         }
         recordarPack(clave, season ?? null, s, "rd", archivos);
+        if (ofrecerDmca(url, s, elegida, false)) return;
         await launch(url, s);
         return;
       } catch (e) {
@@ -1444,6 +1474,7 @@
       dbg(`sin ES embebido en ${sinEs} fuentes → fallback a la mejor`);
       try {
         recordarPack(clave, season ?? null, fallback.s, "rd", fallback.archivos);
+        if (ofrecerDmca(fallback.url, fallback.s, elegida, true)) return;
         await launch(fallback.url, fallback.s);
         void mpv(["show-text", "Sin español embebido en las fuentes: usando subtítulos externos", "4000"]);
         return;
@@ -1459,6 +1490,22 @@
     // OTRO: con debrid mandaba la caché de RD, bajando en local manda cuánta
     // gente está compartiendo el archivo.
     let pesadas = 0;
+    // Con debrid, ninguna abrió en RD: no se baja nada por cuenta propia. Se
+    // vuelve a la lista con las de torrent agrupadas y la de más gente
+    // compartiendo ya enfocada; un Enter y se ve mientras baja.
+    if (rdLinked && rechazadas.length && !destinoTv) {
+      resolving = false;
+      agrupar();
+      const mejor = [...rechazadas].sort((a, b) => (b.seeders || 0) - (a.seeders || 0))[0];
+      const iMejor = view.indexOf(mejor);
+      if (iMejor >= 0) focusIdx = iMejor;
+      avisoLista =
+        `Ninguna de las ${tried} fuentes que se probaron abrió en Real-Debrid` +
+        (blocked ? ` (${blocked} bloqueada${blocked > 1 ? "s" : ""} por DMCA)` : "") +
+        `. Elige una de abajo para verla por torrent: empieza apenas haya buffer y sigue bajando mientras la ves.`;
+      scrollFocused();
+      return;
+    }
     if (config.torrentLocal && rechazadas.length) {
       const aptas = rechazadas.filter((c) => {
         if (cabeEnLocal(c)) return true;
@@ -1482,6 +1529,7 @@
     }
 
     resolving = false;
+    agrupar();
     if (error) return; // playViaTorrent ya dejó un mensaje más específico
     if (destinoTv && (tvIncompatibles || tvFallas)) {
       const partes = [
@@ -1516,6 +1564,85 @@
     }
   }
 
+  // ---- Grupos y oferta de las bloqueadas ------------------------------------
+
+  // Con debrid, la lista va en dos grupos: lo que abre (o puede abrir) en RD y
+  // lo que RD ya no pudo, que se ve por torrent. Se reordena solo en momentos
+  // fijos (al cargar, al volver a la lista): reordenar mientras playFrom
+  // recorre la lista le correría los índices.
+  function agrupar() {
+    if (!rdLinked) return;
+    const abren = sources.filter((x) => !marcaRd(x));
+    const no = sources.filter((x) => marcaRd(x));
+    if (abren.length && no.length) sources = [...abren, ...no];
+  }
+
+  const hayGrupos = $derived(rdLinked && view.some((x) => marcaRd(x)) && view.some((x) => !marcaRd(x)));
+
+  // Las DMCA que se pueden ver por torrent, sin contar la que RD abrió.
+  function bloqueadasDmca(sin: Src): Src[] {
+    return view.filter((x) => x !== sin && x.magnet && marcaRd(x)?.tipo === "dmca");
+  }
+
+  // true = quedó la oferta en pantalla (el que llama no lanza). No se ofrece
+  // si el usuario eligió esa fuente a mano, ni al pasar de la TV al equipo.
+  function ofrecerDmca(url: string, s: Src, elegida: boolean, fallback: boolean): boolean {
+    if (elegida || desdeForzado != null || !vivo) return false;
+    const n = bloqueadasDmca(s).length;
+    if (!n) return false;
+    resolving = false;
+    ofertaDmca = { url, s, n, fallback };
+    ofertaFoco = 0;
+    ofertaSeg = OFERTA_SEG;
+    if (ofertaTimer) clearInterval(ofertaTimer);
+    ofertaTimer = setInterval(() => {
+      ofertaSeg--;
+      if (ofertaSeg <= 0) void accionOferta("rd");
+    }, 1000);
+    dbg(`oferta: RD abrió ${s.title.slice(0, 40)}, ${n} DMCA para torrent`);
+    return true;
+  }
+
+  async function accionOferta(id: "rd" | "torrent") {
+    const o = ofertaDmca;
+    if (ofertaTimer) clearInterval(ofertaTimer);
+    ofertaTimer = null;
+    if (!o) return;
+    ofertaDmca = null;
+    if (id === "torrent") {
+      // A la lista, parado en la primera bloqueada: ahí se elige cuál.
+      agrupar();
+      const primera = bloqueadasDmca(o.s)[0];
+      const i = primera ? view.indexOf(primera) : -1;
+      if (i >= 0) focusIdx = i;
+      avisoLista = "Estas Real-Debrid no las abre: elige una para verla por torrent.";
+      scrollFocused();
+      return;
+    }
+    resolving = true;
+    resolvingMsg = "Abriendo reproductor…";
+    try {
+      await launch(o.url, o.s);
+      if (o.fallback) {
+        void mpv(["show-text", "Sin español embebido en las fuentes: usando subtítulos externos", "4000"]);
+      }
+    } catch (e) {
+      error = String(e);
+    } finally {
+      resolving = false;
+    }
+  }
+
+  // Por torrent, pedida a mano: vale aunque la descarga local no esté
+  // activada (es lo único que abre la sesión torrent sin esa opción).
+  async function verPorTorrent(i: number, s: Src) {
+    focusIdx = i;
+    avisoLista = "";
+    if (!(await playViaTorrent(s)) && !error && !torrentCancel) {
+      error = "El torrent no arrancó: casi siempre es falta de gente compartiéndolo. Prueba otra fuente.";
+    }
+  }
+
   // ---- RD ya no pudo con la fuente elegida ----------------------------------
 
   type BotonRd = { id: "torrent" | "reintentar" | "otra"; label: string };
@@ -1539,12 +1666,7 @@
       await playFrom(a.i);
       return;
     }
-    // Pedida a mano: vale aunque la descarga local no esté activada (es lo
-    // único que abre la sesión torrent sin esa opción).
-    focusIdx = a.i;
-    if (!(await playViaTorrent(a.s)) && !error && !torrentCancel) {
-      error = "El torrent no arrancó: casi siempre es falta de gente compartiéndolo. Prueba otra fuente.";
-    }
+    await verPorTorrent(a.i, a.s);
   }
 
   // ---- La red no da ---------------------------------------------------------
@@ -2129,6 +2251,13 @@
       else if (e.key === "Escape" || e.key === "Backspace") void accionRd("otra");
       return;
     }
+    if (ofertaDmca) {
+      e.preventDefault();
+      if (["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(e.key)) ofertaFoco = 1 - ofertaFoco;
+      else if (e.key === "Enter" || e.key === " ") void accionOferta(ofertaFoco === 0 ? "rd" : "torrent");
+      else if (e.key === "Escape" || e.key === "Backspace") void accionOferta("torrent");
+      return;
+    }
     if (rendicion) {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
@@ -2360,6 +2489,32 @@
           {/each}
         </div>
       </div>
+    {:else if ofertaDmca}
+      {@const o = ofertaDmca}
+      <div class="sp-center">
+        <p class="sp-tor-head">⚡ Lista en Real-Debrid</p>
+        <p class="sp-playing-title">{o.s.title}</p>
+        <p class="sp-tor-why">
+          {o.n === 1 ? "Otra versión quedó bloqueada" : `Otras ${o.n} versiones quedaron bloqueadas`}
+          por DMCA en Real-Debrid. Por torrent sí se pueden ver, por si alguna trae
+          mejor audio o subtítulos.
+        </p>
+        <div class="sp-cast-btns">
+          <button
+            class="sp-foot-btn"
+            class:focused={ofertaFoco === 0}
+            onclick={() => void accionOferta("rd")}
+            onmouseenter={() => (ofertaFoco = 0)}
+          >▶ Ver esta ({ofertaSeg})</button>
+          <button
+            class="sp-foot-btn"
+            class:focused={ofertaFoco === 1}
+            onclick={() => void accionOferta("torrent")}
+            onmouseenter={() => (ofertaFoco = 1)}
+          >🧲 Ver las bloqueadas</button>
+        </div>
+        <span class="sp-hint">Arranca sola en {ofertaSeg} s · Esc para ver la lista</span>
+      </div>
     {:else if rendicion}
       {@const m = rendicion}
       <div class="sp-center">
@@ -2440,6 +2595,8 @@
     {:else}
       {#if error}
         <p class="sp-error">{error}</p>
+      {:else if avisoLista}
+        <p class="sp-baja-hint">{avisoLista}</p>
       {/if}
 
       {#if showTabs}
@@ -2464,6 +2621,11 @@
 
       <div class="sp-list">
         {#each view as s, i (s.info_hash || s.url || i)}
+          {#if hayGrupos && i === 0 && !marcaRd(s)}
+            <p class="sp-grupo">⚡ Real-Debrid</p>
+          {:else if hayGrupos && marcaRd(s) && !marcaRd(view[i - 1])}
+            <p class="sp-grupo">🧲 Real-Debrid no las abre · se ven por torrent</p>
+          {/if}
           <button
             data-nav
             class="sp-row"
@@ -2553,6 +2715,13 @@
     background:
       linear-gradient(90deg, rgba(8, 8, 12, 0.95) 0%, rgba(8, 8, 12, 0.72) 55%, rgba(8, 8, 12, 0.88) 100%),
       linear-gradient(0deg, rgba(8, 8, 12, 0.9) 0%, rgba(8, 8, 12, 0.25) 60%);
+  }
+  .sp-grupo {
+    margin: 10px 4px 4px;
+    color: #b59770;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
   }
   .sp-hint-back {
     position: absolute;
