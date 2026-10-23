@@ -82,3 +82,48 @@ function pumpAwards() {
     })();
   }
 }
+
+// OMDb manda los premios solo en inglés: "Won 3 Oscars. 12 wins & 45
+// nominations total". Se traduce frase por frase; lo que no calce con los
+// formatos conocidos queda tal cual antes que inventar.
+const PREMIOS_OMDB: [RegExp, string, string][] = [
+  [/^Oscars?$/, "Óscar", "Óscar"],
+  [/^(Primetime )?Emmys?$/, "Emmy", "Emmy"],
+  [/^Golden Globes?$/, "Globo de Oro", "Globos de Oro"],
+  [/^BAFTA( Film| TV)? Awards?$/, "BAFTA", "BAFTA"],
+];
+
+function nombrePremio(n: number, nombre: string): string {
+  const p = PREMIOS_OMDB.find(([re]) => re.test(nombre));
+  if (!p) return `${n} ${nombre}`;
+  return `${n} ${n === 1 ? p[1] : p[2]}`;
+}
+
+function plural(n: number, uno: string, varios: string): string {
+  return `${n} ${n === 1 ? uno : varios}`;
+}
+
+function fraseOmdbEs(f: string): string {
+  let m = f.match(/^Won (\d+) (.+)$/);
+  if (m) return `Ganó ${nombrePremio(+m[1], m[2])}`;
+  m = f.match(/^Nominated for (\d+) (.+)$/);
+  if (m) return `Nominada a ${nombrePremio(+m[1], m[2])}`;
+  m = f.match(/^(\d+) wins? & (\d+) nominations?( total)?$/);
+  if (m) {
+    return `${plural(+m[1], "premio", "premios")} y ${plural(+m[2], "nominación", "nominaciones")}${m[3] ? " en total" : ""}`;
+  }
+  m = f.match(/^(\d+) wins?( total)?$/);
+  if (m) return `${plural(+m[1], "premio", "premios")}${m[2] ? " en total" : ""}`;
+  m = f.match(/^(\d+) nominations?( total)?$/);
+  if (m) return `${plural(+m[1], "nominación", "nominaciones")}${m[2] ? " en total" : ""}`;
+  return f;
+}
+
+export function premiosOmdbEs(s: string): string {
+  return s
+    .split(/\.\s*/)
+    .map((f) => f.trim())
+    .filter(Boolean)
+    .map(fraseOmdbEs)
+    .join(". ");
+}

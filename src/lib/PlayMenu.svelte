@@ -6,6 +6,8 @@
   import { onMount } from "svelte";
   import { WEB_PLAYER_ENABLED } from "$lib/features";
   import type { OmdbDetail, OmdbRating, PersonMini } from "$lib/tipos";
+  import { config } from "$lib/config.svelte";
+  import { premiosOmdbEs } from "$lib/premios.svelte";
 
   type Action = {
     id: string;
@@ -324,7 +326,15 @@
   }
 
   const tagline = $derived(detail.tagline?.trim() || "");
-  const plotLong = $derived(omdb?.plot?.trim() || detail.overview?.trim() || "");
+  // La sinopsis de TMDb viene en el idioma de la app; la de OMDb, siempre en
+  // inglés. Por eso OMDb solo entra con la app en inglés (es más larga).
+  const ingles = $derived(config.lang === "en-US");
+  const plotLong = $derived(
+    (ingles ? omdb?.plot?.trim() : "") || detail.overview?.trim() || "",
+  );
+  const awards = $derived(
+    omdb?.awards ? (ingles ? omdb.awards : premiosOmdbEs(omdb.awards)) : "",
+  );
   const genres = $derived(detail.genres || []);
   const directors = $derived(detail.directors || []);
   const cast = $derived((detail.cast || []).slice(0, 8));
@@ -443,10 +453,10 @@
         </section>
       {/if}
 
-      {#if omdb?.awards}
+      {#if awards}
         <section class="pm-section">
           <h3 class="pm-h3">🏆 Premios</h3>
-          <p class="pm-text">{omdb.awards}</p>
+          <p class="pm-text">{awards}</p>
         </section>
       {/if}
 
@@ -463,7 +473,7 @@
               </div>
             {/if}
             {#if omdb?.box_office && (!revenue || omdb.box_office !== revenue)}
-              <div><span class="lbl">Box office (USA)</span><span class="val">{omdb.box_office}</span></div>
+              <div><span class="lbl">Taquilla (EE. UU.)</span><span class="val">{omdb.box_office}</span></div>
             {/if}
           </div>
         </section>
