@@ -1075,16 +1075,28 @@ fn activate_focus() {
         }
         // El front junta lo que suena (minuto, audio, subtítulos), avisa qué
         // cambia en la TV y suspende esto si se transmite.
-        Some(BarAction::Tv) => {
-            if let Some(app) = APP.get() {
-                use tauri::Emitter;
-                let _ = app.emit("player:a-tv", ());
-            }
-        }
+        Some(BarAction::Tv) => a_la_tv(),
         Some(BarAction::Exit) => {
             let _ = stop();
         }
         None => {}
+    }
+}
+
+/// El front junta lo que suena (minuto, audio, subtítulos), avisa qué cambia
+/// en la TV y suspende esto si se transmite. Mismas condiciones que el botón
+/// del bar; con la tecla T y sin TV elegida se dice dónde elegirla.
+fn a_la_tv() {
+    if LIVE.load(Ordering::SeqCst) || TRAILER.load(Ordering::SeqCst) {
+        return;
+    }
+    if !TV.load(Ordering::SeqCst) {
+        aviso_osd("Sin TV elegida: búscala en Configuración → Transmitir a la TV", 3000);
+        return;
+    }
+    if let Some(app) = APP.get() {
+        use tauri::Emitter;
+        let _ = app.emit("player:a-tv", ());
     }
 }
 
@@ -2192,6 +2204,11 @@ fn tecla(kn: &str, mpv: Option<String>) {
             toggle_diagnostico();
             return;
         }
+        // T = a la TV, igual que en la lista de fuentes.
+        "t" | "T" => {
+            a_la_tv();
+            return;
+        }
         _ => {}
     }
     let paused = PLAYER_UI.with(|u| u.borrow().paused);
@@ -2755,7 +2772,7 @@ pub fn stop() -> Result<(), String> {
 fn stop_inner() -> Result<(), String> {
     let mpv = MPV.get().ok_or("mpv no inicializado")?;
     end_loading();
-    // También cubre lo cambiado con las teclas z/x/r/t, sin pasar por el panel.
+    // También cubre lo cambiado con las teclas z/x/r/R, sin pasar por el panel.
     save_sub_pos();
     guardar_sync_actual();
     let _ = mpv.command("stop", &[]);
