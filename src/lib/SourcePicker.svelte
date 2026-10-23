@@ -81,6 +81,7 @@
     buscarSubtitulos,
     claveSub,
     enlaceSub,
+    idiomaSubs,
     mejorSubtitulo,
     type OpcionSub,
   } from "$lib/subtitulos";
@@ -258,11 +259,14 @@
   // ofrece verla por torrent en vez de volver a gastar el intento.
   let avisoRd = $state<{ i: number; s: Src; falla: FallaRd } | null>(null);
   let avisoRdFoco = $state(0);
-  // RD abrió una, pero hubo otras que bloqueó por DMCA: antes de reproducir
-  // se ofrece probar esas por torrent (pueden traer el audio o los subtítulos
-  // que la de RD no tiene). Sin respuesta, a los OFERTA_SEG arranca la de RD.
+  // Antes de reproducir solo (sin que se haya elegido la fuente) se ofrece lo
+  // que hay si: otras versiones están bloqueadas por DMCA en RD (por torrent
+  // sí se ven y pueden traer el audio o los subtítulos que esta no tiene), o
+  // la que abrió no trae el idioma elegido. Sin respuesta, a los OFERTA_SEG
+  // arranca la que abrió.
   const OFERTA_SEG = 10;
-  let ofertaDmca = $state<{ url: string; s: Src; n: number; fallback: boolean } | null>(null);
+  type Oferta = { url: string; s: Src; n: number; sinIdioma: boolean; revisadas: number };
+  let oferta = $state<Oferta | null>(null);
   let ofertaSeg = $state(0);
   let ofertaFoco = $state(0);
   let ofertaTimer: ReturnType<typeof setInterval> | null = null;
@@ -573,6 +577,27 @@
     return /espa|spanish|latino|castellano|\blat\b/i.test(t.title || "");
   }
 
+  // El idioma que tiene que traer la fuente (audio o subtítulos): el de los
+  // subtítulos en Configuración, español si están apagados.
+  const IDIOMA_PROBE: Record<string, { iso: RegExp; nombre: RegExp; texto: string }> = {
+    es: { iso: /^(es|spa)/i, nombre: /espa|spanish|latino|castellano|\blat\b/i, texto: "español" },
+    en: { iso: /^(en|eng)/i, nombre: /english|ingl/i, texto: "inglés" },
+    fr: { iso: /^(fr|fra|fre)/i, nombre: /fran|french/i, texto: "francés" },
+    pt: { iso: /^(pt|por)/i, nombre: /portug|brazil/i, texto: "portugués" },
+    it: { iso: /^(it|ita)/i, nombre: /ital/i, texto: "italiano" },
+    de: { iso: /^(de|deu|ger)/i, nombre: /deutsch|german|alem/i, texto: "alemán" },
+    ja: { iso: /^(ja|jpn)/i, nombre: /japan|japon/i, texto: "japonés" },
+    ko: { iso: /^(ko|kor)/i, nombre: /korea|corea/i, texto: "coreano" },
+    zh: { iso: /^(zh|zho|chi)/i, nombre: /chin/i, texto: "chino" },
+  };
+  function idiomaProbe() {
+    return IDIOMA_PROBE[idiomaSubs()] ?? IDIOMA_PROBE.es;
+  }
+  function esDelIdioma(t: ProbeTrack): boolean {
+    const i = idiomaProbe();
+    return i.iso.test(t.lang || "") || i.nombre.test(t.title || "");
+  }
+
   // ffprobe una vez por URL: el filtro de español y la TV preguntan lo mismo.
   const probeCache = new Map<string, Promise<ProbeTrack[]>>();
   function probeTracks(url: string): Promise<ProbeTrack[]> {
@@ -591,8 +616,8 @@
     try {
       const tracks = await probeTracks(url);
       if (!tracks.length) return "unknown";
-      const audio = tracks.some((t) => t.kind === "audio" && isEsProbe(t));
-      const subs = tracks.some((t) => t.kind === "subtitle" && isEsProbe(t));
+      const audio = tracks.some((t) => t.kind === "audio" && esDelIdioma(t));
+      const subs = tracks.some((t) => t.kind === "subtitle" && esDelIdioma(t));
       dbg(`probe: ${tracks.length} pistas, audioES=${audio} subsES=${subs}`);
       if (audio) return "audio";
       if (subs) return "subs";
@@ -1431,7 +1456,7 @@
           }
         }
         recordarPack(clave, season ?? null, s, "rd", archivos);
-        if (ofrecerDmca(url, s, elegida, false)) return;
+        if (await ofrecerOpciones(url, s, elegida, sinEs)) return;
         await launch(url, s);
         return;
       } catch (e) {
@@ -1474,9 +1499,9 @@
       dbg(`sin ES embebido en ${sinEs} fuentes → fallback a la mejor`);
       try {
         recordarPack(clave, season ?? null, fallback.s, "rd", fallback.archivos);
-        if (ofrecerDmca(fallback.url, fallback.s, elegida, true)) return;
+        if (await ofrecerOpciones(fallback.url, fallback.s, elegida, sinEs)) return;
         await launch(fallback.url, fallback.s);
-        void mpv(["show-text", "Sin español embebido en las fuentes: usando subtítulos externos", "4000"]);
+        avisoSinIdioma();
         return;
       } catch (e) {
         lastErr = String(e);
@@ -1584,38 +1609,92 @@
     return view.filter((x) => x !== sin && x.magnet && marcaRd(x)?.tipo === "dmca");
   }
 
+  // Hashes que el sondeo ya vio pasar en RD: volver a la lista y a Descubrir
+  // no lo repite.
+  const sondeadas = new Set<string>();
+  const MAX_SONDEO = 15;
+
+  // ¿Cuáles de las otras bloquea RD por DMCA? Sin esto solo se sabía de las
+  // que se habían intentado, y la búsqueda se para en la primera que abre: la
+  // oferta casi nunca salía. Las bloqueadas quedan anotadas en rdFallas (chip
+  // y grupo "por torrent") igual que si se hubieran intentado.
+  async function sondearDmca(sin: Src) {
+    if (!rdLinked) return;
+    const cand = view
+      .filter((x) => x !== sin && x.magnet && !x.url && !x.local && !marcaRd(x))
+      .filter((x) => {
+        const h = hashDe(x);
+        return !!h && !okRd(h) && !sondeadas.has(h.toLowerCase());
+      })
+      .slice(0, MAX_SONDEO);
+    if (!cand.length) return;
+    try {
+      const r = await invoke<boolean[]>("rd_sondear_dmca", { magnets: cand.map((x) => x.magnet) });
+      cand.forEach((x, k) => {
+        if (r[k]) anotarFallaRd(hashDe(x), capRd, "BLOQUEADO_DMCA: sondeo");
+        else sondeadas.add(hashDe(x)!.toLowerCase());
+      });
+      dbg(`sondeo DMCA: ${r.filter(Boolean).length}/${cand.length} bloqueadas`);
+    } catch (e) {
+      dbg(`sondeo DMCA falló (no bloquea): ${String(e).slice(0, 60)}`);
+    }
+  }
+
   // true = quedó la oferta en pantalla (el que llama no lanza). No se ofrece
   // si el usuario eligió esa fuente a mano, ni al pasar de la TV al equipo.
-  function ofrecerDmca(url: string, s: Src, elegida: boolean, fallback: boolean): boolean {
+  // `revisadas`: cuántas se inspeccionaron sin el idioma (verifyEsTracks).
+  async function ofrecerOpciones(url: string, s: Src, elegida: boolean, revisadas: number): Promise<boolean> {
     if (elegida || desdeForzado != null || !vivo) return false;
+    resolvingMsg = "Revisando las otras versiones…";
+    // Sin la verificación activada no se inspeccionó nada: se mira al menos
+    // la que va a sonar (el hardsub no expone pistas, ver playFrom).
+    const inspeccionar = s._es === undefined && !s.hardsub && !s.local;
+    await Promise.all([
+      sondearDmca(s),
+      inspeccionar ? probeEs(url).then((v) => (s._es = v)) : null,
+    ]);
+    if (!vivo) return false;
     const n = bloqueadasDmca(s).length;
-    if (!n) return false;
+    const sinIdioma = s._es === "none";
+    if (!n && !sinIdioma) return false;
     resolving = false;
-    ofertaDmca = { url, s, n, fallback };
+    oferta = { url, s, n, sinIdioma, revisadas: Math.max(revisadas, 1) };
     ofertaFoco = 0;
     ofertaSeg = OFERTA_SEG;
     if (ofertaTimer) clearInterval(ofertaTimer);
     ofertaTimer = setInterval(() => {
       ofertaSeg--;
-      if (ofertaSeg <= 0) void accionOferta("rd");
+      if (ofertaSeg <= 0) void accionOferta("ver");
     }, 1000);
-    dbg(`oferta: RD abrió ${s.title.slice(0, 40)}, ${n} DMCA para torrent`);
+    dbg(`oferta: ${s.title.slice(0, 40)} sinIdioma=${sinIdioma}, ${n} DMCA para torrent`);
     return true;
   }
 
-  async function accionOferta(id: "rd" | "torrent") {
-    const o = ofertaDmca;
+  function avisoSinIdioma() {
+    void mpv(["show-text", `Sin ${idiomaProbe().texto} en el archivo: usando subtítulos externos`, "4000"]);
+  }
+
+  async function accionOferta(id: "ver" | "otras") {
+    const o = oferta;
     if (ofertaTimer) clearInterval(ofertaTimer);
     ofertaTimer = null;
     if (!o) return;
-    ofertaDmca = null;
-    if (id === "torrent") {
-      // A la lista, parado en la primera bloqueada: ahí se elige cuál.
+    oferta = null;
+    if (id === "otras") {
+      // A la lista, parado en la primera bloqueada (o en otra que no se sepa
+      // sin el idioma): ahí se elige cuál.
       agrupar();
-      const primera = bloqueadasDmca(o.s)[0];
-      const i = primera ? view.indexOf(primera) : -1;
+      const otra = bloqueadasDmca(o.s)[0] ?? view.find((x) => x !== o.s && x._es !== "none");
+      const i = otra ? view.indexOf(otra) : -1;
       if (i >= 0) focusIdx = i;
-      avisoLista = "Estas Real-Debrid no las abre: elige una para verla por torrent.";
+      avisoLista = [
+        o.sinIdioma ? `La que abrió no trae ${idiomaProbe().texto}.` : "",
+        o.n
+          ? "Las bloqueadas por DMCA en Real-Debrid se ven por torrent: elige una."
+          : "Elige otra de la lista.",
+      ]
+        .filter(Boolean)
+        .join(" ");
       scrollFocused();
       return;
     }
@@ -1623,9 +1702,7 @@
     resolvingMsg = "Abriendo reproductor…";
     try {
       await launch(o.url, o.s);
-      if (o.fallback) {
-        void mpv(["show-text", "Sin español embebido en las fuentes: usando subtítulos externos", "4000"]);
-      }
+      if (o.sinIdioma) avisoSinIdioma();
     } catch (e) {
       error = String(e);
     } finally {
@@ -2251,11 +2328,11 @@
       else if (e.key === "Escape" || e.key === "Backspace") void accionRd("otra");
       return;
     }
-    if (ofertaDmca) {
+    if (oferta) {
       e.preventDefault();
       if (["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(e.key)) ofertaFoco = 1 - ofertaFoco;
-      else if (e.key === "Enter" || e.key === " ") void accionOferta(ofertaFoco === 0 ? "rd" : "torrent");
-      else if (e.key === "Escape" || e.key === "Backspace") void accionOferta("torrent");
+      else if (e.key === "Enter" || e.key === " ") void accionOferta(ofertaFoco === 0 ? "ver" : "otras");
+      else if (e.key === "Escape" || e.key === "Backspace") void accionOferta("otras");
       return;
     }
     if (rendicion) {
@@ -2489,29 +2566,39 @@
           {/each}
         </div>
       </div>
-    {:else if ofertaDmca}
-      {@const o = ofertaDmca}
+    {:else if oferta}
+      {@const o = oferta}
+      {@const idioma = idiomaProbe().texto}
       <div class="sp-center">
-        <p class="sp-tor-head">⚡ Lista en Real-Debrid</p>
+        <p class="sp-tor-head">{o.sinIdioma ? `🔎 Sin ${idioma} en esta versión` : "⚡ Lista en Real-Debrid"}</p>
         <p class="sp-playing-title">{o.s.title}</p>
-        <p class="sp-tor-why">
-          {o.n === 1 ? "Otra versión quedó bloqueada" : `Otras ${o.n} versiones quedaron bloqueadas`}
-          por DMCA en Real-Debrid. Por torrent sí se pueden ver, por si alguna trae
-          mejor audio o subtítulos.
-        </p>
+        {#if o.sinIdioma}
+          <p class="sp-tor-why">
+            {o.revisadas > 1 ? `Ninguna de las ${o.revisadas} versiones revisadas trae` : "No trae"}
+            audio ni subtítulos en {idioma} dentro del archivo. Si la ves igual, se buscan
+            subtítulos aparte.
+          </p>
+        {/if}
+        {#if o.n}
+          <p class="sp-tor-why">
+            {o.n === 1 ? "Otra versión quedó bloqueada" : `Otras ${o.n} versiones quedaron bloqueadas`}
+            por DMCA en Real-Debrid. Por torrent sí se pueden ver, por si alguna trae
+            mejor audio o subtítulos.
+          </p>
+        {/if}
         <div class="sp-cast-btns">
           <button
             class="sp-foot-btn"
             class:focused={ofertaFoco === 0}
-            onclick={() => void accionOferta("rd")}
+            onclick={() => void accionOferta("ver")}
             onmouseenter={() => (ofertaFoco = 0)}
           >▶ Ver esta ({ofertaSeg})</button>
           <button
             class="sp-foot-btn"
             class:focused={ofertaFoco === 1}
-            onclick={() => void accionOferta("torrent")}
+            onclick={() => void accionOferta("otras")}
             onmouseenter={() => (ofertaFoco = 1)}
-          >🧲 Ver las bloqueadas</button>
+          >{o.n ? "🧲 Ver las bloqueadas" : "📋 Ver las otras opciones"}</button>
         </div>
         <span class="sp-hint">Arranca sola en {ofertaSeg} s · Esc para ver la lista</span>
       </div>
@@ -2648,9 +2735,9 @@
                 {#if prefScore(s, kind)}<span class="sp-pref">★ Preferida</span>{/if}
                 {#if s.rd_cached}<span class="sp-cached">⚡ Instantáneo</span>{/if}
                 {#if s.hardsub}<span class="sp-hardsub">{HARDSUB_LABEL[s.hardsub] || "🔗 Enlace directo"}</span>{/if}
-                {#if s._es === "audio"}<span class="sp-es-ok">🗣 Audio ES ✓</span>
-                {:else if s._es === "subs"}<span class="sp-es-ok">💬 Subs ES ✓</span>
-                {:else if s._es === "none"}<span class="sp-es-no">Sin español</span>{/if}
+                {#if s._es === "audio"}<span class="sp-es-ok">🗣 Audio {idiomaSubs().toUpperCase()} ✓</span>
+                {:else if s._es === "subs"}<span class="sp-es-ok">💬 Subs {idiomaSubs().toUpperCase()} ✓</span>
+                {:else if s._es === "none"}<span class="sp-es-no">Sin {idiomaProbe().texto}</span>{/if}
                 {#if destinoTv && s._tv}<span class="sp-es-no" title={s._tv}>📺✗ {s._tv}</span>{/if}
                 {#each infoChips(s) as c}<span class="sp-chip">{c}</span>{/each}
                 <span class="sp-prov">{s.source}</span>

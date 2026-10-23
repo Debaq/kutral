@@ -373,6 +373,51 @@ async fn instant_available(token: &str, hashes: &[String]) -> Result<Vec<String>
     Ok(found.into_iter().collect())
 }
 
+/// De a cuántos magnets se sondea a la vez: RD aguanta ~250 pedidos por minuto
+/// y cada sondeo son dos (agregar y borrar).
+const SONDEO_TANDA: usize = 4;
+
+/// ¿RD bloquea este torrent por DMCA? Se agrega y se borra al tiro: RD responde
+/// 451 en addMagnet a lo bloqueado sin bajar nada. Cualquier otro tropiezo
+/// cuenta como "no bloqueado" (no se sabe), salvo el token, que tiene que subir
+/// para que con_token lo renueve.
+async fn sondear(cli: &reqwest::Client, token: &str, magnet: &str) -> Result<bool, String> {
+    match add_magnet(cli, token, magnet).await {
+        Ok(id) => {
+            borrar(cli, token, &id).await;
+            Ok(false)
+        }
+        Err(e) if e.starts_with("BLOQUEADO_DMCA") => Ok(true),
+        Err(e) if token_rechazado(&e) => Err(e),
+        Err(e) => {
+            eprintln!("[rd] sondeo: {e}");
+            Ok(false)
+        }
+    }
+}
+
+async fn sondear_dmca(token: &str, magnets: &[String]) -> Result<Vec<bool>, String> {
+    let cli = client()?;
+    let mut bloqueados = vec![false; magnets.len()];
+    for (n, tanda) in magnets.chunks(SONDEO_TANDA).enumerate() {
+        let mut set = tokio::task::JoinSet::new();
+        for (k, m) in tanda.iter().enumerate() {
+            let (cli, token, m) = (cli.clone(), token.to_string(), m.clone());
+            set.spawn(async move { (k, sondear(&cli, &token, &m).await) });
+        }
+        while let Some(r) = set.join_next().await {
+            let Ok((k, r)) = r else { continue };
+            bloqueados[n * SONDEO_TANDA + k] = r?;
+        }
+    }
+    eprintln!(
+        "[rd] sondeo DMCA: {}/{} bloqueados",
+        bloqueados.iter().filter(|b| **b).count(),
+        magnets.len()
+    );
+    Ok(bloqueados)
+}
+
 // ---- Token: renovación automática ---------------------------------------
 
 const REVINCULAR: &str =
@@ -544,6 +589,15 @@ pub async fn rd_instant_available(
 ) -> Result<Vec<String>, String> {
     let hashes = hashes.as_slice();
     con_token(&app, |token| async move { instant_available(&token, hashes).await }).await
+}
+
+/// Qué magnets bloquea RD por DMCA, en el mismo orden. Es para ofrecerlas por
+/// torrent ANTES de reproducir la que sí abre: sin esto solo se sabía de las
+/// que se habían intentado (las que estaban antes en la lista).
+#[tauri::command]
+pub async fn rd_sondear_dmca(app: tauri::AppHandle, magnets: Vec<String>) -> Result<Vec<bool>, String> {
+    let magnets = magnets.as_slice();
+    con_token(&app, |token| async move { sondear_dmca(&token, magnets).await }).await
 }
 
 #[derive(Deserialize, Serialize)]

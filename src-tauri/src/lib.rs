@@ -730,6 +730,7 @@ pub fn run() {
             rd::rd_resolver,
             rd::rd_unrestrict,
             rd::rd_instant_available,
+            rd::rd_sondear_dmca,
             rd::rd_account,
             rd::rd_cleanup_torrents,
             torrent::torrent_add,
