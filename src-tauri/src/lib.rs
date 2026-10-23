@@ -726,6 +726,7 @@ pub fn run() {
             cast::cast_control,
             cast::cast_soltar,
             lan::cast_red_info,
+            lan::firewall_abierto,
             rd::rd_resolve,
             rd::rd_resolver,
             rd::rd_unrestrict,

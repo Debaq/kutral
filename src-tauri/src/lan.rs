@@ -185,6 +185,8 @@ pub struct RedInfo {
     pub firewall: String,
     /// Comando para abrir el puerto, listo para copiar.
     pub comando: String,
+    /// El firewall ya deja pasar a la TV (puerto y SSDP): no hace falta el aviso.
+    pub abierto: bool,
 }
 
 /// Nombre de la regla que abre el puerto en Windows: con ella ya creada el
@@ -230,6 +232,38 @@ fn firewall_activo() -> &'static str {
     ""
 }
 
+/// ¿firewalld ya tiene esta regla? Las --permanent sobreviven al reinicio: sin
+/// preguntarlo el aviso salía siempre y parecía que había que volver a abrir
+/// el puerto cada vez. firewall-cmd contesta las consultas sin root (código 0
+/// = sí). Sin firewall-cmd (flatpak) no se sabe: false, y el aviso sale.
+#[cfg(not(windows))]
+fn firewalld_tiene(consulta: &str) -> bool {
+    std::process::Command::new("firewall-cmd")
+        .arg(consulta)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+fn puerto_abierto(firewall: &str, puerto: u16) -> bool {
+    firewall == "firewalld" && firewalld_tiene(&format!("--query-port={puerto}/tcp"))
+}
+
+// En Windows el aviso de la TV ya se apaga con la regla creada; para otros
+// puertos no se sabe.
+#[cfg(windows)]
+fn puerto_abierto(_firewall: &str, _puerto: u16) -> bool {
+    false
+}
+
+/// ¿El firewall ya deja entrar a este puerto? Para el aviso del control
+/// remoto, que usa otro puerto que la TV.
+#[tauri::command]
+pub async fn firewall_abierto(puerto: u16) -> bool {
+    puerto_abierto(firewall_activo(), puerto)
+}
+
 /// Qué puerto usa Kütral para la TV y si hay un firewall que lo tape.
 /// Async: en Windows la consulta pasa por PowerShell (~1 s) y un comando
 /// síncrono correría en el hilo de la UI.
@@ -253,10 +287,15 @@ pub async fn cast_red_info() -> RedInfo {
         ),
         _ => String::new(),
     };
+    #[cfg(not(windows))]
+    let abierto = puerto_abierto(firewall, puerto) && firewalld_tiene("--query-service=ssdp");
+    #[cfg(windows)]
+    let abierto = false;
     RedInfo {
         puerto,
         firewall: firewall.into(),
         comando,
+        abierto,
     }
 }
 

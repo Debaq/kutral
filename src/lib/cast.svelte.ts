@@ -31,7 +31,7 @@ export type CastTv = {
 };
 
 /** Qué puerto usa Kütral para la TV y si un firewall lo tapa. */
-export type RedInfo = { puerto: number; firewall: string; comando: string };
+export type RedInfo = { puerto: number; firewall: string; comando: string; abierto: boolean };
 
 export type CastStatus = {
   activa: boolean;

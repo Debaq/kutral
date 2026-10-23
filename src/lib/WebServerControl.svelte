@@ -22,11 +22,14 @@
   let err = $state<string | null>(null);
   // Firewall activo en este equipo: el celular puede no llegar al puerto.
   let firewall = $state("");
+  // El puerto del control ya está abierto en el firewall: sin aviso.
+  let controlAbierto = $state(false);
   let copiedCmd = $state(false);
 
   // Comando para abrir el puerto del control, según el firewall que haya.
   const comandoFirewall = $derived.by(() => {
     const p = st.port ?? portInput;
+    if (controlAbierto) return "";
     switch (firewall) {
       case "Windows Defender":
         return `netsh advfirewall firewall add rule name="Kutral control" dir=in action=allow protocol=TCP localport=${p}`;
@@ -54,6 +57,14 @@
   onMount(() => {
     void refresh();
     void redInfo().then((r) => (firewall = r?.firewall ?? ""));
+  });
+
+  $effect(() => {
+    const p = st.port;
+    if (!firewall || !p) return;
+    invoke<boolean>("firewall_abierto", { puerto: p })
+      .then((a) => (controlAbierto = a))
+      .catch(() => {});
   });
 
   $effect(() => {

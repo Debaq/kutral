@@ -136,7 +136,7 @@
       </p>
     {/if}
   {/if}
-  {#if redTv?.firewall}
+  {#if redTv?.firewall && !redTv.abierto}
     <p class="warn-box cast-fw">
       <strong>Firewall activo ({redTv.firewall}).</strong> La TV necesita
       entrar a este equipo por el puerto {redTv.puerto} para los
