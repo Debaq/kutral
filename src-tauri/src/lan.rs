@@ -232,22 +232,26 @@ fn firewall_activo() -> &'static str {
     ""
 }
 
-/// ¿firewalld ya tiene esta regla? Las --permanent sobreviven al reinicio: sin
-/// preguntarlo el aviso salía siempre y parecía que había que volver a abrir
-/// el puerto cada vez. firewall-cmd contesta las consultas sin root (código 0
-/// = sí). Sin firewall-cmd (flatpak) no se sabe: false, y el aviso sale.
+/// ¿Las zonas guardadas de firewalld ya tienen esta regla? Se lee el XML de
+/// /etc/firewalld/zones (legible sin root) en vez de preguntarle a
+/// firewall-cmd: esa consulta pasa por polkit y pedía la contraseña de admin
+/// cada vez que se abría Kütral. Las --permanent son las que sobreviven al
+/// reinicio, que es lo que importa. Sin ese directorio (flatpak) no se sabe:
+/// false, y el aviso sale.
 #[cfg(not(windows))]
-fn firewalld_tiene(consulta: &str) -> bool {
-    std::process::Command::new("firewall-cmd")
-        .arg(consulta)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+fn firewalld_tiene(regla: &str) -> bool {
+    let Ok(dir) = std::fs::read_dir("/etc/firewalld/zones") else {
+        return false;
+    };
+    dir.flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "xml"))
+        .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+        .any(|xml| xml.contains(regla))
 }
 
 #[cfg(not(windows))]
 fn puerto_abierto(firewall: &str, puerto: u16) -> bool {
-    firewall == "firewalld" && firewalld_tiene(&format!("--query-port={puerto}/tcp"))
+    firewall == "firewalld" && firewalld_tiene(&format!(r#"<port port="{puerto}" protocol="tcp"/>"#))
 }
 
 // En Windows el aviso de la TV ya se apaga con la regla creada; para otros
@@ -288,7 +292,7 @@ pub async fn cast_red_info() -> RedInfo {
         _ => String::new(),
     };
     #[cfg(not(windows))]
-    let abierto = puerto_abierto(firewall, puerto) && firewalld_tiene("--query-service=ssdp");
+    let abierto = puerto_abierto(firewall, puerto) && firewalld_tiene(r#"<service name="ssdp"/>"#);
     #[cfg(windows)]
     let abierto = false;
     RedInfo {
