@@ -87,6 +87,7 @@
   } from "$lib/subtitulos";
   import { contextoActual } from "$lib/historial.svelte";
   import { buscarFuentes } from "$lib/precarga";
+  import { veredictoGuardado, guardarVeredicto } from "$lib/idiomaFuentes";
   import {
     pistaDe,
     recordarPack,
@@ -539,6 +540,7 @@
       // La copia local va SIEMPRE primera: ninguna fuente de la red le gana.
       sources = local ? [local, ...stack(srcs)] : stack(srcs);
       agrupar();
+      recordarIdiomas();
       if (!sources.length) {
         error = "No encontramos fuentes para esta película.";
       } else if (autoplay && config.sourceSelect === "auto") {
@@ -1445,17 +1447,18 @@
         // El hardsub no expone pistas ES (está quemado en la imagen): ffprobe
         // diría "none" y la saltaríamos justo por traer el español que
         // buscábamos. Se verifica solo lo que tiene pistas de verdad.
-        if (config.verifyEsTracks && !s.hardsub && probes < MAX_PROBES) {
+        // Lo ya revisado otra vez (idiomaFuentes.ts) no se vuelve a revisar.
+        const sabido = s._es != null && s._es !== "unknown";
+        if (config.verifyEsTracks && !s.hardsub && !sabido && probes < MAX_PROBES) {
           probes++;
           resolvingMsg = `Inspeccionando pistas de la fuente ${i + 1}… 🔎`;
-          const verdict = await probeEs(url);
-          s._es = verdict; // badge en la lista ($state es reactivo profundo)
-          if (verdict === "none") {
-            sinEs++;
-            if (!fallback) fallback = { url, s, archivos };
-            dbg(`#${i} sin español embebido → siguiente`);
-            continue;
-          }
+          await revisarIdioma(url, s);
+        }
+        if (config.verifyEsTracks && !s.hardsub && s._es === "none") {
+          sinEs++;
+          if (!fallback) fallback = { url, s, archivos };
+          dbg(`#${i} sin español embebido${sabido ? " (ya revisada)" : ""} → siguiente`);
+          continue;
         }
         recordarPack(clave, season ?? null, s, "rd", archivos);
         if (await ofrecerOpciones(url, s, elegida, sinEs)) return;
@@ -1591,6 +1594,24 @@
     }
   }
 
+  // ---- Idioma ya revisado -----------------------------------------------------
+
+  // Lo que se revisó de cada versión otras veces: sale el chip en la lista y
+  // no se vuelve a revisar (5-15 s cada una).
+  function recordarIdiomas() {
+    for (const s of sources) {
+      if (s.hardsub || s.local || s._es) continue;
+      const v = veredictoGuardado(hashDe(s), capRd, idiomaSubs());
+      if (v) s._es = v;
+    }
+  }
+
+  async function revisarIdioma(url: string, s: Src) {
+    const v = await probeEs(url);
+    s._es = v; // badge en la lista ($state es reactivo profundo)
+    guardarVeredicto(hashDe(s), capRd, idiomaSubs(), v);
+  }
+
   // ---- Grupos y oferta de las bloqueadas ------------------------------------
 
   // Con debrid, la lista va en dos grupos: lo que abre (o puede abrir) en RD y
@@ -1653,7 +1674,7 @@
     const inspeccionar = s._es === undefined && !s.hardsub && !s.local;
     await Promise.all([
       sondearDmca(s),
-      inspeccionar ? probeEs(url).then((v) => (s._es = v)) : null,
+      inspeccionar ? revisarIdioma(url, s) : null,
     ]);
     if (!vivo) return false;
     const n = bloqueadasDmca(s).length;
