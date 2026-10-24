@@ -6,7 +6,7 @@
   import { onMount } from "svelte";
   import { WEB_PLAYER_ENABLED } from "$lib/features";
   import type { OmdbDetail, OmdbRating, PersonMini } from "$lib/tipos";
-  import { config } from "$lib/config.svelte";
+  import { config, idiomaContenido } from "$lib/config.svelte";
   import { premiosOmdbEs } from "$lib/premios.svelte";
 
   type Action = {
@@ -327,13 +327,14 @@
 
   const tagline = $derived(detail.tagline?.trim() || "");
   // La sinopsis de TMDb viene en el idioma de la app; la de OMDb, siempre en
-  // inglés. Por eso OMDb solo entra con la app en inglés (es más larga).
-  const ingles = $derived(config.lang === "en-US");
+  // inglés. Por eso OMDb solo entra con la app en inglés (es más larga). Los
+  // premios de OMDb se traducen al español; en otro idioma quedan en inglés.
+  const ingles = $derived(idiomaContenido() === "en");
   const plotLong = $derived(
     (ingles ? omdb?.plot?.trim() : "") || detail.overview?.trim() || "",
   );
   const awards = $derived(
-    omdb?.awards ? (ingles ? omdb.awards : premiosOmdbEs(omdb.awards)) : "",
+    omdb?.awards ? (idiomaContenido() === "es" ? premiosOmdbEs(omdb.awards) : omdb.awards) : "",
   );
   const genres = $derived(detail.genres || []);
   const directors = $derived(detail.directors || []);

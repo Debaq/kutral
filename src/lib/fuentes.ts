@@ -8,7 +8,7 @@
 // Todo acá es puro: entra una lista de fuentes + la config del usuario, sale
 // el orden. Sin estado propio.
 
-import { config } from "$lib/config.svelte";
+import { config, idiomaContenido } from "$lib/config.svelte";
 
 export type Kind = "movie" | "series" | "anime";
 
@@ -71,26 +71,56 @@ export const QRANK: Record<string, number> = {
 // NIVEL 1 (barato, ordenar). El nombre del release es solo una PISTA, no
 // garantía: los nombres mienten. Sirve para priorizar; la verdad se confirma
 // al abrir el archivo (mpv_tracks, nivel 3). Devuelve un score según si el
-// usuario quiere doblado (audio ES) o subtitulado (VO + subs ES).
+// usuario quiere doblado (audio en el idioma de la app) o subtitulado (VO +
+// subtítulos en ese idioma).
 export function langScore(s: Src): number {
   const t = (s.title || "").toLowerCase();
-  const latino = /\blatino\b|\blat\b|dual.?lat|español.?latino/.test(t);
-  const cast = /castellano|español|espanol|\besp\b|spanish/.test(t);
   const multi = /\bmulti\b|\bdual\b/.test(t);
-  const vose = /vose|v\.?o\.?s\.?e|subtitulad|spa.?subs?|\bsubs?\b.*\b(es|spa|esp)\b/.test(t);
-  if (config.subMode === "dub") {
-    if (latino) return 5; // audio español latino: lo ideal
-    if (cast) return 4; // castellano
-    if (multi) return 3; // multi/dual suele incluir pista ES
-    if (vose) return 1; // solo subtitulado: peor para doblado
-    return 0; // VO puro
+  const idioma = idiomaContenido();
+  if (idioma === "es") {
+    const latino = /\blatino\b|\blat\b|dual.?lat|español.?latino/.test(t);
+    const cast = /castellano|español|espanol|\besp\b|spanish/.test(t);
+    const vose = /vose|v\.?o\.?s\.?e|subtitulad|spa.?subs?|\bsubs?\b.*\b(es|spa|esp)\b/.test(t);
+    if (config.subMode === "dub") {
+      if (latino) return 5; // audio español latino: lo ideal
+      if (cast) return 4; // castellano
+      if (multi) return 3; // multi/dual suele incluir pista ES
+      if (vose) return 1; // solo subtitulado: peor para doblado
+      return 0; // VO puro
+    }
+    // modo "sub": audio original + subtítulos en español
+    if (vose) return 5; // explícitamente VOSE
+    if (multi) return 4; // multi: trae VO + subs ES
+    if (latino || cast) return 2; // doblado: menos ideal pero hay ES
+    return 3; // VO puro: audio original, subs externos si hace falta
   }
-  // modo "sub": audio original + subtítulos en español
-  if (vose) return 5; // explícitamente VOSE
-  if (multi) return 4; // multi: trae VO + subs ES
-  if (latino || cast) return 2; // doblado: menos ideal pero hay ES
-  return 3; // VO puro: audio original, subs externos si hace falta
+  // Inglés: casi todo sale con audio original en inglés y sin marca.
+  if (idioma === "en") return config.subMode === "dub" && /\beng?\b|english/.test(t) ? 4 : 3;
+  const r = RELEASE_IDIOMA[idioma];
+  if (!r) return 3;
+  const doblada = r.audio.test(t);
+  const subtitulada = r.subs?.test(t) ?? false;
+  if (config.subMode === "dub") {
+    if (doblada) return 5;
+    if (multi) return 3;
+    if (subtitulada) return 1;
+    return 0;
+  }
+  if (subtitulada) return 5;
+  if (multi) return 4;
+  if (doblada) return 2;
+  return 3;
 }
+
+// Cómo aparece cada idioma en el nombre de los releases: audio doblado y, si
+// la escena tiene marca propia, subtitulado (VOSTFR, Legendado…).
+const RELEASE_IDIOMA: Record<string, { audio: RegExp; subs?: RegExp; chip: string }> = {
+  pt: { audio: /dublado|pt-?br|portugu[eê]s|\bnacional\b|\bpor\b/, subs: /legendad/, chip: "PT" },
+  fr: { audio: /truefrench|\bfrench\b|\bvff?\b|\bvf2\b|\bvfq\b/, subs: /vostfr/, chip: "FR" },
+  it: { audio: /\bita\b|italian/, subs: /sub.?ita/, chip: "ITA" },
+  de: { audio: /\bgerman\b|\bdeutsch\b|\bger\b/, chip: "DE" },
+  ja: { audio: /japanese|\bjpn?\b|\bjap\b/, chip: "JA" },
+};
 
 // POOL DE IDIOMA: qué FAMILIA de fuente conviene según el idioma de la app,
 // por encima de calidad y seeders. La lógica es asimétrica a propósito:
@@ -246,5 +276,8 @@ export function infoChips(s: Src): string[] {
   if (/dual/.test(t)) out.push("Dual");
   if (/latino/.test(t)) out.push("Latino");
   else if (/castellano|español|espanol|\besp\b/.test(t)) out.push("ES");
+  // El idioma de la app, si no es español: que se vea cuál viene doblada.
+  const r = RELEASE_IDIOMA[idiomaContenido()];
+  if (r?.audio.test(t)) out.push(r.chip);
   return out.slice(0, 5);
 }

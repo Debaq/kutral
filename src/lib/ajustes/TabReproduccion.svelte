@@ -2,6 +2,8 @@
   import { invoke } from "@tauri-apps/api/core";
   import {
     config,
+    idiomaContenido,
+    nombreIdioma,
     SUB_LANGS,
     SCREENING_MIN,
     SCREENING_MAX,
@@ -38,14 +40,20 @@
       <input data-nav type="radio" name="subMode" value="dub" bind:group={config.subMode} />
       <div>
         <strong>Doblado</strong>
-        <span>Audio en español primero (Latino / Castellano).</span>
+        <span>
+          {idiomaContenido() === "es"
+            ? "Audio en español primero (Latino / Castellano)."
+            : `Audio en ${nombreIdioma(idiomaContenido())} primero.`}
+        </span>
       </div>
     </label>
     <label class="mode-card" class:sel={config.subMode === "sub"}>
       <input data-nav type="radio" name="subMode" value="sub" bind:group={config.subMode} />
       <div>
         <strong>Subtitulado</strong>
-        <span>Audio original con subtítulos en español.</span>
+        <span>
+          Audio original con subtítulos en {nombreIdioma(config.subsLang !== "off" ? config.subsLang : idiomaContenido())}.
+        </span>
       </div>
     </label>
   </div>

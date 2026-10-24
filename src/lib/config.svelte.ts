@@ -1,7 +1,7 @@
 import { getOsInfo } from "$lib/os";
 import { invoke } from "@tauri-apps/api/core";
 
-export type Lang = "es-CL" | "es-ES" | "en-US";
+export type Lang = "es-CL" | "es-ES" | "en-US" | "pt-BR" | "fr-FR" | "it-IT" | "de-DE" | "ja-JP";
 export type ModeOverride = "auto" | "kiosk" | "desktop";
 // "dub" = doblado al español; "sub" = original subtitulado en español.
 export type SubMode = "dub" | "sub";
@@ -11,11 +11,50 @@ export type SourceSelect = "auto" | "manual";
 export type SyncModo = "fuente" | "titulo" | "no";
 export type SyncAuto = "boton" | "siempre" | "no";
 
+// Idioma del contenido: títulos, sinopsis y pósters (TMDb), qué audio busca
+// "Doblado" y cómo se ordenan las fuentes. Los menús de la app siguen en
+// español (la traducción de la interfaz es la etapa siguiente).
 export const LANGS: { id: Lang; label: string }[] = [
 	{ id: "es-CL", label: "Español (Chile)" },
 	{ id: "es-ES", label: "Español (España)" },
 	{ id: "en-US", label: "English (US)" },
+	{ id: "pt-BR", label: "Português (Brasil)" },
+	{ id: "fr-FR", label: "Français" },
+	{ id: "it-IT", label: "Italiano" },
+	{ id: "de-DE", label: "Deutsch" },
+	{ id: "ja-JP", label: "日本語" },
 ];
+
+/** Nombre en español de un idioma ISO 639-1, para los textos de la app. */
+export const NOMBRE_IDIOMA: Record<string, string> = {
+	es: "español",
+	en: "inglés",
+	fr: "francés",
+	pt: "portugués",
+	it: "italiano",
+	de: "alemán",
+	ja: "japonés",
+	ko: "coreano",
+	zh: "chino",
+};
+
+export function nombreIdioma(id: string): string {
+	return NOMBRE_IDIOMA[id] ?? id;
+}
+
+/** El idioma del contenido en ISO 639-1 ("pt" de "pt-BR"), como lo usan las pistas. */
+export function idiomaContenido(lang: Lang = config.lang): string {
+	return lang.split("-")[0];
+}
+
+/**
+ * Cambia el idioma. Si los subtítulos seguían en el idioma anterior, pasan al
+ * nuevo: quien pone la app en portugués quiere subtítulos en portugués.
+ */
+export function cambiarIdioma(lang: Lang) {
+	if (config.subsLang === idiomaContenido(config.lang)) config.subsLang = idiomaContenido(lang);
+	config.lang = lang;
+}
 
 export const SCREENING_MIN = 1;
 export const SCREENING_MAX = 4;

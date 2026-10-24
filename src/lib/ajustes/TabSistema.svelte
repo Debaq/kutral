@@ -4,7 +4,7 @@
   import { getVersion } from "@tauri-apps/api/app";
   import { check, type Update } from "@tauri-apps/plugin-updater";
   import { relaunch } from "@tauri-apps/plugin-process";
-  import { config, LANGS } from "$lib/config.svelte";
+  import { config, LANGS, cambiarIdioma } from "$lib/config.svelte";
   import { notify } from "$lib/notifStore.svelte";
   import { resetOnboarding } from "$lib/onboarding";
 
@@ -81,11 +81,21 @@
 
 <section class="block">
   <h2>Idioma</h2>
-  <p class="hint">Para títulos, descripciones e interfaz.</p>
+  <p class="hint">
+    De títulos, sinopsis y pósters, del audio que busca "Doblado" y del orden de
+    las fuentes. Los menús siguen en español por ahora.
+  </p>
   <div class="radio-group">
     {#each LANGS as l}
       <label class="radio">
-        <input data-nav type="radio" name="lang" value={l.id} bind:group={config.lang} />
+        <input
+          data-nav
+          type="radio"
+          name="lang"
+          value={l.id}
+          checked={config.lang === l.id}
+          onchange={() => cambiarIdioma(l.id)}
+        />
         <span>{l.label}</span>
       </label>
     {/each}

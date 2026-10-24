@@ -8,7 +8,7 @@
   import { elegirPistaSub, pistaDelIdioma } from "$lib/pistas";
   import { esFinReal, type FinPayload } from "$lib/finVideo";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-  import { config } from "$lib/config.svelte";
+  import { config, idiomaContenido, nombreIdioma } from "$lib/config.svelte";
   import { WEB_PLAYER_ENABLED } from "$lib/features";
   import { notify } from "$lib/notifStore.svelte";
   import {
@@ -574,32 +574,20 @@
   const MAX_TORRENT_TRIES = 2;
   const MAX_TORRENT_TRIES_SOLO = 4;
 
-  // ¿La pista del probe es español? lang ISO (spa/es/es-419…) o título
-  // ("Latino", "Español (España)", "Spanish [LAS]"…).
-  function isEsProbe(t: ProbeTrack): boolean {
-    if (/^(es|spa)/i.test(t.lang || "")) return true;
-    return /espa|spanish|latino|castellano|\blat\b/i.test(t.title || "");
+  // ¿La pista está en el idioma del contenido (el de la app)? Es el audio que
+  // busca "Doblado". Código ISO o, de respaldo, el título ("Latino", "Dublado"…).
+  function delContenido(t: ProbeTrack): boolean {
+    return pistaDelIdioma(t, idiomaContenido());
   }
 
-  // El idioma que tiene que traer la fuente (audio o subtítulos): el de los
+  // El idioma que tiene que traer la fuente, en audio o subtítulos: el de los
   // subtítulos en Configuración, español si están apagados.
-  const IDIOMA_PROBE: Record<string, { iso: RegExp; nombre: RegExp; texto: string }> = {
-    es: { iso: /^(es|spa)/i, nombre: /espa|spanish|latino|castellano|\blat\b/i, texto: "español" },
-    en: { iso: /^(en|eng)/i, nombre: /english|ingl/i, texto: "inglés" },
-    fr: { iso: /^(fr|fra|fre)/i, nombre: /fran|french/i, texto: "francés" },
-    pt: { iso: /^(pt|por)/i, nombre: /portug|brazil/i, texto: "portugués" },
-    it: { iso: /^(it|ita)/i, nombre: /ital/i, texto: "italiano" },
-    de: { iso: /^(de|deu|ger)/i, nombre: /deutsch|german|alem/i, texto: "alemán" },
-    ja: { iso: /^(ja|jpn)/i, nombre: /japan|japon/i, texto: "japonés" },
-    ko: { iso: /^(ko|kor)/i, nombre: /korea|corea/i, texto: "coreano" },
-    zh: { iso: /^(zh|zho|chi)/i, nombre: /chin/i, texto: "chino" },
-  };
   function idiomaProbe() {
-    return IDIOMA_PROBE[idiomaSubs()] ?? IDIOMA_PROBE.es;
+    const id = idiomaSubs();
+    return { id, texto: nombreIdioma(id) };
   }
   function esDelIdioma(t: ProbeTrack): boolean {
-    const i = idiomaProbe();
-    return i.iso.test(t.lang || "") || i.nombre.test(t.title || "");
+    return pistaDelIdioma(t, idiomaSubs());
   }
 
   // ffprobe una vez por URL: el filtro de español y la TV preguntan lo mismo.
@@ -778,7 +766,7 @@
     const conSubs =
       !s.hardsub &&
       config.subsLang !== "off" &&
-      (config.subMode === "sub" || !(audio && isEsProbe(audio)));
+      (config.subMode === "sub" || !(audio && delContenido(audio)));
     let subs: string | null = como?.subs ?? null;
     if (como?.subs === undefined && conSubs) {
       resolvingMsg = "Buscando subtítulos… 💬";
@@ -888,7 +876,7 @@
   // si Configuración pide doblado (lo mismo que elige mpv), si no la primera.
   function audioPreferido(tracks: ProbeTrack[]): number {
     if (config.subMode !== "dub") return 1;
-    const i = tracks.filter((t) => t.kind === "audio").findIndex(isEsProbe);
+    const i = tracks.filter((t) => t.kind === "audio").findIndex(delContenido);
     return i >= 0 ? i + 1 : 1;
   }
 
@@ -2050,7 +2038,7 @@
   const mpv = (args: unknown[]) => invoke("mpv_cmd", { args }).catch(() => {});
 
   // ¿La pista de audio es español? (el doblaje de "Doblado" es al español).
-  const isEsTrack = (t: MpvTrack) => pistaDelIdioma(t, "es");
+  const isEsTrack = (t: MpvTrack) => pistaDelIdioma(t, idiomaContenido());
 
   // NIVELES 2-3: la verdad del contenedor. Lee las pistas reales de mpv y elige
   // según la preferencia. Solo baja subs externos si el archivo no trae una
@@ -2069,10 +2057,10 @@
     const lang = config.subsLang || "es";
 
     if (config.subMode === "dub" && esAudio) {
-      // Audio español embebido: selecciónalo y oculta subtítulos.
+      // Audio en el idioma de la app embebido: selecciónalo y oculta subtítulos.
       await mpv(["set", "aid", String(esAudio.id)]);
       await mpv(["set", "sub-visibility", "no"]);
-      dbg(`audio ES embebido id=${esAudio.id}`);
+      dbg(`audio ${idiomaContenido()} embebido id=${esAudio.id}`);
       return;
     }
     // "Sin subtítulos": ni externos ni los que traiga el archivo (mpv puede

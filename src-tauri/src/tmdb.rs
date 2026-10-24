@@ -21,13 +21,25 @@ pub(crate) fn lang() -> &'static str {
 
 /// Traduce el idioma de la app al de TMDb. TMDb no tiene `es-CL`: el español
 /// latino vive en `es-MX`, que es donde la comunidad sube las traducciones y
-/// carátulas de Latinoamérica. `es-ES` es el de España.
+/// carátulas de Latinoamérica. `es-ES` es el de España. El resto (ver LANGS en
+/// config.svelte.ts) TMDb lo tiene tal cual.
 fn lang_tmdb(app_lang: &str) -> &'static str {
     match app_lang {
         "es-ES" => "es-ES",
         "en-US" => "en-US",
+        "pt-BR" => "pt-BR",
+        "fr-FR" => "fr-FR",
+        "it-IT" => "it-IT",
+        "de-DE" => "de-DE",
+        "ja-JP" => "ja-JP",
         _ => "es-MX",
     }
+}
+
+/// El idioma sin la región ("pt" de "pt-BR"): así lo marcan las imágenes y
+/// las traducciones de TMDb.
+fn lang_base() -> &'static str {
+    lang().split('-').next().unwrap_or("es")
 }
 
 #[tauri::command]
@@ -443,17 +455,21 @@ const OVERVIEW_ES_PREF_ESPANA: &[&str] = &["ES", "MX", "419", "AR", "CO", "US"];
 /// existe — TMDb devuelve `overview` VACÍO cuando no hay traducción, no un
 /// error, así que sin el append no habría forma de distinguirlo.
 ///
-/// Devuelve `None` si no hay español: quien llama conserva la sinopsis original.
+/// Con la app en otro idioma, lo mismo en ese idioma; en inglés no hace falta
+/// (la de AniList ya lo es).
+///
+/// Devuelve `None` si no hay traducción: quien llama conserva la sinopsis original.
 pub(crate) async fn tmdb_overview_es(
     tmdb_type: Option<&str>,
     tmdb_id: u64,
     api_key: &str,
 ) -> Option<String> {
-    if api_key.is_empty() || tmdb_id == 0 {
+    if api_key.is_empty() || tmdb_id == 0 || lang_base() == "en" {
         return None;
     }
+    let base = lang_base();
     let espana = lang() == "es-ES";
-    let espanol = if espana { "es-ES" } else { "es-MX" };
+    let pedido = lang();
     // ani.zip marca "MOVIE"/"TV"; ante la duda, serie (la mayoría del catálogo).
     let kind = if tmdb_type.is_some_and(|t| t.eq_ignore_ascii_case("movie")) {
         "movie"
@@ -462,7 +478,7 @@ pub(crate) async fn tmdb_overview_es(
     };
     let url = format!(
         "{}/{}/{}?api_key={}&language={}&append_to_response=translations",
-        TMDB_BASE, kind, tmdb_id, api_key, espanol
+        TMDB_BASE, kind, tmdb_id, api_key, pedido
     );
     let v: serde_json::Value = fetch_json(&url).await.ok()?;
 
@@ -473,11 +489,16 @@ pub(crate) async fn tmdb_overview_es(
     if let Some(o) = clean(&v["overview"]) {
         return Some(o);
     }
-    // Si no, elegimos entre las traducciones al español que haya.
+    // Si no, elegimos entre las traducciones a ese idioma que haya.
     let list = v["translations"]["translations"].as_array()?;
     let es: Vec<&serde_json::Value> =
-        list.iter().filter(|t| t["iso_639_1"] == "es").collect();
-    let pref = if espana { OVERVIEW_ES_PREF_ESPANA } else { OVERVIEW_ES_PREF };
+        list.iter().filter(|t| t["iso_639_1"] == base).collect();
+    // Las regiones del español tienen su orden; otro idioma, cualquiera.
+    let pref: &[&str] = match (base, espana) {
+        ("es", true) => OVERVIEW_ES_PREF_ESPANA,
+        ("es", false) => OVERVIEW_ES_PREF,
+        _ => &[],
+    };
     for region in pref {
         if let Some(t) = es.iter().find(|t| t["iso_3166_1"] == *region) {
             if let Some(o) = clean(&t["data"]["overview"]) {
@@ -485,7 +506,7 @@ pub(crate) async fn tmdb_overview_es(
             }
         }
     }
-    // Cualquier variante de español con texto.
+    // Cualquier variante del idioma con texto.
     es.iter().find_map(|t| clean(&t["data"]["overview"]))
 }
 
@@ -844,10 +865,11 @@ pub async fn tmdb_detail(
     } else {
         "&append_to_response=credits,images,keywords"
     };
-    // include_image_language: backdrops sin texto (null) + es/en. Más variedad.
+    // include_image_language: backdrops sin texto (null) + el idioma de la app
+    // y el inglés. Más variedad.
     let url = format!(
-        "{}/{}/{}?api_key={}&language={}{}&include_image_language=es,en,null",
-        TMDB_BASE, media_type, id, api_key, lang(), extras
+        "{}/{}/{}?api_key={}&language={}{}&include_image_language={},en,null",
+        TMDB_BASE, media_type, id, api_key, lang(), extras, lang_base()
     );
     let raw: DetailRaw = fetch_json(&url).await?;
 

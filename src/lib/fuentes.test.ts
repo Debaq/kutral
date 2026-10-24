@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 // fuentes.ts lee preferencias de config; el módulo real habla con Tauri.
 vi.mock("$lib/config.svelte", () => ({
   config: { torrentMaxQuality: "1080p", torrentMaxGb: 10 },
+  idiomaContenido: () => "es",
 }));
 
 import { fmtSize, infoChips, stack, type Src } from "./fuentes";

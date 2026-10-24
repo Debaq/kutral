@@ -7,7 +7,7 @@ export type Pista = { id: number; lang: string; title: string; forced?: boolean 
 // 639-1, 639-2 (B y T) y nombres en el título de la pista, que muchos
 // releases usan en vez del código ("Latino", "English SDH").
 const IDIOMAS: Record<string, { codigos: string[]; nombres: RegExp }> = {
-  es: { codigos: ["es", "spa", "esp"], nombres: /espa[ñn]ol|spanish|latino|castellano/i },
+  es: { codigos: ["es", "spa", "esp"], nombres: /espa[ñn]ol|spanish|latino|castellano|\blat\b/i },
   en: { codigos: ["en", "eng"], nombres: /english|ingl[eé]s/i },
   fr: { codigos: ["fr", "fre", "fra"], nombres: /fran[cç]ais|french|franc[eé]s/i },
   pt: { codigos: ["pt", "por"], nombres: /portugu|brasil|brazil/i },
@@ -20,7 +20,7 @@ const IDIOMAS: Record<string, { codigos: string[]; nombres: RegExp }> = {
 
 /** ¿La pista está en `idioma` (ISO 639-1)? Por código ("es-419" cuenta como
  *  "es"; "est", estonio, no) y, de respaldo, por el título. */
-export function pistaDelIdioma(t: Pista, idioma: string): boolean {
+export function pistaDelIdioma(t: Pick<Pista, "lang" | "title">, idioma: string): boolean {
   const def = IDIOMAS[idioma];
   if (!def) return false;
   const base = (t.lang || "").toLowerCase().trim().split(/[-_]/)[0];
