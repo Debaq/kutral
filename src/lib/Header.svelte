@@ -50,6 +50,8 @@
   const torActivas = $derived(activeCount() + enEspera());
   const torHay = $derived(torrents.list.length > 0 || cola.filas.length > 0);
   const perfil = $derived(perfilDe(perfiles.actual));
+  // La carita no cargó (sin red): va la inicial.
+  let caritaRota = $state("");
 
   function only<T extends "vol" | "br" | "notif" | "web" | "tor">(which: T) {
     volOpen = which === "vol" ? !volOpen : false;
@@ -288,7 +290,11 @@
         title="{perfil.nombre} · cambiar de perfil"
         aria-label="Perfil {perfil.nombre}: cambiar"
       >
-        {perfil.nombre.trim().charAt(0).toUpperCase()}
+        {#if perfil.avatar && caritaRota !== perfil.avatar}
+          <img src={perfil.avatar} alt="" onerror={() => (caritaRota = perfil.avatar)} />
+        {:else}
+          {perfil.nombre.trim().charAt(0).toUpperCase()}
+        {/if}
       </button>
 
       <span class="sep" aria-hidden="true"></span>
@@ -475,6 +481,14 @@
     cursor: pointer;
     display: grid;
     place-items: center;
+    overflow: hidden;
+    padding: 0;
+  }
+  .perfil-btn img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: top;
   }
   .perfil-btn:focus,
   .perfil-btn:hover { outline: 2px solid #f3a951; outline-offset: 2px; }

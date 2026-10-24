@@ -4,6 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { art } from "$lib/imagenes.svelte";
 import { estadoDe, claveMedio } from "$lib/historial.svelte";
 import type { ListItem, ListResp } from "$lib/tipos";
+import { perfilInfantil } from "$lib/perfiles.svelte";
+import { aptoNinos } from "$lib/ninos";
 
 export type SugerenciaFin = { id: number; title: string; posterUrl: string | null; year: string };
 export type SiguienteFin = {
@@ -41,6 +43,9 @@ export async function sugerenciasPara(
     } else {
       if (!p.apiKey) return vacio;
       items = await recomendacionesTmdb(p);
+      // Perfil de niños: que lo de "porque viste" también sea para ellos. En
+      // anime las relacionadas son del mismo título (secuelas, parecidos).
+      if (perfilInfantil()) items = items.filter((it) => aptoNinos(it, p.mediaType));
     }
     const elegidas = await filtrarSugerencias(items, p);
     return {

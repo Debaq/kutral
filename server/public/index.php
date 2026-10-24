@@ -160,22 +160,30 @@ function fila_perfil(array $p): array
         'uid' => $p['uid'],
         'nombre' => $p['nombre'],
         'color' => $p['color'],
+        'avatar' => $p['avatar'],
+        'infantil' => (bool) $p['infantil'],
         'actualizado' => (int) $p['actualizado'],
     ];
 }
 
 const MAX_PERFILES = 10;
 
-// Crea el perfil o, si ya existe (mismo uid), le aplica el cambio de nombre o
-// color solo si es más nuevo que el que tiene.
+// Crea el perfil o, si ya existe (mismo uid), le aplica el cambio (nombre,
+// color, carita, infantil) solo si es más nuevo que el que tiene. Un equipo
+// viejo no manda carita ni infantil: se quedan los que había.
 function guardar_perfil(PDO $pdo, array $s, array $b): array
 {
     $uid = texto($b, 'uid', 64);
     $nombre = trim(texto($b, 'nombre', 40));
     $color = $b['color'] ?? '#f5c518';
     $act = $b['actualizado'] ?? null;
+    $avatar = $b['avatar'] ?? null;
+    $infantil = $b['infantil'] ?? null;
     if (!preg_match('/^[A-Za-z0-9_-]{1,64}$/', $uid) || $nombre === ''
-        || !is_string($color) || !preg_match('/^#[0-9a-fA-F]{6}$/', $color) || !is_int($act)) {
+        || !is_string($color) || !preg_match('/^#[0-9a-fA-F]{6}$/', $color) || !is_int($act)
+        || ($avatar !== null && (!is_string($avatar) || strlen($avatar) > 300
+            || ($avatar !== '' && !preg_match('#^https://[^\s"\'<>]+$#', $avatar))))
+        || ($infantil !== null && !is_bool($infantil))) {
         throw new Fallo(400, 'perfil inválido');
     }
     $st = $pdo->prepare('SELECT * FROM perfiles WHERE usuario_id = ? AND uid = ?');
@@ -183,8 +191,10 @@ function guardar_perfil(PDO $pdo, array $s, array $b): array
     $p = $st->fetch();
     if ($p) {
         if ($act > (int) $p['actualizado']) {
-            $pdo->prepare('UPDATE perfiles SET nombre = ?, color = ?, actualizado = ? WHERE id = ?')
-                ->execute([$nombre, $color, $act, $p['id']]);
+            $avatar = $avatar ?? $p['avatar'];
+            $infantil = $infantil ?? (bool) $p['infantil'];
+            $pdo->prepare('UPDATE perfiles SET nombre = ?, color = ?, avatar = ?, infantil = ?, actualizado = ? WHERE id = ?')
+                ->execute([$nombre, $color, $avatar, $infantil ? 1 : 0, $act, $p['id']]);
         }
     } else {
         $n = $pdo->prepare('SELECT COUNT(*) FROM perfiles WHERE usuario_id = ?');
@@ -193,8 +203,9 @@ function guardar_perfil(PDO $pdo, array $s, array $b): array
             throw new Fallo(409, 'la cuenta ya tiene ' . MAX_PERFILES . ' perfiles');
         }
         $pdo->prepare(
-            'INSERT INTO perfiles (usuario_id, nombre, creado, uid, color, actualizado) VALUES (?, ?, ?, ?, ?, ?)'
-        )->execute([$s['usuario'], $nombre, ahora_ms(), $uid, $color, $act]);
+            'INSERT INTO perfiles (usuario_id, nombre, creado, uid, color, avatar, infantil, actualizado)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        )->execute([$s['usuario'], $nombre, ahora_ms(), $uid, $color, $avatar ?? '', $infantil ? 1 : 0, $act]);
     }
     $st->execute([$s['usuario'], $uid]);
     return fila_perfil($st->fetch());

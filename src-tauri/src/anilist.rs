@@ -185,7 +185,9 @@ pub async fn anilist_discover(
     search: Option<String>,
     season: Option<String>,
     season_year: Option<u32>,
+    ninos: Option<bool>,
 ) -> Result<TmdbListResp, String> {
+    let ninos = ninos.unwrap_or(false);
     // Caché en disco de la página, igual que el discover de TMDb. La búsqueda
     // queda afuera: cada tecla es una consulta distinta y llenaría el disco de
     // páginas que nadie vuelve a pedir.
@@ -197,6 +199,7 @@ pub async fn anilist_discover(
         genres.as_deref().unwrap_or(""),
         season.as_deref().unwrap_or(""),
         &season_year.map(|y| y.to_string()).unwrap_or_default(),
+        if ninos { "ninos" } else { "" },
     ]);
     if !buscando {
         if let Some(json) = crate::cache::lista_get(&app, &clave) {
@@ -210,14 +213,16 @@ pub async fn anilist_discover(
     // catálogo lo sirve Kitsu con el MISMO vocabulario de entrada.
     let mut resp: Option<TmdbListResp> = None;
     if !anilist_is_down() {
-        match discover_anilist(page, sort.clone(), genres.clone(), search.clone(), season.clone(), season_year).await {
+        match discover_anilist(page, sort.clone(), genres.clone(), search.clone(), season.clone(), season_year, ninos)
+            .await
+        {
             Ok(r) => resp = Some(r),
             Err(e) => eprintln!("[anilist] discover falló: {e}"),
         }
     }
     let resp = match resp {
         Some(r) => r,
-        None => crate::kitsu::discover(page, sort, genres, search, season, season_year)
+        None => crate::kitsu::discover(page, sort, genres, search, season, season_year, ninos)
             .await
             .map_err(|e| format!("El catálogo de anime no está disponible ahora mismo. ({e})"))?,
     };
@@ -231,6 +236,8 @@ pub async fn anilist_discover(
     Ok(resp)
 }
 
+const GENEROS_NO_NINOS: [&str; 5] = ["Ecchi", "Hentai", "Horror", "Psychological", "Thriller"];
+
 async fn discover_anilist(
     page: u32,
     sort: Option<String>,
@@ -238,6 +245,7 @@ async fn discover_anilist(
     search: Option<String>,
     season: Option<String>,
     season_year: Option<u32>,
+    ninos: bool,
 ) -> Result<TmdbListResp, String> {
     let search = search.filter(|q| !q.trim().is_empty());
     let genre_list: Vec<String> = genres
@@ -265,6 +273,13 @@ async fn discover_anilist(
         defs.push_str(", $genres: [String]");
         args.push_str(", genre_in: $genres");
         vars["genres"] = serde_json::json!(genre_list);
+    }
+    // Perfil de niños: AniList no tiene clasificación por edad; se sacan los
+    // géneros que no son para niños.
+    if ninos {
+        defs.push_str(", $sinGeneros: [String]");
+        args.push_str(", genre_not_in: $sinGeneros");
+        vars["sinGeneros"] = serde_json::json!(GENEROS_NO_NINOS);
     }
     if let (Some(se), Some(sy)) = (season.filter(|s| !s.trim().is_empty()), season_year) {
         defs.push_str(", $season: MediaSeason, $seasonYear: Int");
@@ -300,6 +315,58 @@ async fn discover_anilist(
         total_pages: pg["pageInfo"]["lastPage"].as_u64().unwrap_or(page as u64),
         results,
     })
+}
+
+// ========================================================================
+// Personajes — caritas para los perfiles
+// ========================================================================
+
+#[derive(Serialize)]
+pub struct Personaje {
+    nombre: String,
+    imagen: String,
+    /// El anime más popular en que sale, para distinguir a los tocayos.
+    de: String,
+}
+
+/// Personajes para la carita de un perfil: los más queridos de AniList, o los
+/// que calzan con `buscar`. Los que no tienen imagen propia (AniList pone un
+/// muñeco gris) quedan fuera.
+#[tauri::command]
+pub async fn anilist_personajes(buscar: Option<String>) -> Result<Vec<Personaje>, String> {
+    let buscar = buscar.map(|q| q.trim().to_string()).filter(|q| !q.is_empty());
+    // Como en discover: `search: null` filtra de verdad, así que solo entra con texto.
+    let (defs, args, vars) = match &buscar {
+        Some(q) => ("($q: String)", "search: $q, sort: SEARCH_MATCH", serde_json::json!({ "q": q })),
+        None => ("", "sort: FAVOURITES_DESC", serde_json::json!({})),
+    };
+    let query = format!(
+        "query {defs} {{
+          Page(perPage: 40) {{
+            characters({args}) {{
+              name {{ full }}
+              image {{ large }}
+              media(perPage: 1, sort: POPULARITY_DESC, type: ANIME) {{
+                nodes {{ title {{ romaji english }} }}
+              }}
+            }}
+          }}
+        }}"
+    );
+    let data = gql(&query, vars).await?;
+    let lista = data["Page"]["characters"].as_array().cloned().unwrap_or_default();
+    Ok(lista
+        .iter()
+        .filter_map(|c| {
+            let imagen = s(&c["image"]["large"]).filter(|u| !u.ends_with("/default.jpg"))?;
+            let t = &c["media"]["nodes"][0]["title"];
+            Some(Personaje {
+                nombre: s(&c["name"]["full"]).unwrap_or_default(),
+                imagen,
+                de: s(&t["english"]).or_else(|| s(&t["romaji"])).unwrap_or_default(),
+            })
+        })
+        .collect())
 }
 
 // ========================================================================
@@ -849,9 +916,9 @@ mod tests {
         // no existe en un test. Se replica su ruta sin cache: AniList y, si no
         // contesta, Kitsu.
         let sort = Some("POPULARITY_DESC".to_string());
-        let r = match discover_anilist(1, sort.clone(), None, None, None, None).await {
+        let r = match discover_anilist(1, sort.clone(), None, None, None, None, false).await {
             Ok(r) if !r.results.is_empty() => r,
-            _ => crate::kitsu::discover(1, sort, None, None, None, None)
+            _ => crate::kitsu::discover(1, sort, None, None, None, None, false)
                 .await
                 .expect("catálogo"),
         };

@@ -226,22 +226,39 @@ pub const TRIGGERS_SQL: &str = "
     END;
 ";
 
+/// Migración v15: la carita del perfil (link a la imagen de un personaje o un
+/// póster; vacío = la inicial sobre el color) y si es un perfil de niños, que
+/// filtra el catálogo por edad.
+pub const AVATAR_SQL: &str = "
+    ALTER TABLE perfiles ADD COLUMN avatar TEXT NOT NULL DEFAULT '';
+    ALTER TABLE perfiles ADD COLUMN infantil INTEGER NOT NULL DEFAULT 0;
+";
+
 #[derive(Serialize, Debug, Clone)]
 pub struct Perfil {
     pub id: String,
     pub nombre: String,
     pub color: String,
-    /// ms del último cambio de nombre o color: con cuenta, gana el más nuevo.
+    pub avatar: String,
+    pub infantil: bool,
+    /// ms del último cambio del perfil: con cuenta, gana el más nuevo.
     pub actualizado: i64,
 }
 
 pub fn listar(db: &Connection) -> Result<Vec<Perfil>, String> {
     let mut st = db
-        .prepare("SELECT id, nombre, color, actualizado FROM perfiles ORDER BY creado")
+        .prepare("SELECT id, nombre, color, avatar, infantil, actualizado FROM perfiles ORDER BY creado")
         .map_err(|e| e.to_string())?;
     let filas = st
         .query_map([], |r| {
-            Ok(Perfil { id: r.get(0)?, nombre: r.get(1)?, color: r.get(2)?, actualizado: r.get(3)? })
+            Ok(Perfil {
+                id: r.get(0)?,
+                nombre: r.get(1)?,
+                color: r.get(2)?,
+                avatar: r.get(3)?,
+                infantil: r.get(4)?,
+                actualizado: r.get(5)?,
+            })
         })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
@@ -249,10 +266,10 @@ pub fn listar(db: &Connection) -> Result<Vec<Perfil>, String> {
     filas
 }
 
-pub fn actualizar(db: &Connection, id: &str, nombre: &str, color: &str, actualizado: i64) -> Result<(), String> {
+pub fn actualizar(db: &Connection, p: &Perfil) -> Result<(), String> {
     db.execute(
-        "UPDATE perfiles SET nombre = ?2, color = ?3, actualizado = ?4 WHERE id = ?1",
-        params![id, nombre, color, actualizado],
+        "UPDATE perfiles SET nombre = ?2, color = ?3, avatar = ?4, infantil = ?5, actualizado = ?6 WHERE id = ?1",
+        params![p.id, p.nombre, p.color, p.avatar, p.infantil, p.actualizado],
     )
     .map(|_| ())
     .map_err(|e| e.to_string())
@@ -275,16 +292,17 @@ fn sin_anotar<T>(
 }
 
 /// Perfil creado en otro equipo. Nace con su "Quiero ver", como todos.
-pub fn crear_local(db: &mut Connection, id: &str, nombre: &str, color: &str, actualizado: i64) -> Result<(), String> {
+pub fn crear_local(db: &mut Connection, p: &Perfil) -> Result<(), String> {
     sin_anotar(db, |tx| {
         tx.execute(
-            "INSERT OR IGNORE INTO perfiles (id, nombre, color, creado, actualizado) VALUES (?1, ?2, ?3, ?4, ?4)",
-            params![id, nombre, color, actualizado],
+            "INSERT OR IGNORE INTO perfiles (id, nombre, color, avatar, infantil, creado, actualizado)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+            params![p.id, p.nombre, p.color, p.avatar, p.infantil, p.actualizado],
         )?;
         tx.execute(
             "INSERT OR IGNORE INTO listas (perfil, id, nombre, creada, actualizada)
              VALUES (?1, 'quiero-ver', 'Quiero ver', ?2, ?2)",
-            params![id, actualizado],
+            params![p.id, p.actualizado],
         )?;
         Ok(())
     })

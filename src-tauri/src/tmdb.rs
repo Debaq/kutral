@@ -530,6 +530,8 @@ pub async fn tmdb_discover(
     // 5 físico, 6 TV). Pipe=OR. Con esto seteado, las fechas filtran sobre
     // release_date (la fecha de ESOS tipos), no primary_release_date.
     with_release_type: Option<String>,
+    // Perfil de niños (ver `ninos.ts` en el front, que filtra lo que esto no).
+    ninos: Option<bool>,
 ) -> Result<TmdbListResp, String> {
     if api_key.is_empty() {
         return Err("falta api key".into());
@@ -617,6 +619,9 @@ pub async fn tmdb_discover(
     if let Some(k) = with_keywords.filter(|s| !s.is_empty()) {
         url.push_str(&format!("&with_keywords={}", k));
     }
+    if ninos.unwrap_or(false) {
+        url.push_str(&filtro_ninos(&media_type, all_genres.is_empty()));
+    }
 
     // Caché en disco de la página armada. La clave sale de la URL final SIN la
     // api key: dos keys distintas ven exactamente el mismo catálogo, no tiene
@@ -636,6 +641,23 @@ pub async fn tmdb_discover(
         }
     }
     Ok(resp)
+}
+
+/// Perfil de niños en el discover. Películas: clasificación de EE. UU. hasta
+/// PG (la que TMDb tiene más completa; las que no tienen quedan fuera) y sin
+/// terror. Series: TMDb no filtra por clasificación, así que van las de
+/// géneros infantil o familia, y sin crimen, guerra ni misterio. Si el usuario
+/// ya eligió géneros, el "infantil o familia" no se puede sumar (TMDb no
+/// agrupa coma con barra): lo filtra el front.
+fn filtro_ninos(media_type: &str, sin_generos: bool) -> String {
+    if media_type == "movie" {
+        return "&certification_country=US&certification.lte=PG&without_genres=27".into();
+    }
+    let mut f = String::from("&without_genres=80,10768,9648");
+    if sin_generos {
+        f.push_str("&with_genres=10762|10751");
+    }
+    f
 }
 
 #[tauri::command]

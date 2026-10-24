@@ -86,6 +86,8 @@
     type MediaMeta,
   } from "$lib/historial.svelte";
   import { enOrden, estaEnLista, siguienteEnOrden, nombreDe, type ItemLista } from "$lib/listas.svelte";
+  import { perfilInfantil } from "$lib/perfiles.svelte";
+  import { aptoNinos } from "$lib/ninos";
   import type {
     OmdbDetail,
     ListItem,
@@ -205,6 +207,20 @@
   type Tab = "movie" | "tv" | "anime";
   let tab = $state<Tab>("movie");
   // Mapeo tab → media_type real para TMDb
+  // Perfil de niños: el catálogo se filtra (ver ninos.ts). Cambiar de perfil
+  // a uno que filtra distinto recarga la lista desde la página 1.
+  const ninos = $derived(perfilInfantil());
+  let ninosCargado: boolean | null = null;
+  $effect(() => {
+    const n = ninos;
+    if (ninosCargado === null || n === ninosCargado) {
+      ninosCargado = n;
+      return;
+    }
+    ninosCargado = n;
+    if (apiKey || tab === "anime") resetAndLoad(false);
+  });
+
   function tabToMediaType(t: Tab): "movie" | "tv" {
     return t === "anime" ? "tv" : t;
   }
@@ -591,7 +607,7 @@
     // Si hay snapshot, restauramos el catálogo tal cual estaba en vez de
     // recargarlo desde la página 1. Sync y antes de cualquier await: el
     // afterNavigate del handoff de Vera puede correr entremedio.
-    const snap = leerCatalogo(apiKey);
+    const snap = leerCatalogo(apiKey, ninos);
     if (snap) {
       tab = snap.tab;
       query = snap.query;
@@ -727,6 +743,7 @@
   function guardarSnapshotCatalogo() {
     guardarCatalogo({
       apiKey,
+      ninos,
       tab,
       query,
       debouncedQ,
@@ -1230,7 +1247,7 @@
   // Firma de la consulta actual. Identifica qué lista es esta para no pintar
   // la página 1 guardada bajo otros filtros.
   function firmaLista(): string {
-    return [tab, sortId, seasonId, Array.from(selectedGenres).sort().join(",")].join("|");
+    return [tab, sortId, seasonId, Array.from(selectedGenres).sort().join(","), ninos ? "ninos" : ""].join("|");
   }
 
   // `silencioso`: recarga sin mostrar estado de carga. Lo usa la revalidación
@@ -1264,6 +1281,7 @@
             // Temporada fuera durante búsqueda, igual que sort/géneros.
             season: !isSearch && seasonSel ? seasonSel.season : undefined,
             seasonYear: !isSearch && seasonSel ? seasonSel.year : undefined,
+            ninos,
           })
         : isSearch
         ? await invoke("tmdb_search", { mediaType: mt, query: debouncedQ, page, apiKey })
@@ -1278,6 +1296,7 @@
             // Sin estreno (cine/digital/físico/TV) hasta hoy → fuera.
             primaryReleaseDateLte: hoyISO(),
             withReleaseType: mt === "movie" ? RELEASE_TYPES_DISPONIBLES : undefined,
+            ninos,
           });
       if (gen !== loadGen) return; // respuesta obsoleta: no pisar la actual
       totalPages = Math.min(resp.total_pages, 500);
@@ -1285,7 +1304,13 @@
       // backend no atrapa (sobre todo en "Más antiguas": cine mudo real pero
       // sin arte). Una card sin imagen no se puede ni mirar ni elegir, así
       // que fuera del grid.
-      const newItems = resp.results.filter((x) => !!x.poster_path);
+      // Perfil de niños: lo que la consulta no pudo filtrar (la búsqueda de
+      // TMDb no acepta filtros; las series con géneros elegidos tampoco).
+      const aptos =
+        ninos && tab !== "anime" && (isSearch || mt === "tv")
+          ? resp.results.filter((x) => aptoNinos(x, mt))
+          : resp.results;
+      const newItems = aptos.filter((x) => !!x.poster_path);
       if (append) {
         // TMDb repite títulos entre páginas consecutivas (la popularidad
         // cambia entre requests). Sin dedup, la key duplicada en {#each}

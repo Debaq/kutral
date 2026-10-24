@@ -56,6 +56,8 @@ export type ListItem = {
   vote_average: number;
   release_date?: string;
   first_air_date?: string;
+  /** Lo usa el perfil de niños (ninos.ts) para filtrar. */
+  genre_ids?: number[];
 };
 
 // tmdb.rs TmdbListResp

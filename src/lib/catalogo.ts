@@ -31,6 +31,8 @@ export type CatalogSnapshot = {
   // Con qué key se armó. Si el user la cambió en /config, el catálogo viejo
   // no sirve y se descarta.
   apiKey: string;
+  // Perfil de niños o no: el catálogo filtrado no sirve para el otro.
+  ninos: boolean;
   tab: CatalogTab;
   query: string;
   debouncedQ: string;
@@ -58,10 +60,10 @@ export function guardarCatalogo(s: CatalogSnapshot) {
 
 // Devuelve el snapshot si sigue siendo usable. Sin items no hay nada que
 // restaurar (mejor recargar que mostrar un grid vacío).
-export function leerCatalogo(apiKey: string): CatalogSnapshot | null {
+export function leerCatalogo(apiKey: string, ninos: boolean): CatalogSnapshot | null {
   const s = snapshot;
   if (!s) return null;
-  if (s.apiKey !== apiKey) {
+  if (s.apiKey !== apiKey || s.ninos !== ninos) {
     snapshot = null;
     return null;
   }

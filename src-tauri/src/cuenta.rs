@@ -803,12 +803,30 @@ struct PerfilRemoto {
     nombre: String,
     #[serde(default)]
     color: String,
+    // Un servidor sin la v8 no los manda: sin carita y no infantil.
+    #[serde(default)]
+    avatar: String,
+    #[serde(default)]
+    infantil: bool,
     #[serde(default)]
     actualizado: i64,
 }
 
+impl PerfilRemoto {
+    fn local(&self) -> crate::perfiles::Perfil {
+        crate::perfiles::Perfil {
+            id: self.uid.clone(),
+            nombre: self.nombre.clone(),
+            color: self.color.clone(),
+            avatar: self.avatar.clone(),
+            infantil: self.infantil,
+            actualizado: self.actualizado,
+        }
+    }
+}
+
 /// Los perfiles mismos: los creados aquí suben, los creados en otro equipo
-/// bajan, un cambio de nombre o color gana si es más nuevo y uno borrado en
+/// bajan, un cambio (nombre, color, carita, infantil) gana si es más nuevo y uno borrado en
 /// otro equipo se borra aquí. Devuelve cuántos cambios locales hubo.
 ///
 /// Borrar un perfil sincronizado exige red (ver perfil_borrar): por eso un
@@ -823,17 +841,24 @@ async fn sincronizar_perfiles(c: &mut Cuenta, db: &mut Connection) -> Result<usi
     for l in &locales {
         let previo = c.perfiles.iter().find(|p| p.local == l.id).cloned();
         let subir = |l: &crate::perfiles::Perfil| {
-            json!({ "uid": l.id, "nombre": l.nombre, "color": l.color, "actualizado": l.actualizado })
+            json!({
+                "uid": l.id,
+                "nombre": l.nombre,
+                "color": l.color,
+                "avatar": l.avatar,
+                "infantil": l.infantil,
+                "actualizado": l.actualizado,
+            })
         };
         match remotos.iter().find(|r| r.uid == l.id) {
             Some(r) => {
                 if l.actualizado > r.actualizado {
                     api(&c.servidor, Some(&c.token), reqwest::Method::POST, "/perfiles", Some(&subir(l))).await?;
                 } else if r.actualizado > l.actualizado {
-                    crate::perfiles::actualizar(db, &r.uid, &r.nombre, &r.color, r.actualizado)?;
+                    crate::perfiles::actualizar(db, &r.local())?;
                     // Solo la fecha (dos equipos con el mismo "Principal"): no
                     // es un cambio que el front tenga que recargar.
-                    if r.nombre != l.nombre || r.color != l.color {
+                    if r.nombre != l.nombre || r.color != l.color || r.avatar != l.avatar || r.infantil != l.infantil {
                         cambios += 1;
                     }
                 }
@@ -854,7 +879,7 @@ async fn sincronizar_perfiles(c: &mut Cuenta, db: &mut Connection) -> Result<usi
         }
     }
     for r in remotos.iter().filter(|r| !locales.iter().any(|l| l.id == r.uid)) {
-        crate::perfiles::crear_local(db, &r.uid, &r.nombre, &r.color, r.actualizado)?;
+        crate::perfiles::crear_local(db, &r.local())?;
         mapa.push(PerfilSync { local: r.uid.clone(), remoto: r.id, cursor: 0 });
         cambios += 1;
     }
@@ -1415,6 +1440,7 @@ mod tests {
         db.execute_batch(MIGRACION_SQL_V12).unwrap();
         db.execute_batch(crate::perfiles::MIGRACION_SQL).unwrap();
         db.execute_batch(crate::perfiles::TRIGGERS_SQL).unwrap();
+        db.execute_batch(crate::perfiles::AVATAR_SQL).unwrap();
         dir
     }
 

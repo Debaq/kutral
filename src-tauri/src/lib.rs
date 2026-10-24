@@ -562,6 +562,12 @@ pub fn run() {
             sql: perfiles::TRIGGERS_SQL,
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 15,
+            description: "carita y perfil de niños",
+            sql: perfiles::AVATAR_SQL,
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
@@ -715,6 +721,7 @@ pub fn run() {
             ui_log,
             kodios::kodios_search,
             anilist::anilist_discover,
+            anilist::anilist_personajes,
             anilist::anilist_detail,
             anilist::anilist_relacionados,
             anilist::anizip_episodes,

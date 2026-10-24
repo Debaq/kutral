@@ -11,11 +11,16 @@
     PRINCIPAL,
     elegirPerfil,
     cerrarPerfiles,
+    marcarConfigurado,
+    perfilDe,
     crearPerfil,
     editarPerfil,
     borrarPerfil,
     type Perfil,
   } from "$lib/perfiles.svelte";
+  import ElegirCarita from "$lib/ElegirCarita.svelte";
+  import { page } from "$app/state";
+  import { untrack } from "svelte";
 
   const MAX = 10;
 
@@ -24,6 +29,12 @@
   let editando = $state<Perfil | "nuevo" | null>(null);
   let nombre = $state("");
   let color = $state(COLORES[0]);
+  let avatar = $state("");
+  let infantil = $state(false);
+  /** Eligiendo la carita (dentro del editor). */
+  let carita = $state(false);
+  // Caritas que no cargaron (sin red, link muerto): va la inicial.
+  let rotas = $state(new Set<string>());
   let confirmarBorrar = $state(false);
   let error = $state("");
   let raiz = $state<HTMLElement | null>(null);
@@ -32,12 +43,23 @@
     setTimeout(() => raiz && enfocarPrimero(raiz.querySelector(".zona") ?? raiz), 40);
   }
 
+  // El asistente de la primera vez va antes: la bienvenida del perfil sale
+  // al terminarlo.
+  const visible = $derived(perfiles.abierta && !page.url.pathname.startsWith("/bienvenida"));
+  const bienvenida = $derived(perfiles.configurar != null);
+
+  // Solo al abrirse: recargar la lista (guardar un perfil) no reabre nada.
   $effect(() => {
-    if (perfiles.abierta) {
+    if (!visible) return;
+    untrack(() => {
       administrar = false;
       editando = null;
-      enfocar();
-    }
+      const p = perfiles.configurar ? perfilDe(perfiles.configurar) : null;
+      if (p) {
+        abrirEditor(p);
+        nombre = "";
+      } else enfocar();
+    });
   });
 
   function inicial(n: string): string {
@@ -48,12 +70,22 @@
     editando = p;
     nombre = p === "nuevo" ? "" : p.nombre;
     color = p === "nuevo" ? (COLORES.find((c) => !perfiles.lista.some((x) => x.color === c)) ?? COLORES[0]) : p.color;
+    avatar = p === "nuevo" ? "" : p.avatar || "";
+    infantil = p === "nuevo" ? false : !!p.infantil;
+    carita = false;
     confirmarBorrar = false;
     error = "";
     enfocar();
   }
 
   function cerrarEditor() {
+    // Bienvenida: no hay más perfiles que elegir, se cierra todo.
+    if (bienvenida) {
+      marcarConfigurado();
+      editando = null;
+      cerrarPerfiles();
+      return;
+    }
     editando = null;
     error = "";
     enfocar();
@@ -65,8 +97,9 @@
       return;
     }
     try {
-      if (editando === "nuevo") await crearPerfil(nombre, color);
-      else if (editando) await editarPerfil(editando.id, nombre, color);
+      const datos = { nombre, color, avatar, infantil };
+      if (editando === "nuevo") await crearPerfil(datos);
+      else if (editando) await editarPerfil(editando.id, datos);
       cerrarEditor();
     } catch (e) {
       error = String(e);
@@ -83,21 +116,40 @@
     }
   }
 
+  function elegirCarita(url: string) {
+    avatar = url;
+    carita = false;
+    enfocar();
+  }
+
+  function conCarita(url: string): boolean {
+    return !!url && !rotas.has(url);
+  }
+
+  function rota(url: string) {
+    rotas = new Set(rotas).add(url);
+  }
+
   function tocar(p: Perfil) {
     if (administrar) abrirEditor(p);
     else void elegirPerfil(p.id);
   }
 
   function onKey(e: KeyboardEvent) {
-    if (!perfiles.abierta) return;
+    if (!visible) return;
     e.stopPropagation();
-    const enInput = (e.target as HTMLElement | null)?.tagName === "INPUT";
+    // Texto (nombre, buscador de caritas): las flechas y el borrar son suyos.
+    const t = e.target as HTMLInputElement | null;
+    const enInput = t?.tagName === "INPUT" && t.type !== "checkbox";
     switch (e.key) {
       case "Escape":
       case "Backspace":
         if (enInput && e.key === "Backspace") return;
         e.preventDefault();
-        if (editando) cerrarEditor();
+        if (carita) {
+          carita = false;
+          enfocar();
+        } else if (editando) cerrarEditor();
         else if (administrar) administrar = false;
         else cerrarPerfiles();
         break;
@@ -116,7 +168,7 @@
 
 <svelte:window onkeydowncapture={onKey} />
 
-{#if perfiles.abierta}
+{#if visible}
   <div class="fondo" bind:this={raiz} data-section="perfiles">
     {#if !editando}
       <h1>{administrar ? "Administrar perfiles" : "¿Quién está viendo?"}</h1>
@@ -124,7 +176,12 @@
         {#each perfiles.lista as p (p.id)}
           <button data-nav class="perfil" class:actual={p.id === perfiles.actual} onclick={() => tocar(p)}>
             <span class="avatar" style:background={p.color}>
-              {inicial(p.nombre)}
+              {#if conCarita(p.avatar)}
+                <img src={p.avatar} alt="" onerror={() => rota(p.avatar)} />
+              {:else}
+                {inicial(p.nombre)}
+              {/if}
+              {#if p.infantil}<span class="nino" title="Perfil de niños">🧸</span>{/if}
               {#if administrar}<span class="lapiz">✎</span>{/if}
             </span>
             <span class="nombre">{p.nombre}</span>
@@ -149,15 +206,31 @@
         Cada perfil tiene su historial, sus favoritos y sus listas. Las descargas y
         Real-Debrid son del equipo: los usan todos.
       </p>
+    {:else if carita}
+      <h1>Elige una carita</h1>
+      <ElegirCarita onElegir={elegirCarita} />
     {:else}
-      <h1>{editando === "nuevo" ? "Nuevo perfil" : "Editar perfil"}</h1>
+      <h1>{bienvenida ? "¡Hola! ¿Quién eres?" : editando === "nuevo" ? "Nuevo perfil" : "Editar perfil"}</h1>
+      {#if bienvenida}
+        <p class="nota">Ponle tu nombre y elige una carita. Después puedes sumar perfiles para el resto de la casa.</p>
+      {/if}
       <div class="zona editor">
-        <span class="avatar grande" style:background={color}>{inicial(nombre)}</span>
+        <button data-nav class="perfil" onclick={() => (carita = true)} title="Cambiar la carita">
+          <span class="avatar grande" style:background={color}>
+            {#if conCarita(avatar)}
+              <img src={avatar} alt="" onerror={() => rota(avatar)} />
+            {:else}
+              {inicial(nombre)}
+            {/if}
+            <span class="lapiz suave">✎</span>
+          </span>
+          <span class="nombre">{avatar ? "Cambiar carita" : "Elegir carita"}</span>
+        </button>
         <input
           data-nav
           bind:value={nombre}
           maxlength="40"
-          placeholder="Nombre"
+          placeholder={bienvenida ? "Tu nombre" : "Nombre"}
           onkeydown={(e) => e.key === "Enter" && void guardar()}
         />
         <div class="colores">
@@ -172,9 +245,26 @@
             ></button>
           {/each}
         </div>
+        <label class="nino-fila">
+          <input
+            data-nav
+            type="checkbox"
+            bind:checked={infantil}
+            onkeydown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                infantil = !infantil;
+              }
+            }}
+          />
+          <span>
+            <strong>🧸 Perfil de niños</strong>
+            <small>El catálogo muestra solo lo apto para ellos: películas hasta PG, series infantiles o familiares y anime sin contenido adulto.</small>
+          </span>
+        </label>
         <div class="acciones">
           <button data-nav class="btn principal" onclick={guardar}>Guardar</button>
-          <button data-nav class="btn" onclick={cerrarEditor}>Cancelar</button>
+          <button data-nav class="btn" onclick={cerrarEditor}>{bienvenida ? "Ahora no" : "Cancelar"}</button>
           {#if editando !== "nuevo" && editando.id !== PRINCIPAL}
             {#if confirmarBorrar}
               <button data-nav class="btn peligro" onclick={borrar}>Sí, borrar todo lo suyo</button>
@@ -246,6 +336,55 @@
     transition: transform 0.12s;
     outline: 4px solid transparent;
     outline-offset: 4px;
+  }
+  .avatar img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: top;
+    border-radius: inherit;
+  }
+  .nino {
+    position: absolute;
+    right: -8px;
+    bottom: -8px;
+    font-size: 30px;
+    line-height: 1;
+    filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.6));
+  }
+  .lapiz.suave {
+    opacity: 0;
+    transition: opacity 0.12s;
+  }
+  .perfil:focus .lapiz.suave,
+  .perfil:hover .lapiz.suave {
+    opacity: 1;
+  }
+  .nino-fila {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    max-width: 440px;
+    cursor: pointer;
+  }
+  .nino-fila input {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    margin-top: 2px;
+    accent-color: #f5c518;
+  }
+  .nino-fila span {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .nino-fila small {
+    color: #8a8a94;
+    font-size: 12px;
+    line-height: 1.4;
   }
   .avatar.nuevo {
     background: #1c1c26;

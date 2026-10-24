@@ -234,6 +234,12 @@ function migrar(PDO $pdo): void
                 actualizada INTEGER NOT NULL
             );
         ",
+        8 => "
+            -- Carita del perfil (link a la imagen; vacío = la inicial sobre el
+            -- color) y perfil de niños (filtra el catálogo por edad).
+            ALTER TABLE perfiles ADD COLUMN avatar TEXT NOT NULL DEFAULT '';
+            ALTER TABLE perfiles ADD COLUMN infantil INTEGER NOT NULL DEFAULT 0;
+        ",
     ];
     $actual = (int) $pdo->query('PRAGMA user_version')->fetchColumn();
     foreach ($migraciones as $version => $sql) {

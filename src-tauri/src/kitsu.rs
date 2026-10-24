@@ -178,6 +178,7 @@ pub async fn discover(
     search: Option<String>,
     season: Option<String>,
     season_year: Option<u32>,
+    ninos: bool,
 ) -> Result<TmdbListResp, String> {
     let page = page.max(1);
     let offset = (page - 1) * PER_PAGE;
@@ -208,6 +209,11 @@ pub async fn discover(
             "&filter%5Bseason%5D={}&filter%5BseasonYear%5D={sy}",
             se.trim().to_lowercase()
         ));
+    }
+
+    // Perfil de niños: Kitsu sí trae clasificación (G, PG, R, R18).
+    if ninos {
+        url.push_str("&filter%5BageRating%5D=G,PG");
     }
 
     let v = get(&url).await?;
@@ -523,7 +529,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn catalogo_busqueda_y_detalle() {
-        let r = discover(1, Some("POPULARITY_DESC".into()), None, None, None, None)
+        let r = discover(1, Some("POPULARITY_DESC".into()), None, None, None, None, false)
             .await
             .expect("discover");
         assert_eq!(r.results.len(), PER_PAGE as usize);
@@ -533,7 +539,7 @@ mod tests {
             assert!(it.name.as_deref().is_some_and(|n| !n.is_empty()));
         }
 
-        let b = discover(1, None, None, Some("frieren".into()), None, None)
+        let b = discover(1, None, None, Some("frieren".into()), None, None, false)
             .await
             .expect("búsqueda");
         assert!(
