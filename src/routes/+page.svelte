@@ -88,6 +88,7 @@
   import { enOrden, estaEnLista, siguienteEnOrden, nombreDe, type ItemLista } from "$lib/listas.svelte";
   import { perfilInfantil } from "$lib/perfiles.svelte";
   import { aptoNinos } from "$lib/ninos";
+  import { precargarFuentes } from "$lib/precarga";
   import type {
     OmdbDetail,
     ListItem,
@@ -1893,7 +1894,7 @@
     mode = "playmenu";
     setFs(true);
     void prefetchMenuExtras();
-    void prepararCapitulo();
+    void prepararCapitulo().then(precargarFuentesFicha);
     // Atajos OS-level para asegurar que Esc/Backspace cierren incluso si el
     // foco quedó atrapado en un iframe/embed.
     void registerBackShortcuts(false);
@@ -2041,6 +2042,27 @@
       mode = "episodes";
     }
   }
+  // Las fuentes de lo que reproduce el botón principal se buscan ya, mientras
+  // se mira la ficha: Descubrir las encuentra listas (precarga.ts). En series,
+  // las del capítulo que sigue.
+  function precargarFuentesFicha() {
+    const d = selected;
+    if (!d || mode !== "playmenu") return;
+    const serie = d.media_type !== "movie";
+    const season = serie ? (sourcesSeason ?? capituloSigue?.season ?? null) : null;
+    const episode = serie ? (sourcesEpisode ?? capituloSigue?.episode ?? null) : null;
+    if (serie && (season == null || episode == null)) return;
+    precargarFuentes({
+      imdbId: d.imdb_id ?? "",
+      kind: currentKind(),
+      title: d.title,
+      originalTitle: d.original_title ?? null,
+      season,
+      episode,
+      kitsuId: d.kitsu_id ?? null,
+    });
+  }
+
   // En series, el capítulo de la ficha (fijarCapitulo); sin él, el selector.
   function menuRealDebrid() { fijarCapitulo(); openDebrid(true); }  // auto mejor
   function menuResearch() { fijarCapitulo(); openDebrid(false); }   // elegir

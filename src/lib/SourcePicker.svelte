@@ -86,6 +86,7 @@
     type OpcionSub,
   } from "$lib/subtitulos";
   import { contextoActual } from "$lib/historial.svelte";
+  import { buscarFuentes } from "$lib/precarga";
   import {
     pistaDe,
     recordarPack,
@@ -460,14 +461,15 @@
 
       let srcs: Src[];
       try {
-        srcs = await invoke<Src[]>("kodios_search", {
+        // La ficha ya las pidió al abrirse (precarga.ts): casi siempre llegan listas.
+        srcs = await buscarFuentes({
           imdbId,
           kind,
           title,
-          originalTitle: originalTitle ?? undefined,
-          season: season ?? undefined,
-          episode: episode ?? undefined,
-          kitsuId: kitsuId ?? undefined,
+          originalTitle: originalTitle ?? null,
+          season: season ?? null,
+          episode: episode ?? null,
+          kitsuId: kitsuId ?? null,
         });
       } catch (e) {
         // Sin internet no hay scrapers, pero la copia del disco sí se puede
