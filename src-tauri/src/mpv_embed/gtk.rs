@@ -413,10 +413,15 @@ fn build_surface(vbox: &gtk::Box) {
     });
     glarea.connect_button_press_event(|area, ev| {
         area.grab_focus();
-        if ev.button() == 1 {
-            let (x, y) = ev.position();
-            let (cx, cy) = widget_to_osd(area, x, y);
-            super::raton_clic(cx, cy);
+        match ev.button() {
+            1 => {
+                let (x, y) = ev.position();
+                let (cx, cy) = widget_to_osd(area, x, y);
+                super::raton_clic(cx, cy);
+            }
+            // Clic derecho = Volver, igual que en el resto de Kütral.
+            3 => super::tecla("Escape", None),
+            _ => {}
         }
         glib::Propagation::Stop
     });

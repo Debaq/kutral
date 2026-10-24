@@ -135,6 +135,22 @@
     cargarCast();
     void recuperarTv();
     initDetection();
+    // Clic derecho = Volver (Esc), como el botón atrás de un control. El menú
+    // del navegador (Recargar, Inspeccionar…) no sirve en la app. En los
+    // campos de texto queda, para copiar y pegar.
+    window.addEventListener(
+      "contextmenu",
+      (e) => {
+        const t = e.target as HTMLElement | null;
+        const texto =
+          t?.closest("textarea, [contenteditable='true']") ||
+          (t instanceof HTMLInputElement && !["checkbox", "radio", "range", "button", "submit"].includes(t.type));
+        if (texto) return;
+        e.preventDefault();
+        dispatchRemoteKey("Escape");
+      },
+      { capture: true },
+    );
     // Ctrl + rueda no amplía la interfaz (el pellizco del touchpad se corta en
     // Rust, ver lib.rs: llega por GDK y no pasa por acá).
     window.addEventListener("wheel", (e) => e.ctrlKey && e.preventDefault(), {

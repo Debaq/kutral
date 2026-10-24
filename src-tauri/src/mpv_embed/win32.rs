@@ -29,7 +29,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, GetClientRect, KillTimer, LoadCursorW, RegisterClassW,
     SetCursor, SetTimer, SetWindowPos, ShowWindow, CS_HREDRAW, CS_VREDRAW, HWND_TOP, IDC_ARROW,
     SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_HIDE, SW_SHOW, WM_CHAR, WM_KEYDOWN,
-    WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_SETCURSOR, WM_SIZE, WM_TIMER,
+    WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_SETCURSOR, WM_SIZE, WM_TIMER,
     WNDCLASSW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
 };
 
@@ -373,6 +373,12 @@ unsafe extern "system" fn wndproc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LR
             SetFocus(h);
             let (x, y) = a_osd(lp);
             super::raton_clic(x, y);
+            return 0;
+        }
+        // Clic derecho = Volver, igual que en el resto de Kütral.
+        WM_RBUTTONDOWN => {
+            SetFocus(h);
+            super::tecla("Escape", None);
             return 0;
         }
         WM_MOUSEWHEEL => {
