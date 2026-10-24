@@ -92,6 +92,119 @@ fn sesion() -> &'static Mutex<Option<Sesion>> {
     S.get_or_init(|| Mutex::new(None))
 }
 
+/// Cambia la sesión y la deja anotada en disco (ver `cast_recuperar`).
+fn fijar_sesion(s: Option<Sesion>) {
+    guardar_sesion(s.as_ref());
+    *sesion().lock().unwrap_or_else(|e| e.into_inner()) = s;
+}
+
+// ---- Recuperar la TV al reabrir Kütral ---------------------------------------
+//
+// La TV sigue sonando aunque Kütral se cierre, pero la sesión vivía solo en
+// memoria: al reabrir no había pastilla ni controles. Se guarda lo justo para
+// volver a hablarle (TV, título y la URL que se le mandó) y se borra cuando
+// la transmisión termina.
+
+static ARCHIVO_SESION: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+pub fn init(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    if let Ok(d) = app.path().app_config_dir() {
+        let _ = ARCHIVO_SESION.set(d.join("cast_sesion.json"));
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct Guardada {
+    tv: CastTv,
+    titulo: String,
+    uri: String,
+}
+
+fn guardar_sesion(s: Option<&Sesion>) {
+    let Some(p) = ARCHIVO_SESION.get() else { return };
+    let r = match s {
+        Some(s) => {
+            let g = Guardada { tv: s.tv.clone(), titulo: s.titulo.clone(), uri: s.uri.clone() };
+            serde_json::to_vec(&g)
+                .map_err(|e| e.to_string())
+                .and_then(|b| std::fs::write(p, b).map_err(|e| e.to_string()))
+        }
+        None => match std::fs::remove_file(p) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+            _ => Ok(()),
+        },
+    };
+    if let Err(e) = r {
+        eprintln!("[cast] guardar sesión: {e}");
+    }
+}
+
+/// Al abrir Kütral: si lo que se mandó la vez anterior sigue sonando en la
+/// TV, se retoma la sesión. true = la hay (la pastilla y los controles vuelven).
+#[tauri::command]
+pub async fn cast_recuperar() -> bool {
+    if sesion().lock().unwrap_or_else(|e| e.into_inner()).is_some() {
+        return true;
+    }
+    let Some(g) = ARCHIVO_SESION
+        .get()
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|b| serde_json::from_slice::<Guardada>(&b).ok())
+    else {
+        return false;
+    };
+    // Sigue siendo lo nuestro (la misma URL) y está sonando o en pausa. Lo que
+    // pasaba por la pasarela murió con Kütral: la TV ya no lo estará pasando.
+    let viva = if g.tv.es_dlna() {
+        crate::dlna::estado(&g.tv).await.ok().map(|(e, _, _, uri)| {
+            (uri.is_empty() || uri == g.uri)
+                && matches!(e.as_str(), "PLAYING" | "PAUSED_PLAYBACK" | "TRANSITIONING")
+        })
+    } else {
+        let (tv, uri) = (g.tv.clone(), g.uri.clone());
+        bloqueante(move || {
+            let mut c = Conexion::abrir(&tv)?;
+            let receptor = c.estado_receptor()?;
+            let Some((transporte, _)) = app_video(&receptor) else {
+                return Ok(false);
+            };
+            let Some(m) = medio(&mut c, &transporte)? else {
+                return Ok(false);
+            };
+            let mismo = m["media"]["contentId"].as_str().is_none_or(|u| u == uri);
+            Ok(mismo && matches!(m["playerState"].as_str(), Some("PLAYING" | "PAUSED" | "BUFFERING")))
+        })
+        .await
+        .ok()
+    };
+    match viva {
+        Some(true) => {
+            eprintln!("[cast] recuperada \"{}\" en {}", g.titulo, g.tv.nombre);
+            *sesion().lock().unwrap_or_else(|e| e.into_inner()) = Some(Sesion {
+                tv: g.tv,
+                titulo: g.titulo,
+                uri: g.uri,
+                inicio: Instant::now(),
+                // Ya venía sonando: un STOPPED de DLNA es que la pararon, no
+                // que la TV no pudo con el archivo.
+                vio_play: true,
+                ultima_pos: 0.0,
+                ultima_dur: 0.0,
+                con_subs: false,
+            });
+            true
+        }
+        Some(false) => {
+            guardar_sesion(None);
+            false
+        }
+        // La TV no contesta (apagada, o la red recién levanta): queda anotada
+        // para la próxima vez que se abra Kütral.
+        None => false,
+    }
+}
+
 #[derive(Debug, Serialize, Default)]
 pub struct CastStatus {
     /// Hay una transmisión iniciada desde Kütral (aunque la TV ya haya
@@ -594,7 +707,7 @@ pub async fn cast_play(
             .await?;
     }
     eprintln!("[cast] transmitiendo \"{}\" en {} ({})", titulo, tv.nombre, tv.tipo);
-    *sesion().lock().unwrap_or_else(|e| e.into_inner()) = Some(Sesion {
+    fijar_sesion(Some(Sesion {
         tv,
         titulo,
         uri,
@@ -603,7 +716,7 @@ pub async fn cast_play(
         ultima_pos: 0.0,
         ultima_dur: 0.0,
         con_subs,
-    });
+    }));
     Ok(audio_ok)
 }
 
@@ -840,7 +953,7 @@ pub async fn cast_control(accion: String, valor: Option<f64>) -> Result<(), Stri
     };
     if detener {
         // Aunque la TV no conteste, del lado de Kütral la transmisión terminó.
-        *sesion().lock().unwrap_or_else(|e| e.into_inner()) = None;
+        fijar_sesion(None);
     }
     r
 }
@@ -891,7 +1004,7 @@ fn control_cast(tv: &CastTv, accion: &str, valor: Option<f64>) -> Result<(), Str
 /// Olvida la sesión sin tocar la TV (terminó sola o alguien cambió de app).
 #[tauri::command]
 pub fn cast_soltar() {
-    *sesion().lock().unwrap_or_else(|e| e.into_inner()) = None;
+    fijar_sesion(None);
 }
 
 #[cfg(test)]

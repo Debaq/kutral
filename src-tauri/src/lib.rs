@@ -576,6 +576,7 @@ pub fn run() {
             // Limpieza de páginas de catálogo vencidas. En un hilo aparte:
             // es I/O de disco y no tiene por qué demorar el arranque.
             cache::init(app.handle());
+            cast::init(app.handle());
             {
                 let h = app.handle().clone();
                 std::thread::spawn(move || cache::purgar(&h));
@@ -725,6 +726,7 @@ pub fn run() {
             cast::cast_status,
             cast::cast_control,
             cast::cast_soltar,
+            cast::cast_recuperar,
             lan::cast_red_info,
             lan::firewall_abierto,
             rd::rd_resolve,

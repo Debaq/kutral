@@ -81,6 +81,9 @@ type Aprendido = Record<string, Record<string, Leccion>>;
 
 const K_TV = "cast_tv";
 const K_APRENDIDO = "cast_aprendido";
+// Qué se sigue en la TV (para el historial), por si Kütral se cierra y la TV
+// sigue sonando: ver recuperarTv.
+const K_SEGUIDO = "cast_seguido";
 
 export const cast = $state({
   /** TV recordada. null = nunca se eligió una. */
@@ -391,6 +394,7 @@ const GUARDAR_CADA_MS = 15_000;
  */
 export function seguir(s: { tvId: string; rasgos: Rasgos | null; ctx: MediaMeta | null; desde: number }) {
   seg = { ...s, aprendio: false, ultimoGuardado: Date.now(), sinConexion: 0 };
+  escribir(K_SEGUIDO, { tvId: s.tvId, ctx: s.ctx });
   if (timer) clearInterval(timer);
   timer = setInterval(() => void muestrear(), 2000);
   void muestrear();
@@ -459,8 +463,24 @@ function terminar(soltar: boolean) {
   if (timer) clearInterval(timer);
   timer = null;
   seg = null;
+  escribir(K_SEGUIDO, null);
   cast.estado = null;
   if (soltar) void invoke("cast_soltar").catch(() => {});
+}
+
+/**
+ * Al abrir Kütral: lo que quedó sonando en la TV la vez anterior vuelve a
+ * tener pastilla y controles, y su progreso sigue yendo al historial. Sin
+ * la pista de audio ni los subtítulos: eso se eligió en el selector que ya
+ * no está, así que no se aprende nada de la TV con esta sesión.
+ */
+export async function recuperarTv() {
+  if (seg) return;
+  // false también si la TV no contestó: lo anotado queda para la próxima.
+  const ok = await invoke<boolean>("cast_recuperar").catch(() => false);
+  if (!ok) return;
+  const g = leer<{ tvId: string; ctx: MediaMeta | null } | null>(K_SEGUIDO, null);
+  seguir({ tvId: g?.tvId ?? "", rasgos: null, ctx: g?.ctx ?? null, desde: 0 });
 }
 
 /** Tipo de TV legible: "Google Cast" / "DLNA". */

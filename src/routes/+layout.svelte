@@ -11,7 +11,7 @@
   import SubsService from "$lib/SubsService.svelte";
   import HistorialTracker from "$lib/HistorialTracker.svelte";
   import CastPill from "$lib/CastPill.svelte";
-  import { cargarCast } from "$lib/cast.svelte";
+  import { cargarCast, recuperarTv } from "$lib/cast.svelte";
   import { config, loadConfig, initDetection, initRd, refreshRdLinked } from "$lib/config.svelte";
   import { onboardingHecho, faltaLoMinimo } from "$lib/onboarding";
   import { initTorrentSession, startQueuePoll, stopQueuePoll } from "$lib/torrents.svelte";
@@ -133,6 +133,7 @@
   onMount(() => {
     loadConfig();
     cargarCast();
+    void recuperarTv();
     initDetection();
     // Ctrl + rueda no amplía la interfaz (el pellizco del touchpad se corta en
     // Rust, ver lib.rs: llega por GDK y no pasa por acá).
