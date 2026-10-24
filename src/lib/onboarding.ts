@@ -25,11 +25,12 @@ export function resetOnboarding() {
 /**
  * ¿Falta lo mínimo para que la app sirva de algo?
  *
- * Catálogo: sin key de TMDb no cargan Pelis ni Series. Anime, IPTV y Juegos sí,
+ * Catálogo: sin key de TMDb no cargan Pelis ni Series. Anime e IPTV sí,
  * así que no es un bloqueo total, pero es medio Kütral apagado.
  *
  * Reproducción: hace falta un debrid vinculado o la descarga local activada.
- * Sin ninguna de las dos no hay forma de ver nada.
+ * Sin ninguna de las dos no se ven películas ni series (sí la TV en vivo y el
+ * anime con enlace directo).
  */
 export function faltaLoMinimo(opts: {
 	tmdbKey: string;

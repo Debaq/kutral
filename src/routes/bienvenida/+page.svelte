@@ -21,6 +21,9 @@
     saveConfig,
     refreshRdLinked,
     LANGS,
+    cambiarIdioma,
+    idiomaContenido,
+    nombreIdioma,
     TORRENT_QUALITY_OPTIONS,
     TORRENT_BUFFER_OPTIONS,
     type Lang,
@@ -64,7 +67,7 @@
   // Los campos escriben directo en el store y se persisten al avanzar: si la
   // app se cierra a medias, lo que ya se contestó quedó guardado.
   function guardar() {
-    config.lang = lang;
+    cambiarIdioma(lang);
     config.modeOverride = mode;
     config.tmdbKey = tmdb.trim();
     config.omdbKey = omdb.trim();
@@ -297,7 +300,10 @@
     <div class="ob-body" data-section="ob-body">
       {#if paso === "idioma"}
         <h1>Idioma y pantalla</h1>
-        <p class="ob-sub">Se cambia después en Configuración.</p>
+        <p class="ob-sub">
+          El de títulos, sinopsis, pósters, audio y subtítulos. Los menús siguen
+          en español por ahora. Se cambia después en Configuración.
+        </p>
         <div class="ob-group">
           {#each LANGS as l}
             <label class="ob-card-op" class:sel={lang === l.id}>
@@ -330,10 +336,13 @@
             <tr><th>Sección</th><th>Qué hace falta</th></tr>
           </thead>
           <tbody>
-            <tr><td>Anime, IPTV, Juegos</td><td class="ok">Nada. Funcionan ya.</td></tr>
+            <tr><td>TV en vivo y anime con enlace directo</td><td class="ok">Nada. Funcionan ya.</td></tr>
             <tr><td>Subtítulos</td><td class="ok">Nada.</td></tr>
             <tr><td>Películas y series</td><td>Key de TMDb — gratis, un formulario.</td></tr>
-            <tr><td>Reproducir</td><td>Cuenta de debrid (de pago) o descarga local.</td></tr>
+            <tr>
+              <td>Reproducir</td>
+              <td>Gratis con descarga local (más lento), o Real-Debrid (de pago, rápido).</td>
+            </tr>
           </tbody>
         </table>
         <p class="ob-nota">Los dos pasos que vienen cubren esas dos filas.</p>
@@ -349,7 +358,7 @@
         <p class="ob-sub">
           Kütral usa TMDb para el catálogo. La key es gratis y se pide en
           <code>themoviedb.org/settings/api</code>. Sin ella, Pelis y Series
-          quedan vacías; Anime, IPTV y Juegos funcionan igual.
+          quedan vacías; Anime y TV en vivo funcionan igual.
         </p>
         <div class="ob-row">
           <input data-nav
@@ -378,15 +387,54 @@
       {:else if paso === "reproducir"}
         <h1>Cómo reproducir</h1>
         <p class="ob-sub">
-          Los buscadores de fuentes devuelven enlaces torrent. Hay dos formas de
-          convertirlos en video.
+          Las películas y series salen de torrents. Hay dos formas de verlas y
+          las dos funcionan: elige una, o las dos, y cámbialo cuando quieras.
         </p>
 
-        <section class="ob-op">
-          <h2>Con debrid <span class="ob-tag">de pago</span></h2>
+        <section class="ob-op" class:elegida={config.torrentLocal}>
+          <h2>Gratis, sin cuenta <span class="ob-tag gratis">gratis</span></h2>
           <p>
-            Real-Debrid baja el torrent por ti y te lo sirve como un archivo
-            normal: rápido, y tu IP no aparece en el torrent.
+            Kütral baja el torrent en este equipo y empieza a reproducir apenas
+            tiene un trozo. <strong>Es más lento:</strong> tarda más en empezar y
+            depende de cuánta gente comparte el archivo. Lo conocido suele andar
+            bien; lo raro puede no arrancar.
+          </p>
+          <p class="ob-aviso">
+            Tu IP queda visible para el resto de la gente que comparte ese archivo.
+          </p>
+          <label class="ob-toggle">
+            <input data-nav type="checkbox" checked={config.torrentLocal} onchange={(e) => toggleLocal(e.currentTarget.checked)} />
+            <span>Ver gratis con descarga local</span>
+          </label>
+          {#if config.torrentLocal}
+            <h3>Calidad máxima</h3>
+            <p class="ob-nota">Menos calidad pesa menos: empieza antes.</p>
+            <div class="ob-group">
+              {#each TORRENT_QUALITY_OPTIONS as q}
+                <label class="ob-card-op" class:sel={config.torrentMaxQuality === q.id}>
+                  <input data-nav type="radio" name="obq" value={q.id} checked={config.torrentMaxQuality === q.id} onchange={() => setCalidad(q.id)} />
+                  <div><strong>{q.label}</strong><span>{q.hint}</span></div>
+                </label>
+              {/each}
+            </div>
+            <h3>Cuánto bajar antes de empezar a ver</h3>
+            <div class="ob-group">
+              {#each TORRENT_BUFFER_OPTIONS as b}
+                <label class="ob-card-op" class:sel={config.torrentBufferMb === b.mb}>
+                  <input data-nav type="radio" name="obb" value={b.mb} checked={config.torrentBufferMb === b.mb} onchange={() => setBuffer(b.mb)} />
+                  <div><strong>{b.label}</strong><span>{b.hint}</span></div>
+                </label>
+              {/each}
+            </div>
+          {/if}
+        </section>
+
+        <section class="ob-op" class:elegida={config.rdLinked}>
+          <h2>Más rápido: Real-Debrid <span class="ob-tag">de pago</span></h2>
+          <p>
+            Real-Debrid baja el torrent en sus servidores y te lo sirve como un
+            archivo normal: lo que ya tiene empieza casi al instante, no depende
+            de cuánta gente lo comparte y tu IP no aparece en el torrent.
           </p>
           {#if config.rdLinked}
             <p class="ob-ok">✓ Cuenta vinculada.
@@ -419,47 +467,19 @@
                 <button data-nav class="ob-mini" onclick={guardarTokenRd} disabled={!rdManual.trim()}>Guardar</button>
               </div>
             {/if}
+            <p class="ob-nota">
+              ¿Alguien de confianza tiene Real-Debrid? Con una cuenta de Kütral te
+              lo puede prestar: Configuración → Cuenta → Prestar Real-Debrid.
+            </p>
           {/if}
           {#if rdErr}<p class="ob-err">{rdErr}</p>{/if}
         </section>
 
-        <section class="ob-op">
-          <h2>Sin debrid: descarga local <span class="ob-tag gratis">gratis</span></h2>
-          <p>
-            Kütral baja el torrent y lo reproduce mientras se descarga.
-            <strong>Tu IP queda visible</strong> para el resto de la gente que
-            comparte ese archivo, y la velocidad depende de cuántos lo compartan.
-          </p>
-          <label class="ob-toggle">
-            <input data-nav type="checkbox" checked={config.torrentLocal} onchange={(e) => toggleLocal(e.currentTarget.checked)} />
-            <span>Activar descarga local</span>
-          </label>
-          {#if config.torrentLocal}
-            <h3>Calidad máxima</h3>
-            <div class="ob-group">
-              {#each TORRENT_QUALITY_OPTIONS as q}
-                <label class="ob-card-op" class:sel={config.torrentMaxQuality === q.id}>
-                  <input data-nav type="radio" name="obq" value={q.id} checked={config.torrentMaxQuality === q.id} onchange={() => setCalidad(q.id)} />
-                  <div><strong>{q.label}</strong><span>{q.hint}</span></div>
-                </label>
-              {/each}
-            </div>
-            <h3>Cuánto bajar antes de empezar a ver</h3>
-            <div class="ob-group">
-              {#each TORRENT_BUFFER_OPTIONS as b}
-                <label class="ob-card-op" class:sel={config.torrentBufferMb === b.mb}>
-                  <input data-nav type="radio" name="obb" value={b.mb} checked={config.torrentBufferMb === b.mb} onchange={() => setBuffer(b.mb)} />
-                  <div><strong>{b.label}</strong><span>{b.hint}</span></div>
-                </label>
-              {/each}
-            </div>
-          {/if}
-        </section>
-
         {#if !puedeReproducir}
           <p class="ob-warn">
-            Sin ninguna de las dos no se puede reproducir nada. Puedes seguir y
-            decidirlo después en Configuración.
+            Sin ninguna de las dos, las películas y series no se pueden ver (la TV
+            en vivo y el anime con enlace directo sí). Puedes seguir y decidirlo
+            después en Configuración.
           </p>
         {/if}
 
@@ -470,11 +490,11 @@
         <div class="ob-group">
           <label class="ob-card-op" class:sel={subMode === "dub"}>
             <input data-nav type="radio" name="submode" value="dub" bind:group={subMode} />
-            <div><strong>Doblado</strong><span>Prioriza audio en español.</span></div>
+            <div><strong>Doblado</strong><span>Prioriza audio en {nombreIdioma(idiomaContenido(lang))}.</span></div>
           </label>
           <label class="ob-card-op" class:sel={subMode === "sub"}>
             <input data-nav type="radio" name="submode" value="sub" bind:group={subMode} />
-            <div><strong>Subtitulado</strong><span>Audio original + subtítulos en español.</span></div>
+            <div><strong>Subtitulado</strong><span>Audio original + subtítulos en {nombreIdioma(idiomaContenido(lang))}.</span></div>
           </label>
         </div>
         <h2>Key de OMDb</h2>
@@ -493,11 +513,11 @@
             {puedeVerCatalogo ? "✓" : "—"} Películas y series
             {#if !puedeVerCatalogo}<span> · falta la key de TMDb</span>{/if}
           </li>
-          <li class="ok">✓ Anime, IPTV y Juegos</li>
+          <li class="ok">✓ TV en vivo y anime con enlace directo</li>
           <li class:ok={puedeReproducir}>
             {puedeReproducir ? "✓" : "—"} Reproducción
-            {#if config.rdLinked}<span> · debrid</span>
-            {:else if config.torrentLocal}<span> · descarga local</span>
+            {#if config.rdLinked}<span> · Real-Debrid{config.torrentLocal ? " y descarga local" : ""}</span>
+            {:else if config.torrentLocal}<span> · descarga local (gratis, más lenta)</span>
             {:else}<span> · sin debrid ni descarga local</span>{/if}
           </li>
         </ul>
@@ -671,6 +691,8 @@
     vertical-align: middle;
   }
   .ob-tag.gratis { background: #8fd18f; }
+  .ob-op.elegida { border-color: #35502f; }
+  .ob-aviso { color: #e0b46a !important; font-size: 13px !important; }
 
   .ob-toggle { display: flex; align-items: center; gap: 9px; font-size: 14px; cursor: pointer; }
 
