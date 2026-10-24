@@ -17,6 +17,7 @@
   import { cola, enEspera } from "$lib/colaDescargas.svelte";
   import type { WifiState } from "$lib/tipos";
   import { perfiles, perfilDe, abrirPerfiles } from "$lib/perfiles.svelte";
+  import { img, onImgError } from "$lib/imagenes.svelte";
 
   let maximized = $state(true);
   let fullscreen = $state(false);
@@ -291,7 +292,15 @@
         aria-label="Perfil {perfil.nombre}: cambiar"
       >
         {#if perfil.avatar && caritaRota !== perfil.avatar}
-          <img src={perfil.avatar} alt="" onerror={() => (caritaRota = perfil.avatar)} />
+          <img
+            src={img(perfil.avatar, 280)}
+            alt=""
+            onerror={(e) => {
+              // Archivo del caché borrado: vuelve a la remota. La remota falla: la inicial.
+              if ((e.currentTarget as HTMLImageElement).src.includes("asset")) onImgError(e);
+              else caritaRota = perfil.avatar;
+            }}
+          />
         {:else}
           {perfil.nombre.trim().charAt(0).toUpperCase()}
         {/if}

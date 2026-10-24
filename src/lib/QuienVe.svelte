@@ -19,10 +19,13 @@
     type Perfil,
   } from "$lib/perfiles.svelte";
   import ElegirCarita from "$lib/ElegirCarita.svelte";
+  import { img, onImgError } from "$lib/imagenes.svelte";
   import { page } from "$app/state";
   import { untrack } from "svelte";
 
   const MAX = 10;
+  // Ancho al que se guarda la carita en el caché (se muestra a 120-140 px).
+  const CARITA_PX = 280;
 
   let administrar = $state(false);
   /** Perfil en edición; "nuevo" = alta. */
@@ -126,8 +129,13 @@
     return !!url && !rotas.has(url);
   }
 
-  function rota(url: string) {
-    rotas = new Set(rotas).add(url);
+  // Las caritas salen del caché de imágenes en disco (se ven sin red). Si el
+  // archivo del caché ya no está, onImgError vuelve a la remota; si la remota
+  // tampoco carga, va la inicial.
+  function fallaCarita(e: Event, url: string) {
+    const src = (e.currentTarget as HTMLImageElement | null)?.src ?? "";
+    if (src.includes("asset")) onImgError(e);
+    else rotas = new Set(rotas).add(url);
   }
 
   function tocar(p: Perfil) {
@@ -177,7 +185,7 @@
           <button data-nav class="perfil" class:actual={p.id === perfiles.actual} onclick={() => tocar(p)}>
             <span class="avatar" style:background={p.color}>
               {#if conCarita(p.avatar)}
-                <img src={p.avatar} alt="" onerror={() => rota(p.avatar)} />
+                <img src={img(p.avatar, CARITA_PX)} alt="" onerror={(e) => fallaCarita(e, p.avatar)} />
               {:else}
                 {inicial(p.nombre)}
               {/if}
@@ -218,7 +226,7 @@
         <button data-nav class="perfil" onclick={() => (carita = true)} title="Cambiar la carita">
           <span class="avatar grande" style:background={color}>
             {#if conCarita(avatar)}
-              <img src={avatar} alt="" onerror={() => rota(avatar)} />
+              <img src={img(avatar, CARITA_PX)} alt="" onerror={(e) => fallaCarita(e, avatar)} />
             {:else}
               {inicial(nombre)}
             {/if}
