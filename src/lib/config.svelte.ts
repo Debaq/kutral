@@ -42,6 +42,13 @@ export function nombreIdioma(id: string): string {
 	return NOMBRE_IDIOMA[id] ?? id;
 }
 
+/** Qué español se prefiere en el audio: latino con la app en Chile, castellano en España. */
+export function varianteEs(lang: Lang = config.lang): "latino" | "castellano" | undefined {
+	if (lang === "es-CL") return "latino";
+	if (lang === "es-ES") return "castellano";
+	return undefined;
+}
+
 /** El idioma del contenido en ISO 639-1 ("pt" de "pt-BR"), como lo usan las pistas. */
 export function idiomaContenido(lang: Lang = config.lang): string {
 	return lang.split("-")[0];

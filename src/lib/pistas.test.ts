@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { elegirPistaSub, esForzada, pistaDelIdioma } from "./pistas";
+import { elegirPistaSub, esForzada, mejorAudio, pistaDelIdioma } from "./pistas";
 
 const p = (id: number, lang: string, title = "", forced = false) => ({ id, lang, title, forced });
 
@@ -56,5 +56,33 @@ describe("elegirPistaSub", () => {
     const subs = [p(1, "spa"), p(2, "eng")];
     expect(elegirPistaSub(subs, "en").completa?.id).toBe(2);
     expect(elegirPistaSub(subs, "fr")).toEqual({ completa: undefined, forzada: undefined });
+  });
+});
+
+describe("mejorAudio", () => {
+  // El MULTI de Super Mario Galaxy: castellano primero, latino tercero.
+  const multi = [
+    p(1, "spa", "Spanish DDP 5.1"),
+    p(2, "spa", "Spanish AC3 5.1"),
+    p(3, "spa", "Spanish Latino DDP Surround 7.1"),
+    p(4, "eng", "English TrueHD Atmos 7.1"),
+  ];
+
+  it("con la app en Chile elige el latino aunque venga después", () => {
+    expect(mejorAudio(multi, "es", "latino")).toBe(2);
+  });
+
+  it("con la app en España, el castellano antes que el latino", () => {
+    const pistas = [p(1, "spa", "Español Latino"), p(2, "spa", "Español (España)")];
+    expect(mejorAudio(pistas, "es", "castellano")).toBe(1);
+  });
+
+  it("sin variante o sin marca, el primero del idioma", () => {
+    expect(mejorAudio(multi, "es")).toBe(0);
+    expect(mejorAudio([p(1, "eng"), p(2, "spa")], "es", "latino")).toBe(1);
+  });
+
+  it("sin el idioma, -1", () => {
+    expect(mejorAudio([p(1, "eng")], "es", "latino")).toBe(-1);
   });
 });

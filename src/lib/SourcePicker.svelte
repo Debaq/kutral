@@ -5,10 +5,10 @@
   // no procesa navegación.
   import { invoke } from "@tauri-apps/api/core";
   import { player, setNowPlaying } from "$lib/playerState.svelte";
-  import { elegirPistaSub, pistaDelIdioma } from "$lib/pistas";
+  import { elegirPistaSub, mejorAudio, pistaDelIdioma } from "$lib/pistas";
   import { esFinReal, type FinPayload } from "$lib/finVideo";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-  import { config, idiomaContenido, nombreIdioma } from "$lib/config.svelte";
+  import { config, idiomaContenido, nombreIdioma, varianteEs } from "$lib/config.svelte";
   import { WEB_PLAYER_ENABLED } from "$lib/features";
   import { notify } from "$lib/notifStore.svelte";
   import {
@@ -880,7 +880,8 @@
   // si Configuración pide doblado (lo mismo que elige mpv), si no la primera.
   function audioPreferido(tracks: ProbeTrack[]): number {
     if (config.subMode !== "dub") return 1;
-    const i = tracks.filter((t) => t.kind === "audio").findIndex(delContenido);
+    // En español, la variante de la app (latino en Chile) aunque venga después.
+    const i = mejorAudio(tracks.filter((t) => t.kind === "audio"), idiomaContenido(), varianteEs());
     return i >= 0 ? i + 1 : 1;
   }
 
@@ -2064,9 +2065,6 @@
   // Manda un comando JSON-IPC a mpv (set propiedad, sub-add, etc.).
   const mpv = (args: unknown[]) => invoke("mpv_cmd", { args }).catch(() => {});
 
-  // ¿La pista de audio es español? (el doblaje de "Doblado" es al español).
-  const isEsTrack = (t: MpvTrack) => pistaDelIdioma(t, idiomaContenido());
-
 
   // NIVELES 2-3: la verdad del contenedor. Lee las pistas reales de mpv y elige
   // según la preferencia. Solo baja subs externos si el archivo no trae una
@@ -2081,7 +2079,8 @@
     }
     const audios = tracks.filter((t) => t.kind === "audio");
     const subs = tracks.filter((t) => t.kind === "sub");
-    const esAudio = audios.find(isEsTrack);
+    const iAudio = mejorAudio(audios, idiomaContenido(), varianteEs());
+    const esAudio = iAudio >= 0 ? audios[iAudio] : undefined;
     const lang = config.subsLang || "es";
 
     if (config.subMode === "dub" && esAudio) {

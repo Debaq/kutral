@@ -28,6 +28,50 @@ export function pistaDelIdioma(t: Pick<Pista, "lang" | "title">, idioma: string)
   return def.nombres.test(t.title || "");
 }
 
+/** Variante del español que prefiere la app: latino (Chile, Latinoamérica) o
+ *  castellano (España). Los releases MULTI traen las dos, y el castellano
+ *  suele venir primero. */
+export type VarianteEs = "latino" | "castellano";
+
+const LATINO = /latin|\blat\b|latam|m[eé]xic|419|hispanoam/i;
+const CASTELLANO = /castellano|espa[ñn]a|spain|\bcast\b|\besp\b|europe/i;
+
+function varianteDe(t: Pick<Pista, "lang" | "title">): VarianteEs | null {
+  const lang = (t.lang || "").toLowerCase();
+  if (/^es[-_](419|mx|la|ar|co|cl)/.test(lang)) return "latino";
+  if (/^es[-_]es/.test(lang)) return "castellano";
+  if (LATINO.test(t.title || "")) return "latino";
+  if (CASTELLANO.test(t.title || "")) return "castellano";
+  return null;
+}
+
+/**
+ * Índice de la mejor pista de audio en `idioma` (-1 si no hay). Entre varias
+ * del mismo idioma, en español gana la `variante` pedida aunque venga
+ * después; las que no dicen cuál son, van en medio.
+ */
+export function mejorAudio(
+  audios: Pick<Pista, "lang" | "title">[],
+  idioma: string,
+  variante?: VarianteEs,
+): number {
+  let mejor = -1;
+  let puntos = -1;
+  audios.forEach((t, i) => {
+    if (!pistaDelIdioma(t, idioma)) return;
+    let p = 1;
+    if (idioma === "es" && variante) {
+      const v = varianteDe(t);
+      p = v === variante ? 2 : v === null ? 1 : 0;
+    }
+    if (p > puntos) {
+      puntos = p;
+      mejor = i;
+    }
+  });
+  return mejor;
+}
+
 /** Pista "forzada": solo carteles y diálogos en otro idioma, no la película.
  *  Muchos releases no la marcan y lo dicen en el título. */
 export function esForzada(t: Pista): boolean {
