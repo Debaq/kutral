@@ -6,4 +6,4 @@ Exec=kutral
 Icon=app.kutral.Kutral
 Terminal=false
 Categories=AudioVideo;Video;Player;
-StartupWMClass=Kütral
+StartupWMClass=app.kutral.Kutral

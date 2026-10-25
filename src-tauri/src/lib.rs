@@ -13,6 +13,8 @@ mod kodios;
 mod llavero;
 mod perfiles;
 mod lan;
+#[cfg(target_os = "linux")]
+mod linux_desktop;
 mod net;
 mod omdb;
 mod opensubtitles;
@@ -212,6 +214,11 @@ async fn cache_image(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    {
+        linux_desktop::set_program_name();
+        linux_desktop::ensure_desktop_entry();
+    }
     use tauri_plugin_sql::{Migration, MigrationKind};
     let migrations = vec![
         Migration {
