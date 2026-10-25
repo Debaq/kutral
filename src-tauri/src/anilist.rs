@@ -177,6 +177,7 @@ fn media_to_item(m: &serde_json::Value) -> TmdbItem {
 /// `season` (WINTER/SPRING/SUMMER/FALL) + `season_year` filtran por cour;
 /// solo aplican si vienen ambos.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn anilist_discover(
     app: tauri::AppHandle,
     page: u32,
