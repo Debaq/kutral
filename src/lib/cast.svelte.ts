@@ -86,8 +86,9 @@ const K_APRENDIDO = "cast_aprendido";
 const K_SEGUIDO = "cast_seguido";
 
 export const cast = $state({
-  /** TV recordada. null = nunca se eligió una. */
-  tv: null as CastTv | null,
+  /** TV recordada. null = nunca se eligió una. Se lee ya al cargar el módulo
+   *  (no solo en cargarCast): si el módulo se vuelve a cargar, no la pierde. */
+  tv: leer<CastTv | null>(K_TV, null),
   buscando: false,
   /** La búsqueda normal no trajo nada y va equipo por equipo (tarda más). */
   busquedaLarga: false,

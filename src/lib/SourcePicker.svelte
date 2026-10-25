@@ -752,6 +752,10 @@
     resolvingMsg = `Revisando si ${tv.nombre} puede con esta versión… 🔎`;
     const tracks = await probeTracks(url).catch(() => [] as ProbeTrack[]);
     const audioN = como?.audio ?? audioPreferido(tracks);
+    dbg(
+      `TV: audio ${audioN} de ${tracks.filter((t) => t.kind === "audio").length}` +
+        `${audioN > 1 ? " (pasa por el PC)" : ""}, desde ${desde}s`,
+    );
     const r = rasgosDe(tracks, audioN);
     if (r) {
       const ev = evaluar(tv, r);
@@ -959,7 +963,16 @@
     desde: number,
   ): Promise<"ok" | "error" | "red" | "tiempo" | "cortado"> {
     const t0 = Date.now();
-    while (Date.now() - t0 < 45_000) {
+    // Mientras la TV diga que está cargando, se le tiene paciencia: saltar al
+    // minuto 76 de un MKV por wifi tarda. Si nunca dio señales, a los 45 s.
+    const ESPERA_MUDA = 45_000;
+    const ESPERA_CARGANDO = 120_000;
+    let cargando = false;
+    // Primer minuto visto en PLAYING: arrancó cuando avanza, venga de donde
+    // venga (la TV puede caer un poco antes de `desde`, en un keyframe).
+    let pos0: number | null = null;
+    let ultimoLog = 0;
+    while (Date.now() - t0 < (cargando ? ESPERA_CARGANDO : ESPERA_MUDA)) {
       if (castCancel) {
         await castDetener().catch(() => {});
         return "cortado";
@@ -967,10 +980,19 @@
       await sleep(1000);
       const st = await invoke<CastStatus>("cast_status").catch(() => null);
       if (!st) continue;
+      if (Date.now() - ultimoLog > 5000) {
+        ultimoLog = Date.now();
+        dbg(`TV arrancando: ${st.estado} pos=${Math.round(st.pos)} (desde ${desde}) ${Math.round((Date.now() - t0) / 1000)}s`);
+      }
       if (st.estado === "LOADING" || st.estado === "BUFFERING") {
+        cargando = true;
         resolvingMsg = `${castTvNombre} está cargando el video… 📺`;
       }
-      if (st.estado === "PLAYING" && st.pos >= desde + 2) return "ok";
+      if (st.estado === "PLAYING") {
+        cargando = true;
+        if (pos0 === null) pos0 = st.pos;
+        if (st.pos >= desde + 2 || st.pos - pos0 >= 2) return "ok";
+      }
       // Alguien la pausó con el control de la TV: ya había arrancado.
       if (st.estado === "PAUSED" && st.pos > desde) return "ok";
       if (st.estado === "IDLE" && st.motivo === "ERROR") return "error";
@@ -1359,9 +1381,6 @@
     let marcadas = 0;
     let lastErr = "";
     // TV: versiones que ya se sabe que no le sirven, y las que rechazó ahora.
-    let tvIncompatibles = 0;
-    let tvFallas = 0;
-    let tvMotivo = "";
     // Mejor fuente que resolvió pero NO trae español: respaldo si ninguna trae.
     let fallback: { url: string; s: Src; archivos: ArchivoPack[] } | null = null;
     // Candidatas a bajar en local: las que el debrid rechazó (el 451 es
@@ -1463,17 +1482,10 @@
             : "";
           return;
         }
-        // No le sirve a la TV, pero es una fuente sana: no va a la descarga
-        // local (bajarla no cambia que la TV no la pueda reproducir).
-        if (lastErr.includes("TV_INCOMPATIBLE")) {
-          tvIncompatibles++;
-          tvMotivo ||= lastErr.replace(/^.*TV_INCOMPATIBLE:\s*/, "");
-          resolvingMsg = `Saltando versiones que ${castTvNombre} no reproduce…`;
-          continue;
-        }
-        if (lastErr.includes("TV_FALLA")) {
-          tvFallas++;
-          continue;
+        // No le sirve a la TV: se para ahí y se avisa (ver pararPorTv).
+        if (lastErr.includes("TV_INCOMPATIBLE") || lastErr.includes("TV_FALLA")) {
+          pararPorTv(i, s, lastErr);
+          return;
         }
         if (lastErr.includes("BLOQUEADO_DMCA")) blocked++;
         // Queda marcada en la lista (y no se vuelve a intentar sola).
@@ -1549,16 +1561,6 @@
     resolving = false;
     agrupar();
     if (error) return; // playViaTorrent ya dejó un mensaje más específico
-    if (destinoTv && (tvIncompatibles || tvFallas)) {
-      const partes = [
-        tvIncompatibles ? `${tvIncompatibles} con formatos que no reproduce (${tvMotivo})` : "",
-        tvFallas ? `${tvFallas} que no arrancaron` : "",
-      ].filter(Boolean);
-      error =
-        `Ninguna versión sirvió para ${castTvNombre}: ${partes.join(" y ")}. ` +
-        "Presiona T para verla en este equipo.";
-      return;
-    }
     if (blocked > 0 && !config.torrentLocal) {
       error = `Sin fuentes reproducibles: ${blocked} bloqueada(s) por el debrid (DMCA). Activa "Descarga local" en Configuración para bajarlas igual, o prueba otra calidad.`;
     } else if (pesadas > 0) {
@@ -1711,14 +1713,39 @@
     }
     resolving = true;
     resolvingMsg = "Abriendo reproductor…";
+    let fallaTv = "";
     try {
       await launch(o.url, o.s);
       if (o.sinIdioma) avisoSinIdioma();
     } catch (e) {
-      error = String(e);
+      const m = e instanceof Error ? e.message : String(e);
+      if (m.includes("TV_FALLA") || m.includes("TV_INCOMPATIBLE")) {
+        fallaTv = m;
+      } else if (m.includes("TV_CORTADO")) {
+        error = "";
+      } else {
+        error = m.replace(/^.*TV_RED:\s*/, "");
+      }
     } finally {
       resolving = false;
     }
+    if (fallaTv) pararPorTv(view.indexOf(o.s), o.s, fallaTv);
+  }
+
+  // La TV no pudo con esta versión. NO se salta a otra por su cuenta: una
+  // película es una versión, la misma en el equipo y en la TV (mismo archivo,
+  // mismo audio). Se vuelve a la lista parado en ella, con el motivo, y el
+  // usuario decide: verla aquí (T) u otra versión.
+  function pararPorTv(i: number, s: Src, err: string) {
+    resolving = false;
+    error = "";
+    if (i >= 0) focusIdx = i;
+    const motivo = err.replace(/^.*TV_(FALLA|INCOMPATIBLE):\s*/, "");
+    avisoLista =
+      `${castTvNombre} no pudo con esta versión (${motivo}). ` +
+      "Presiona T para verla en este equipo, o elige otra versión.";
+    dbg(`TV no pudo con ${s.title.slice(0, 40)}: ${motivo}`);
+    scrollFocused();
   }
 
   // Por torrent, pedida a mano: vale aunque la descarga local no esté
@@ -2040,6 +2067,7 @@
   // ¿La pista de audio es español? (el doblaje de "Doblado" es al español).
   const isEsTrack = (t: MpvTrack) => pistaDelIdioma(t, idiomaContenido());
 
+
   // NIVELES 2-3: la verdad del contenedor. Lee las pistas reales de mpv y elige
   // según la preferencia. Solo baja subs externos si el archivo no trae una
   // pista COMPLETA en el idioma de Configuración.
@@ -2339,9 +2367,14 @@
       else if (e.key === "Escape" || e.key === "Backspace") void accionRd("otra");
       return;
     }
+    // T = a la TV también mientras se buscan fuentes o se ofrecen otras: con
+    // Descubrir automático es justo cuando se aprieta, y el destino se mira
+    // recién al lanzar.
+    const teclaTv = (e.key === "t" || e.key === "T") && !descargarSolo;
     if (oferta) {
       e.preventDefault();
-      if (["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(e.key)) ofertaFoco = 1 - ofertaFoco;
+      if (teclaTv) toggleDestino();
+      else if (["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(e.key)) ofertaFoco = 1 - ofertaFoco;
       else if (e.key === "Enter" || e.key === " ") void accionOferta(ofertaFoco === 0 ? "ver" : "otras");
       else if (e.key === "Escape" || e.key === "Backspace") void accionOferta("otras");
       return;
@@ -2358,14 +2391,17 @@
       return;
     }
     if (resolving) {
-      if (e.key === "Escape" || e.key === "Backspace") {
+      if (teclaTv) {
+        e.preventDefault();
+        toggleDestino();
+      } else if (e.key === "Escape" || e.key === "Backspace") {
         e.preventDefault();
         resolving = false; // cancela visualmente; el resolve sigue en backend
         castCancel = true; // si la TV estaba cargando, se corta
       }
       return;
     }
-    if ((e.key === "t" || e.key === "T") && !descargarSolo) {
+    if (teclaTv) {
       e.preventDefault();
       toggleDestino();
       return;
