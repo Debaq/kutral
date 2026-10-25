@@ -1,8 +1,12 @@
 // Señales del usuario para alimentar el motor de recomendación.
-// Fusiona tres fuentes:
-//   1. localStorage `vera_reacciones_v2` (lo que Vera registra al calificar)
+// Fusiona cuatro fuentes:
+//   1. localStorage `vera_reacciones_v2` (👍/👎 de Vera y calificaciones viejas)
 //   2. SQLite `watch_history`            (lo que la home escribe al reproducir)
-//   3. SQLite `vera_weights`             (memoria larga, ver aprendizaje.ts)
+//   3. SQLite `favorites`                (lo que marcaste como favorito)
+//   4. SQLite `vera_weights`             (memoria larga, ver aprendizaje.ts)
+//
+// Lo de la base es POR PERFIL (el que está viendo): cada persona de la casa
+// tiene su Vera. Las reacciones y la memoria larga son del equipo.
 //
 // Solo lectura. Solo media_type='movie' (las series quedan fuera de Vera).
 // Si la DB no se puede abrir (no-Tauri, permisos), degrada a solo reacciones.
@@ -12,6 +16,7 @@ import { getReaccionesMap, type ReaccionGuardada } from "./ratings";
 import { getPesosAprendidos, familiaDeTag, pesoDeFamilia } from "./aprendizaje";
 import { generoPorSlug } from "./generos";
 import type { PerfilHistorico } from "./tipos";
+import { perfilActual } from "$lib/perfilActivo";
 
 // =============================================================================
 // LÓGICA DE PESO — REVISAR A OJO, EL TYPE-CHECK NO LA VALIDA.
@@ -41,6 +46,79 @@ interface WatchRow {
   tmdb_id: number;
 }
 
+interface FilaVista {
+  tmdb_id: number;
+  completed: number;
+  watched_seconds: number;
+  runtime_seconds: number | null;
+  last_watched: number;
+}
+
+// Pesos de lo que se hace fuera de Vera. "Terminó la peli" no es "le gustó"
+// (se termina por inercia), así que pesa menos que un 👍 (+4). Un favorito sí
+// es una declaración. Dejarla a medias es una señal débil en contra.
+const PESO_COMPLETA = 1;
+const PESO_FAVORITA = 2;
+const PESO_ABANDONADA = -0.75;
+// A medias = entre el 5 % y el 40 %, y sin volver a ella en 2 días.
+const ABANDONO_MIN = 0.05;
+const ABANDONO_MAX = 0.4;
+const ABANDONO_DIAS_MS = 2 * 86_400_000;
+
+function abandonada(f: FilaVista, ahora: number): boolean {
+  if (f.completed === 1 || !f.runtime_seconds || f.runtime_seconds <= 0) return false;
+  const r = f.watched_seconds / f.runtime_seconds;
+  return r >= ABANDONO_MIN && r <= ABANDONO_MAX && ahora - f.last_watched > ABANDONO_DIAS_MS;
+}
+
+// Películas vistas (todas, también las abandonadas) del perfil activo.
+async function filasVistas(): Promise<FilaVista[]> {
+  const db = await getDb();
+  if (!db) return [];
+  try {
+    return await db.select<FilaVista[]>(
+      `SELECT tmdb_id, completed, watched_seconds, runtime_seconds, last_watched
+         FROM watch_history
+        WHERE media_type = 'movie' AND perfil = $1 AND season = -1`,
+      [perfilActual()],
+    );
+  } catch (e) {
+    console.warn("[vera/historial] error leyendo watch_history:", e);
+    return [];
+  }
+}
+
+async function favoritas(): Promise<string[]> {
+  const db = await getDb();
+  if (!db) return [];
+  try {
+    const rows = await db.select<WatchRow[]>(
+      `SELECT tmdb_id FROM favorites
+        WHERE media_type = 'movie' AND perfil = $1
+        ORDER BY added_at DESC`,
+      [perfilActual()],
+    );
+    return rows.map((r) => String(r.tmdb_id));
+  } catch (e) {
+    console.warn("[vera/historial] error leyendo favoritos:", e);
+    return [];
+  }
+}
+
+/**
+ * Las pelis de este perfil que le enseñan algo a Vera (vistas, a medias y
+ * favoritas). Para pedir sus géneros antes de armar el perfil (ver
+ * asegurarGeneros en tmdb.ts): lo visto desde la home no pasó por Vera.
+ */
+export async function idsConSenal(): Promise<string[]> {
+  const ahora = Date.now();
+  const vistas = (await filasVistas())
+    .filter((f) => f.completed === 1 || abandonada(f, ahora))
+    .sort((a, b) => b.last_watched - a.last_watched)
+    .map((f) => String(f.tmdb_id));
+  return [...new Set([...(await favoritas()), ...vistas])];
+}
+
 // Todas las pelis que el usuario ya vio.
 // "Visto" =  vera_reacciones_v2[id].juicio !== null  OR  watch_history.completed = 1
 // NO se usa para excluir del pool — las vistas aparecen con badge y penalizadas
@@ -54,20 +132,9 @@ export async function getVistas(): Promise<string[]> {
     if (r.juicio !== null) vistas.add(id);
   }
 
-  // Fuente 2: watch_history, solo películas completadas (≥90%).
-  const db = await getDb();
-  if (db) {
-    try {
-      const rows = await db.select<WatchRow[]>(
-        `SELECT tmdb_id
-           FROM watch_history
-          WHERE completed = 1
-            AND media_type = 'movie'`,
-      );
-      for (const r of rows) vistas.add(String(r.tmdb_id));
-    } catch (e) {
-      console.warn("[vera/historial] error leyendo vistas:", e);
-    }
+  // Fuente 2: watch_history del perfil, solo películas completadas (≥90%).
+  for (const f of await filasVistas()) {
+    if (f.completed === 1) vistas.add(String(f.tmdb_id));
   }
 
   return [...vistas];
@@ -119,27 +186,20 @@ export async function getSemillas(n = 3): Promise<string[]> {
     if (semillas.length >= n) return semillas;
   }
 
-  // 3) Proxy débil: completed=1 más recientes (no hay reacción explícita).
-  const db = await getDb();
-  if (db) {
-    try {
-      const rows = await db.select<WatchRow[]>(
-        `SELECT tmdb_id
-           FROM watch_history
-          WHERE completed = 1
-            AND media_type = 'movie'
-          ORDER BY last_watched DESC
-          LIMIT $1`,
-        [n + 5], // margen ante dups con reacciones ya añadidas
-      );
-      for (const r of rows) {
-        const id = String(r.tmdb_id);
-        if (!semillas.includes(id)) semillas.push(id);
-        if (semillas.length >= n) break;
-      }
-    } catch (e) {
-      console.warn("[vera/historial] error leyendo semillas:", e);
-    }
+  // 2) Favoritas del perfil: las marcó a propósito.
+  for (const id of await favoritas()) {
+    if (!semillas.includes(id)) semillas.push(id);
+    if (semillas.length >= n) return semillas;
+  }
+
+  // 3) Proxy débil: lo último que terminó de ver este perfil.
+  const completas = (await filasVistas())
+    .filter((f) => f.completed === 1)
+    .sort((a, b) => b.last_watched - a.last_watched);
+  for (const f of completas) {
+    const id = String(f.tmdb_id);
+    if (!semillas.includes(id)) semillas.push(id);
+    if (semillas.length >= n) break;
   }
 
   return semillas;
@@ -167,13 +227,14 @@ function leerGenerosCache(): Record<string, string[]> {
 // Fuentes y pesos:
 //   reacciones con juicio     → pesoReaccionPersistida(r) = juicio     ∈ [-5..+5]
 //   reacciones solo interes   → pesoReaccionPersistida(r) = interes*0.6 ∈ [-3..+3]
-//   watch_history completed=1 sin reacción → +0.5  (proxy MUY débil)
+//   watch_history completed=1 sin reacción → +1    (ver PESO_COMPLETA)
+//   favorita sin reacción                  → +2
+//   abandonada a medias                    → -0.75
 //   vera_weights              → memoria larga, ya acumulada (aprendizaje.ts)
 //
-// Por qué +0.5 (y no +1): "terminó la peli" no es lo mismo que "le gustó".
-// Una peli se termina por inercia, costumbre, o simple curiosidad. Equiparar
-// este comportamiento inferido con un juicio explícito de +1 sobrevalora la
-// señal pasiva. Lo dejamos abajo del juicio chico más bajo.
+// Por qué +1 y no más: "terminó la peli" no es lo mismo que "le gustó" (se
+// termina por inercia, costumbre o curiosidad). Sin el cuestionario viejo es
+// la señal más abundante, así que pesa algo, pero muy por debajo de un 👍 (+4).
 //
 // IMPORTANTE: la decisión de "juicio manda sobre interes" vive en
 // pesoReaccionPersistida() arriba. Una peli con juicio=-4 e interes=+3
@@ -208,28 +269,24 @@ export async function getPerfilHistorico(): Promise<PerfilHistorico> {
     for (const g of generos) sumar(generosPesos, g, peso);
   }
 
-  // 2) watch_history sin reacción local (peso fijo bajo).
-  const db = await getDb();
-  if (db) {
-    try {
-      const rows = await db.select<WatchRow[]>(
-        `SELECT tmdb_id
-           FROM watch_history
-          WHERE completed = 1
-            AND media_type = 'movie'`,
-      );
-      for (const r of rows) {
-        const id = String(r.tmdb_id);
-        if (reacciones[id]) continue; // ya entró por reacciones, no duplicar.
-        muestras++;
-        const generos = cacheGen[id];
-        if (!generos) continue;
-        for (const g of generos) sumar(generosPesos, g, 0.5);
-      }
-    } catch (e) {
-      console.warn("[vera/historial] error perfil watch_history:", e);
-    }
+  // 2) Lo que el perfil hizo fuera de Vera: vistas completas, a medias y
+  // favoritas. Lo que ya tiene reacción explícita no se cuenta dos veces.
+  const ahora = Date.now();
+  const favs = new Set(await favoritas());
+  const sinReaccion = (id: string) => !reacciones[id];
+  const aportar = (id: string, peso: number) => {
+    muestras++;
+    const generos = cacheGen[id];
+    if (!generos) return;
+    for (const g of generos) sumar(generosPesos, g, peso);
+  };
+  for (const f of await filasVistas()) {
+    const id = String(f.tmdb_id);
+    if (!sinReaccion(id) || favs.has(id)) continue;
+    if (f.completed === 1) aportar(id, PESO_COMPLETA);
+    else if (abandonada(f, ahora)) aportar(id, PESO_ABANDONADA);
   }
+  for (const id of favs) if (sinReaccion(id)) aportar(id, PESO_FAVORITA);
 
   // 3) Memoria larga: vera_weights. Las etiquetas vienen con prefijo de
   // familia y cada familia va a su propio mapa, ya escalada por su confianza
@@ -281,3 +338,29 @@ export async function getPerfilHistorico(): Promise<PerfilHistorico> {
 }
 //
 // =============================================================================
+
+/**
+ * Títulos de pelis de este perfil (historial y favoritos), por id TMDb. Para
+ * explicar una recomendación con "porque viste X".
+ */
+export async function titulosDe(ids: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const nums = [...new Set(ids)].map(Number).filter(Number.isFinite);
+  if (nums.length === 0) return out;
+  const db = await getDb();
+  if (!db) return out;
+  const marcas = nums.map((_, i) => `$${i + 2}`).join(", ");
+  try {
+    for (const tabla of ["watch_history", "favorites"]) {
+      const filas = await db.select<{ tmdb_id: number; title: string }[]>(
+        `SELECT tmdb_id, title FROM ${tabla}
+          WHERE perfil = $1 AND media_type = 'movie' AND tmdb_id IN (${marcas})`,
+        [perfilActual(), ...nums],
+      );
+      for (const f of filas) if (f.title && !out.has(String(f.tmdb_id))) out.set(String(f.tmdb_id), f.title);
+    }
+  } catch (e) {
+    console.warn("[vera/historial] no se pudieron leer los títulos:", e);
+  }
+  return out;
+}

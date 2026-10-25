@@ -5,26 +5,6 @@
 // pertenecían al prototipo con mock player y burbuja Habla, que ya no existe.
 // Nadie las leía.
 
-// Cuántas cartas de calibración pedir, según cuántas reacciones reales ya
-// tiene el perfil. Antes eran 8 fijas SIEMPRE, incluso para alguien con 200
-// pelis calificadas: peaje puro. La curva baja hasta 3 porque a esa altura la
-// calibración deja de informar al motor y solo sirve para refrescar el pool.
-//
-// Se lee de arriba abajo: primer tramo cuyo `hasta` supera las muestras.
-export const CARTAS_POR_MADUREZ: { hasta: number; cartas: number }[] = [
-  { hasta: 5, cartas: 8 },        // te conozco poco: necesito señal
-  { hasta: 20, cartas: 6 },
-  { hasta: 60, cartas: 4 },
-  { hasta: Infinity, cartas: 3 }, // ya te conozco: no te hago perder tiempo
-];
-
-export function cartasParaMuestras(muestras: number): number {
-  for (const t of CARTAS_POR_MADUREZ) {
-    if (muestras < t.hasta) return t.cartas;
-  }
-  return 3;
-}
-
 // Score absoluto por debajo del cual Vera prefiere ser honesta y avisar que
 // no tiene una buena, en vez de empujar la menos mala como si fuera un match.
 // El score del motor vive en 0..1 (más los ajustes de contexto), así que este

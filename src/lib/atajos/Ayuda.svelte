@@ -84,44 +84,13 @@
       ],
     },
     {
-      id: "entrada",
-      titulo: "Vera · entrada",
+      id: "vera",
+      titulo: "Vera",
       lineas: [
-        { tecla: "Enter", desc: "Empezar sesión" },
-      ],
-    },
-    {
-      id: "contexto",
-      titulo: "Vera · contexto",
-      lineas: [
-        { tecla: "← → ↑ ↓", desc: "Mover entre opciones" },
-        { tecla: "Enter", desc: "Confirmar contexto" },
-      ],
-    },
-    {
-      id: "intencion",
-      titulo: "Vera · intención",
-      lineas: [
-        { tecla: "← →", desc: "Elegir intención" },
-        { tecla: "Enter", desc: "Confirmar y buscar" },
-      ],
-    },
-    {
-      id: "calificar",
-      titulo: "Vera · calificar",
-      lineas: [
-        { tecla: "← →", desc: "Ajustar puntaje (-5..+5)" },
-        { tecla: "↑", desc: "Marcar · desmarcar como vista" },
-        { tecla: "↓", desc: "Saltar (puntaje -1 automático)" },
-        { tecla: "Enter", desc: "Siguiente carta" },
-      ],
-    },
-    {
-      id: "ranking",
-      titulo: "Vera · ranking",
-      lineas: [
-        { tecla: "↑ ↓", desc: "Navegar entre películas" },
-        { tecla: "Enter", desc: "Descubrir película" },
+        { tecla: "← → ↑ ↓", desc: "Moverse entre opciones y cartas" },
+        { tecla: "Enter", desc: "Elegir · Descubrir" },
+        { tecla: "Esc", desc: "Volver un paso" },
+        { tecla: "Backspace", desc: "Salir a la home" },
       ],
     },
     {

@@ -7,63 +7,61 @@ Vive en `/vera`. La importación de catálogo (admin) está en `/vera/catalog`.
 
 ## Flujo
 
-```
-entrada ──► contexto ──► intencion ──► calificar ──► ranking
-   │
-   └──► setup (opcional, una vez)
-```
+Una pantalla, dos toques. Sin cuestionario.
 
-1. **Entrada** — `Empezar` o `Configurar a Vera`.
-2. **Setup** (opcional) — 8 pasos: plataformas, postura frente a la animación,
-   idiomas en los que te sientes cómodo, idiomas que no toleras oír, géneros que
-   no quieres ver nunca, temas sensibles a evitar, tope de duración y voz de
-   Vera. Se guarda en `vera_setup` y se aplica en todas las sesiones siguientes.
-   Cada paso se salta con `Enter`.
-3. **Contexto** — `Solo` / `En pareja` / `Con amigos o familia` / `Con niños`.
-   Regla de marca: "con niños" SIEMPRE implica un adulto presente. `Con niños`
-   además activa el filtro duro `familyFriendly`.
-4. **Intención** — `Algo liviano` / `Algo denso` / `Adrenalina` / `Sorpresa`.
-   De acá salen los géneros de `/discover` y el tono que el motor respeta.
-5. **Calificar** — N cartas, una por vez. N sale de `cartasParaMuestras()`: 8 la
-   primera vez, 3 cuando Vera ya tiene perfil. Se priorizan pelis que nunca
-   calificaste.
-6. **Ranking** — la #1 destacada con el porqué, y el resto navegable. Si ni la
-   mejor llega a `UMBRAL_NO_MATCH`, Vera lo dice en vez de empujar la menos mala.
+1. **¿Con quién?** — Solo · En pareja · Con amigos · Con niños. Regla de marca:
+   "con niños" SIEMPRE implica un adulto presente; activa el filtro familiar y
+   la clasificación por edad en TMDb. En un perfil de niños queda fijo.
+2. **¿Qué te tinca?** — Reírme · Emocionarme · Adrenalina · Algo para pensar ·
+   Sorpréndeme. De acá salen los géneros de `/discover` y el tono que el motor
+   respeta. Elegirlo ya busca.
+   - Opcional: **¿Tienes poco tiempo?** (hasta 1 h 50) y **Lo que nunca quiero
+     ver** (géneros y temas; se guarda en `vera_setup`).
+3. **Tres cartas** (`tres.ts`), sacadas del ranking del motor:
+   - **La segura:** lo que más calza contigo.
+   - **Una distinta:** buena, pero de otro género que la segura.
+   - **La sorpresa:** la menos conocida entre las bien valoradas.
+
+   Cada una con una frase ("Porque viste *Coco*") y **Descubrir**, **Otra**
+   (cambia solo esa) y **Ya la vi** (👍 / 👎 / ni fu ni fa, y se cambia). Abajo,
+   **Otras tres** y volver a cambiar lo pedido. Lo que ya viste no se propone.
+
+Antes de mostrar una carta se completa con el detalle de TMDb y se descarta si
+no se puede ver (sin imdb), si choca con lo que nunca quieres ver (los temas se
+saben recién con el detalle) o si pediste algo corto y no lo es.
+
+## Cómo aprende
+
+Sin calificar nada a propósito. Por perfil (el que está viendo):
+
+| Señal | Peso |
+|---|---|
+| 👍 / 👎 ("Ya la vi", o al volver después de ver una que eligió) | ±4 |
+| Favorita | +2 |
+| Vista completa | +1 |
+| Dejada a medias (5–40 %, sin volver en 2 días) | −0,75 |
+
+Las favoritas y lo último que terminaste son las semillas de
+`/recommendations`. Lo que se vio desde la home no pasó por Vera: sus géneros
+se piden a TMDb una vez y quedan en `vera_generos_cache` (`asegurarGeneros`).
+Lo calificado con la Vera vieja (−5..+5) se sigue usando.
+
+Después de Descubrir, la peli queda anotada (`elegidas.ts`). La próxima vez que
+se abre Vera, si ya se vio (terminada o más de la mitad), pregunta "¿Qué tal?"
+una sola vez. Responder es opcional.
 
 ## Atajos (obligatorio — todo se maneja sin ratón)
 
-| Pantalla | Tecla | Acción |
-|---|---|---|
-| Entrada | `←` `→` | Empezar / configurar |
-| Setup | `←` `→` `↑` `↓` | Mover |
-| Setup | `Espacio` | Marcar / desmarcar (pasos de selección múltiple) |
-| Setup | `Enter` | Siguiente paso / guardar |
-| Contexto · Intención | `←` `→` `↑` `↓` | Mover |
-| Contexto · Intención | `Enter` | Confirmar |
-| Calificar | `←` `→` | Ajustar puntaje (−5..+5) |
-| Calificar | `↑` | Marcar / desmarcar como vista |
-| Calificar | `↓` | Saltar (puntaje −1 automático) |
-| Calificar | `Enter` | Siguiente carta |
-| Ranking | `↑` `↓` | Navegar |
-| Ranking | `Enter` | **Descubrir** |
-| Ranking | `Espacio` | Otra ronda (pool nuevo) |
-| **Cualquiera** | `Esc` | Paso atrás (desde entrada, sale a home) |
-| **Cualquiera** | `Backspace` | Salir directo a la home |
-| **Cualquiera** | `I-I` | Ayuda |
+| Tecla | Acción |
+|---|---|
+| `←` `→` `↑` `↓` | Moverse (navegación espacial) |
+| `Enter` | Elegir · Descubrir |
+| `Esc` | Paso atrás (desde las preguntas, sale a home) |
+| `Backspace` | Salir directo a la home |
+| `I-I` | Ayuda |
 
 Palabra de marca: la acción de reproducir se llama **Descubrir**. Nunca
 "Reproducir" ni "Play".
-
-## Cómo califica el usuario
-
-Dos escalas, una sola UI:
-
-- `interes` −5..+5 — intuición previa, antes de verla.
-- `juicio` −5..+5 o `null` — `null` significa que no la vio.
-
-"Visto" no es un campo, es derivado: `juicio !== null`. Cuando hay juicio,
-**manda el juicio** y el interés previo deja de contar para esa peli. Si
-intuiste +3 y tras verla pusiste −4, el +3 ya no significa nada.
 
 ## El motor
 
@@ -109,7 +107,8 @@ Tres fuentes en paralelo, un request cada una:
 
 - `/discover` con los géneros del intent (`page` y `sort_by` aleatorios, para
   que dos entradas seguidas no traigan lo mismo).
-- `/recommendations` sobre tus semillas (lo que calificaste alto).
+- `/recommendations` sobre tus semillas (lo que te gustó, tus favoritas y lo
+  último que terminaste).
 - `/discover` con la keyword LGBT+ `158718`, presencia garantizada. Sin marcar,
   sin sección aparte: mezclada.
 
@@ -119,9 +118,8 @@ Sin API key pero con catálogo importado, Vera propone igual desde lo local.
 **Enriquecimiento perezoso.** Los listados de TMDb ya traen título, sinopsis,
 póster, `vote_average`, `vote_count` y `genre_ids` — todo lo que el motor
 necesita para rankear. `/detail` se pide solo para las pelis que vas a mirar:
-las cartas de calibración antes de mostrarlas, y el resto del pool en segundo
-plano mientras calificas. Antes eran ~60 `/detail` antes de pintar la primera
-carta.
+las primeras del ranking antes de mostrar las cartas, y la que reemplaza a una
+carta al pedir otra.
 
 ## Persistencia
 
@@ -163,7 +161,6 @@ descarta del pool en caliente.
 
 | constante | qué hace |
 |---|---|
-| `CARTAS_POR_MADUREZ` | cuántas cartas pedir según cuánto te conoce Vera |
 | `UMBRAL_NO_MATCH` | score mínimo de la #1 para no admitir que no hay match |
 | `HORA_NOCHE` | desde qué hora sesga a liviano (solo sin tono pedido) |
 | `VOTOS_MINIMOS` / `MEDIA_GLOBAL_TMDB` | parámetros del rating bayesiano |
@@ -188,10 +185,11 @@ src/lib/vera/
   setup.ts           perfil persistente (vera_setup)
   catalogoLocal.ts   lectura de vera_titles
   aprendizaje.ts     memoria larga (vera_weights, vera_feedback)
-  historial.ts       vistas, semillas y perfil histórico
+  historial.ts       vistas, semillas y perfil histórico (por perfil)
   ratings.ts         reacciones en localStorage
   probes.ts          semilla de respaldo hand-picked
-  voz.ts             copy según personalidad
+  tres.ts            las tres cartas: segura, distinta, sorpresa
+  elegidas.ts        lo elegido en Vera, para el 👍/👎 de después
   import.ts          importador TMDb (usado por /vera/catalog)
 src/routes/vera/
   +page.svelte           orquestador del flujo

@@ -128,6 +128,9 @@ export interface FiltrosDiscover {
   with_original_language?: string;   // "es", "en"
   sort_by?: string;                  // default "popularity.desc"
   page?: number;                     // default 1
+  // Hay niños (o es un perfil de niños): el backend filtra por clasificación
+  // (ver filtro_ninos en tmdb.rs).
+  ninos?: boolean;
 }
 
 // Verificación de boot: caza desincronización entre la tabla canónica de
@@ -333,6 +336,7 @@ async function discoverItems(
     primaryReleaseDateGte: filtros.primary_release_date_gte,
     primaryReleaseDateLte: filtros.primary_release_date_lte,
     withOriginalLanguage: filtros.with_original_language,
+    ninos: filtros.ninos ?? false,
   });
   return resp.results ?? [];
 }
@@ -430,15 +434,18 @@ export async function fetchRecommendations(
   // anterior sumaba una latencia completa por cada una.
   const tandas = await Promise.all(
     seedIds.slice(0, 3).map((seed) =>
-      recommendationsItems(seed, key, kind, 1).catch((e) => {
-        console.warn("[vera/tmdb] reco falló para", seed, e);
-        return [] as TmdbItemMini[];
-      }),
+      recommendationsItems(seed, key, kind, 1)
+        .then((items) => items.map((it) => ({ it, seed })))
+        .catch((e) => {
+          console.warn("[vera/tmdb] reco falló para", seed, e);
+          return [] as { it: TmdbItemMini; seed: string }[];
+        }),
     ),
   );
-  const dedup = new Map<number, TmdbItemMini>();
-  for (const it of tandas.flat()) if (!dedup.has(it.id)) dedup.set(it.id, it);
-  return [...dedup.values()].map(mapearItem);
+  // Si sale de dos semillas, queda la primera: es la que más te gustó.
+  const dedup = new Map<number, { it: TmdbItemMini; seed: string }>();
+  for (const x of tandas.flat()) if (!dedup.has(x.it.id)) dedup.set(x.it.id, x);
+  return [...dedup.values()].map(({ it, seed }) => ({ ...mapearItem(it), semilla: seed }));
 }
 
 // ¿Esta peli choca con lo que el usuario pidió no ver?
@@ -535,6 +542,7 @@ export async function construirPool(
       sort_by: "popularity.desc",
       vote_count_gte: 50,
       page: 1,
+      ninos: filtros.ninos,
     }).catch((e) => {
       console.warn("[vera/tmdb] fuente LGBT+ falló (best-effort):", e);
       return [] as Pelicula[];
@@ -651,6 +659,31 @@ export async function cargarCatalogoPorIntent(
 ): Promise<Pelicula[]> {
   const semillas = await getSemillas(3);
   return construirPool(filtros, semillas, setup);
+}
+
+// Géneros de pelis que el usuario vio o marcó fuera de Vera (desde la home).
+// El perfil histórico los saca de vera_generos_cache, que solo conocía lo que
+// pasó por Vera: sin esto, lo que ves en Kütral no le enseñaba nada. Se piden
+// de a pocas y quedan cacheadas para siempre (los géneros no cambian).
+export async function asegurarGeneros(ids: string[], tope = 12): Promise<void> {
+  const key = apiKey();
+  if (!key || ids.length === 0) return;
+  let cache: Record<string, string[]> = {};
+  try {
+    cache = JSON.parse(localStorage.getItem(CACHE_GENEROS) || "{}");
+  } catch {
+    /* sin cache: se piden todas */
+  }
+  const faltan = ids.filter((id) => !cache[id]).slice(0, tope);
+  for (let i = 0; i < faltan.length; i += LOTE_ENRIQUECIMIENTO) {
+    const lote = faltan.slice(i, i + LOTE_ENRIQUECIMIENTO);
+    const detalles = await Promise.all(lote.map((id) => detalleDe(id, key)));
+    detalles.forEach((d, j) => {
+      if (!d) return;
+      const generos = d.genre_ids?.length ? nombresDesdeIds(d.genre_ids) : d.genres ?? [];
+      cacheGenerosDe(lote[j], generos);
+    });
+  }
 }
 
 // URLs públicas del CDN TMDb. No requieren API key.

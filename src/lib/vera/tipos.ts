@@ -8,7 +8,7 @@ export type Contexto = "solo" | "pareja" | "amigos" | "ninos";
 
 // Qué busca el usuario hoy. Cada uno mapea a géneros TMDb concretos
 // y dispara un discover en vivo (pool distinto en cada sesión).
-export type Intencion = "liviano" | "denso" | "adrenalina" | "sorpresa";
+export type Intencion = "reir" | "emocion" | "adrenalina" | "pensar" | "sorpresa";
 
 // Voz de Vera. Se persiste en vera_setup.personality y solo afecta copy.
 export type Personalidad = "calida" | "directa" | "seca";
@@ -49,8 +49,7 @@ export interface PerfilHistorico {
   actoresPesos: Map<string, number>;
   // Top 3 géneros por peso descendente.
   top3: string[];
-  // Cuántas reacciones reales sostienen este perfil. La UI la usa para decidir
-  // cuánta calibración pedir (ver config.CARTAS_POR_MADUREZ).
+  // Cuántas señales reales sostienen este perfil (cuánto te conoce Vera).
   muestras: number;
 }
 
@@ -101,6 +100,10 @@ export interface Pelicula {
 
   // De qué fuente vino al pool. La asigna construirPool al mergear.
   procedencia: Procedencia;
+
+  // Si vino de recomendaciones: el id TMDb de la peli tuya de la que salió
+  // ("porque viste X").
+  semilla?: string;
 }
 
 // Reacción del usuario a una peli (modelo B5).

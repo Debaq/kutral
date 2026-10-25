@@ -37,12 +37,15 @@ function sortAleatorio<T extends readonly string[]>(opciones: T): T[number] {
 // `with_genres` que se le manda a TMDb como el tono que el motor respeta.
 // Antes estaban duplicados en dos archivos y se podían desincronizar.
 //
-// "liviano" está recortado a Comedia/Animación/Familia — los que son livianos
-// por sí solos. Aventura y Romance sueltos abren la puerta a lo denso.
+// "reir" está recortado a Comedia/Animación/Familia — los que son livianos
+// por sí solos. "emocion" (Drama + Romance) suma tono neutro a propósito: un
+// drama que emociona es denso y una comedia romántica es liviana, y las dos
+// sirven. "pensar" tira a denso.
 const GENEROS_DE_INTENT: Record<Intencion, string[]> = {
-  liviano: ["35", "16", "10751"],
-  denso: ["18", "99", "36", "9648"],
+  reir: ["35", "16", "10751"],
+  emocion: ["18", "10749"],
   adrenalina: ["28", "53", "27", "878", "10752"],
+  pensar: ["99", "36", "9648", "878", "18"],
   sorpresa: [],
 };
 
@@ -60,30 +63,11 @@ export interface OpcionIntencion {
 }
 
 export const INTENCIONES: OpcionIntencion[] = [
-  {
-    id: "liviano",
-    label: "Algo liviano",
-    icono: "🌤",
-    desc: "Reír, distender",
-  },
-  {
-    id: "denso",
-    label: "Algo denso",
-    icono: "🌑",
-    desc: "Pensar, sentir",
-  },
-  {
-    id: "adrenalina",
-    label: "Adrenalina",
-    icono: "⚡",
-    desc: "Ritmo, acción",
-  },
-  {
-    id: "sorpresa",
-    label: "Sorpresa",
-    icono: "🎲",
-    desc: "Tira lo que quieras",
-  },
+  { id: "reir", label: "Reírme", icono: "😄", desc: "Comedia, algo liviano" },
+  { id: "emocion", label: "Emocionarme", icono: "🥹", desc: "Drama, romance" },
+  { id: "adrenalina", label: "Adrenalina", icono: "⚡", desc: "Acción, suspenso" },
+  { id: "pensar", label: "Algo para pensar", icono: "🧠", desc: "Misterio, historia, documental" },
+  { id: "sorpresa", label: "Sorpréndeme", icono: "🎲", desc: "Lo que sea, pero bueno" },
 ];
 
 // Resuelve los filtros de discover para un intent dado.
@@ -96,9 +80,9 @@ export function filtrosParaIntent(intent: Intencion): FiltrosDiscover {
   const generos = GENEROS_DE_INTENT[intent];
   const base: FiltrosDiscover = {
     sort_by: sortAleatorio(
-      intent === "denso" ? SORTS_DENSO : SORTS_GENERICOS,
+      intent === "pensar" ? SORTS_DENSO : SORTS_GENERICOS,
     ),
-    vote_count_gte: intent === "denso" ? 200 : 100,
+    vote_count_gte: intent === "pensar" ? 200 : 100,
     page: pageAleatoria(),
   };
   if (generos.length > 0) base.with_genres = generos.join("|");
