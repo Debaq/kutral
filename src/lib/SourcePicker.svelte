@@ -909,9 +909,11 @@
     if (!enMpv || !cast.tv || aTv || casting) return;
     const info = await invoke<ParaTv>("mpv_para_tv").catch(() => null);
     if (!info) return;
-    await invoke("mpv_suspend").catch(() => {});
+    // Antes de suspender: el "mpv:state"=false de la suspensión cerraría el
+    // selector (y con él esta pantalla) si no supiera que es para la TV.
     aTv = { info, avisos: avisosTv(info, enMpv.s) };
     aTvFoco = 0;
+    await invoke("mpv_suspend").catch(() => {});
   }
 
   async function aTvAccion(id: "transmitir" | "aqui") {
@@ -2202,6 +2204,8 @@
           soltandoVideo = false;
           return;
         }
+        // Suspendido para "Pasar a la TV": la pantalla de la TV sigue aquí.
+        if (aTv) return;
         if (terminoSolo) {
           terminoSolo = false;
           return; // la página ya decidió: menú o siguiente capítulo
