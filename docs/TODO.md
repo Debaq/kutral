@@ -324,3 +324,23 @@ ahí va Google Cast, que ya está.
   (`nmcli` lista un `p2p-dev-*`). Dependencia externa: detectarla y ofrecerla,
   no empaquetarla.
 - **Kütral OS / flatpak**: evaluar aparte (portal de captura dentro del sandbox).
+
+# Subtítulos ASS en la TV: música arriba, diálogo abajo
+
+Visto 2026-10-24 en un anime: en el PC (mpv) la canción salía arriba y el
+diálogo abajo; en la TV todo se mezclaba abajo y no se entendía qué era qué.
+
+- Causa: el subtítulo marca "arriba" (alineación del estilo en el ASS, o
+  `{\an8}` que sobrevive en SRT). `lan.rs::publicar_subs` / `srt_a_vtt` solo
+  convierte tiempos: la marca se pierde. Un `.ass` llega casi crudo (no se
+  convierte a WebVTT).
+- Arreglo propuesto (decidido: igual que en el PC, sin menú ni quitar líneas):
+  1. `{\an7..9}` al inicio de un cue → ajuste WebVTT `line:5%`; limpiar las
+     etiquetas `{\…}` que la TV mostraría como texto.
+  2. Conversor ASS → WebVTT respetando la alineación de cada estilo (y su
+     `{\anN}`), sin dibujos (`{\p1}`) y sin repetir líneas de karaoke.
+- Antes: probar que la LG respeta `line:` en WebVTT (plan B: canciones en
+  cursiva y entre ♪). Probar con Kütral (puerto 8765 ya abierto), no con catt:
+  catt sirve los subs en un puerto al azar que firewalld tapa.
+- Más adelante, si hace falta: subtítulos ASS dentro del MKV (hoy se buscan
+  externos); en Windows no hay ffmpeg/ffprobe para extraerlos.
