@@ -24,32 +24,54 @@
       }
       #kutral-splash.ready { opacity: 0; }
 
-      /* Glow naranja sutil detrás de la fogata. PNG transparente del logo,
-         sin imagen de fondo: el resplandor se hace con radial-gradient. */
+      /* Glow naranja detrás de la fogata: aparece con la llamarada y queda
+         latiendo. Hecho con radial-gradient, sin imagen. */
       #kutral-splash .splash-bg {
         position: absolute;
         inset: 0;
         background: radial-gradient(
           ellipse at center,
-          rgba(255, 122, 46, 0.28) 0%,
+          rgba(255, 122, 46, 0.30) 0%,
           rgba(255, 74, 28, 0.12) 30%,
           rgba(10, 6, 8, 0) 65%
         );
         z-index: 0;
+        opacity: 0;
+        transform: scale(0.5);
       }
 
-      /* Contenido centrado: solo el wordmark. */
+      /* Fogata arriba, nombre abajo. */
       #kutral-splash .splash-stage {
         position: absolute;
         inset: 0;
         display: flex;
+        flex-direction: column;
         align-items: center;
         justify-content: center;
+        gap: 18px;
         z-index: 1;
+      }
+      /* El logo en dos capas (leños y llama, mismo lienzo): la llama nace
+         desde su base, sobre los leños. */
+      #kutral-splash .splash-fogata {
+        position: relative;
+        width: 160px;
+        height: 219px;
+      }
+      #kutral-splash .splash-fogata img {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+      }
+      #kutral-splash .splash-llama {
+        transform-origin: 50% 74%;
+        transform: scale(0.3, 0.05);
       }
       #kutral-splash .splash-title {
         font-family: "Inter", system-ui, -apple-system, sans-serif;
-        font-size: 64px;
+        font-size: 56px;
         font-weight: 700;
         letter-spacing: -1.5px;
         background: linear-gradient(135deg, #ffae5c 0%, #ff7a2e 50%, #ff4a1c 100%);
@@ -59,17 +81,77 @@
                 color: transparent;
         text-shadow: 0 0 50px rgba(255, 122, 46, 0.35);
         margin: 0;
+        opacity: 0;
+        transform: translateY(12px);
+      }
+
+      /* .go la pone splash.js cuando arranca el sonido. Tiempos atados al
+         audio: la llamarada (el "fwoom") empieza a los 0,1 s. */
+      #kutral-splash.go .splash-lenos {
+        animation: kt-lenos 0.45s ease-out forwards;
+      }
+      #kutral-splash.go .splash-llama {
+        animation:
+          kt-encender 0.7s cubic-bezier(0.2, 0.9, 0.3, 1.2) 0.1s forwards,
+          kt-flamear 0.42s ease-in-out 0.8s infinite alternate;
+      }
+      #kutral-splash.go .splash-bg {
+        animation:
+          kt-brillo 0.8s ease-out 0.12s forwards,
+          kt-latir 1.1s ease-in-out 0.95s infinite alternate;
+      }
+      #kutral-splash.go .splash-title {
+        animation: kt-nombre 0.6s ease-out 0.75s forwards;
+      }
+      @keyframes kt-lenos {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: none; }
+      }
+      @keyframes kt-encender {
+        0% { opacity: 0; transform: scale(0.3, 0.05); filter: brightness(2.2); }
+        35% { opacity: 1; transform: scale(0.85, 1.14); filter: brightness(1.7); }
+        65% { transform: scale(1.04, 0.96); filter: brightness(1.15); }
+        100% { opacity: 1; transform: scale(1, 1); filter: brightness(1); }
+      }
+      @keyframes kt-flamear {
+        from { opacity: 1; transform: scale(1, 1) skewX(0deg); }
+        to { opacity: 1; transform: scale(1.015, 1.035) skewX(-1.2deg); }
+      }
+      @keyframes kt-brillo {
+        from { opacity: 0; transform: scale(0.5); }
+        to { opacity: 1; transform: scale(1); }
+      }
+      @keyframes kt-latir {
+        from { opacity: 1; transform: scale(1); }
+        to { opacity: 0.8; transform: scale(1.05); }
+      }
+      @keyframes kt-nombre {
+        to { opacity: 1; transform: none; }
+      }
+      /* Sin movimiento: aparece todo junto, sin llamarada ni latido. */
+      @media (prefers-reduced-motion: reduce) {
+        #kutral-splash.go .splash-lenos,
+        #kutral-splash.go .splash-llama,
+        #kutral-splash.go .splash-bg,
+        #kutral-splash.go .splash-title {
+          animation: kt-lenos 0.4s ease-out forwards;
+        }
       }
     </style>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">
-    <div id="kutral-splash" aria-hidden="true">
+    <div id="kutral-splash" aria-hidden="true" data-sonido="%sveltekit.assets%/kutral-intro.ogg">
       <div class="splash-bg"></div>
       <div class="splash-stage">
+        <div class="splash-fogata">
+          <img class="splash-lenos" src="%sveltekit.assets%/splash-lenos.webp" alt="" />
+          <img class="splash-llama" src="%sveltekit.assets%/splash-llama.webp" alt="" />
+        </div>
         <h1 class="splash-title">Kütral</h1>
       </div>
     </div>
+    <script src="%sveltekit.assets%/splash.js"></script>
     <div style="display: contents">%sveltekit.body%</div>
   </body>
 </html>

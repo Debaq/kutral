@@ -230,17 +230,25 @@
     // REGISTRADO ÚLTIMO: así ve el defaultPrevented de la ruta y no pisa la
     // "m" de mute del reproductor IPTV ni la del panel de volumen.
     window.addEventListener("keydown", onMenuKey);
-    // Apagar el splash de app.html. Mantenemos un piso mínimo de tiempo
-    // (1800 ms) para que se aprecie el banner aunque Svelte monte rápido.
-    // .ready dispara el fadeout CSS (700 ms); después removemos el nodo.
+    // Apagar el splash de app.html cuando la fogata terminó de encenderse:
+    // splash.js deja en data-hasta cuándo (arranca con el sonido, así que
+    // hasta que suena no se sabe). .ready dispara el fadeout CSS (700 ms);
+    // después se quita el nodo.
     const splash = document.getElementById("kutral-splash");
     if (splash) {
-      const SPLASH_MIN_MS = 1800;
       const SPLASH_FADE_MS = 700;
-      setTimeout(() => {
-        splash.classList.add("ready");
-        setTimeout(() => splash.remove(), SPLASH_FADE_MS);
-      }, SPLASH_MIN_MS);
+      const cerrarSplash = () => {
+        const hasta = Number(splash.dataset.hasta);
+        if (!hasta) {
+          setTimeout(cerrarSplash, 100);
+          return;
+        }
+        setTimeout(() => {
+          splash.classList.add("ready");
+          setTimeout(() => splash.remove(), SPLASH_FADE_MS);
+        }, Math.max(0, hasta - Date.now()));
+      };
+      cerrarSplash();
     }
   });
 

@@ -212,6 +212,9 @@ export const config = $state({
 	// header o /config, y se recuerda entre sesiones. En kiosko no aplica
 	// (siempre es pantalla completa).
 	pantallaCompleta: false,
+	// Sonido del fuego al abrir Kütral (lo lee también app.html, antes de que
+	// cargue la app: por eso vive en su propia clave de localStorage).
+	sonidoInicio: true,
 	screeningConcurrency: SCREENING_DEFAULT,
 	// Subtítulos: idioma preferido (ISO 639-1) y API key de Wyzie para buscar.
 	// Sin wyzieKey: el player intenta auto-buscar en OpenSubtitles (cuota limitada).
@@ -309,6 +312,7 @@ export function loadConfig() {
 	const m = (localStorage.getItem("kiosk_mode") || "auto") as ModeOverride;
 	config.modeOverride = ["auto", "kiosk", "desktop"].includes(m) ? m : "auto";
 	config.pantallaCompleta = localStorage.getItem("pantalla_completa") === "1";
+	config.sonidoInicio = localStorage.getItem("sonido_inicio") !== "0";
 	const sc = parseInt(localStorage.getItem("screening_concurrency") || "", 10);
 	config.screeningConcurrency = clampConcurrency(sc);
 	const sl = localStorage.getItem("subs_lang") || "es";
@@ -453,6 +457,7 @@ export function saveConfig() {
 	localStorage.setItem("omdb_key", config.omdbKey.trim());
 	localStorage.setItem("kiosk_mode", config.modeOverride);
 	localStorage.setItem("pantalla_completa", config.pantallaCompleta ? "1" : "0");
+	localStorage.setItem("sonido_inicio", config.sonidoInicio ? "1" : "0");
 	localStorage.setItem(
 		"screening_concurrency",
 		String(clampConcurrency(config.screeningConcurrency)),

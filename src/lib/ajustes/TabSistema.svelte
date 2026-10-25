@@ -132,6 +132,10 @@
       de la barra superior.
     </p>
   {/if}
+  <label class="toggle-row">
+    <input data-nav type="checkbox" bind:checked={config.sonidoInicio} />
+    <span>Sonido del fuego al abrir Kütral</span>
+  </label>
 </section>
 
 <section class="block">

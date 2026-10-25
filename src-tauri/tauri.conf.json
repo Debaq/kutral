@@ -18,7 +18,7 @@
         "maximized": true,
         "decorations": false,
         "backgroundColor": "#0a0608",
-        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,IntensiveWakeUpThrottling --disable-background-timer-throttling --disable-renderer-backgrounding"
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,IntensiveWakeUpThrottling --disable-background-timer-throttling --disable-renderer-backgrounding --autoplay-policy=no-user-gesture-required"
       }
     ],
     "security": {
