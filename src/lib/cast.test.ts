@@ -8,7 +8,7 @@ vi.stubGlobal("localStorage", {
   removeItem: (k: string) => void almacen.delete(k),
 });
 
-const { evaluar, aprenderExito, olvidarAprendido } = await import("./cast.svelte");
+const { evaluar, aprenderExito, aprenderCiego, olvidarAprendido } = await import("./cast.svelte");
 
 const cast = { id: "tv-cast", nombre: "Google TV", modelo: "", ip: "", puerto: 8009, tipo: "cast" };
 const dlna = { ...cast, id: "tv-dlna", tipo: "dlna" };
@@ -35,5 +35,11 @@ describe("evaluar", () => {
 
   it("DLNA no tiene la regla: depende de cada TV", () => {
     expect(evaluar(dlna, { video: "h264", audio: "dts" }).apto).toBe(true);
+  });
+
+  it('"No se ve" culpa al video, no al audio', () => {
+    aprenderCiego(cast.id, { video: "hevc/main 10", audio: "aac" });
+    expect(evaluar(cast, { video: "hevc/main 10", audio: "eac3" }).apto).toBe(false);
+    expect(evaluar(cast, { video: "h264", audio: "aac" }).apto).toBe(true);
   });
 });

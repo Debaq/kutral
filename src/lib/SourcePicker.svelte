@@ -63,6 +63,7 @@
     evaluar,
     aprenderFalla,
     aprenderMudo,
+    aprenderCiego,
     rasgosActuales,
     seguir as seguirEnTv,
     cambiarRasgos,
@@ -71,6 +72,7 @@
     detener as castDetener,
     saltar as castSaltar,
     nombreAudio,
+    nombreVideo,
     fmtTiempo,
     type CastStatus,
     type ProbeTrack,
@@ -225,7 +227,7 @@
   let casting = $state(false);
   let castFoco = $state(0);
   let castTvNombre = $state("");
-  // Fuente que está en la TV: "No se oye" sigue con la de abajo.
+  // Fuente que está en la TV: "No se oye"/"No se ve" sigue con la de abajo.
   let castSrc: Src | null = null;
   // Esc mientras la TV carga: cortar y no seguir probando.
   let castCancel = false;
@@ -244,7 +246,7 @@
   let tvPos = 0;
   let tvDur = 0;
   let tvVista = false;
-  // Segundo desde el que retomar al cambiar de versión ("No se oye").
+  // Segundo desde el que retomar al cambiar de versión ("No se oye"/"No se ve").
   let desdeForzado: number | null = null;
   // Nombre del archivo del torrent local: su stream (127.0.0.1) no dice la
   // extensión y la TV necesita saber si es MKV o MP4.
@@ -1050,6 +1052,7 @@
           { id: "subs", label: buscandoSubsTv ? "💬 Buscando…" : "💬 Subtítulos" },
           ...(castSubs ? [{ id: "sync", label: "⏱ Sincronía" }] : []),
           { id: "mudo", label: "🔇 No se oye" },
+          { id: "ciego", label: "🚫 No se ve" },
           { id: "aqui", label: "💻 Seguir aquí" },
           { id: "detener", label: "⏹ Detener" },
           { id: "navegar", label: "↩ Seguir navegando" },
@@ -1268,7 +1271,10 @@
           await castSaltar(30);
           break;
         case "mudo":
-          await noSeOye();
+          await noFunciona("audio");
+          break;
+        case "ciego":
+          await noFunciona("video");
           break;
         case "aqui":
           await seguirAqui();
@@ -1293,24 +1299,35 @@
     }
   }
 
-  // El video anda pero no hay sonido: la TV no decodifica ESE audio. Se
-  // aprende (sin ambigüedad, a diferencia de un rechazo) y se sigue con la
-  // próxima versión desde el mismo minuto.
-  async function noSeOye() {
+  // "No se oye" (anda el video, no el audio) o "No se ve" (suena, pero sin
+  // imagen): la TV no decodifica ESA pista. Se aprende (sin ambigüedad, a
+  // diferencia de un rechazo) y se sigue con la próxima versión desde el
+  // mismo minuto.
+  async function noFunciona(que: "audio" | "video") {
     const act = rasgosActuales();
     const pos = cast.estado?.pos ?? 0;
+    const motivo = act?.rasgos
+      ? que === "audio"
+        ? `tu TV no reproduce audio ${nombreAudio(act.rasgos.audio)}`
+        : `tu TV no reproduce video ${nombreVideo(act.rasgos.video)}`
+      : que === "audio"
+        ? "sin sonido en tu TV"
+        : "sin imagen en tu TV";
     if (act?.rasgos) {
-      aprenderMudo(act.tvId, act.rasgos);
+      if (que === "audio") aprenderMudo(act.tvId, act.rasgos);
+      else aprenderCiego(act.tvId, act.rasgos);
       notify(
         "info",
         "Aprendido",
-        `${castTvNombre} no reproduce audio ${nombreAudio(act.rasgos.audio)}. Buscando otra versión…`,
+        `${castTvNombre} no reproduce ${que} ${
+          que === "audio" ? nombreAudio(act.rasgos.audio) : nombreVideo(act.rasgos.video)
+        }. Buscando otra versión…`,
       );
     }
     casting = false;
     await castDetener().catch(() => {});
     if (castSrc) {
-      castSrc._tv = act?.rasgos ? `tu TV no reproduce audio ${nombreAudio(act.rasgos.audio)}` : "sin sonido en tu TV";
+      castSrc._tv = motivo;
       if (!descartadas.includes(castSrc.title)) descartadas = [...descartadas, castSrc.title];
     }
     const sig = castSrc ? view.indexOf(castSrc) + 1 : focusIdx + 1;

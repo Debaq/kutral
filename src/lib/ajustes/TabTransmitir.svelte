@@ -131,8 +131,8 @@
     {:else}
       <p class="hint">
         Todavía nada: cada transmisión le enseña algo. Si una película
-        se ve pero no se oye, usa "🔇 No se oye" y Kütral buscará otra
-        versión.
+        se ve pero no se oye, usa "🔇 No se oye"; si se oye pero no se
+        ve, "🚫 No se ve". Kütral buscará otra versión.
       </p>
     {/if}
   {/if}

@@ -307,6 +307,13 @@ export function aprenderMudo(tvId: string, r: Rasgos) {
   anotar(tvId, kC(r), false);
 }
 
+/** "No se ve": suena pero la imagen no sale. El culpable es el video. */
+export function aprenderCiego(tvId: string, r: Rasgos) {
+  anotar(tvId, kV(r), false);
+  anotar(tvId, kA(r), true);
+  anotar(tvId, kC(r), false);
+}
+
 export function olvidarAprendido(tvId: string) {
   delete cast.aprendido[tvId];
   escribir(K_APRENDIDO, cast.aprendido);
@@ -504,7 +511,7 @@ export function cambiarRasgos(r: Rasgos | null, desde: number) {
   seg.desde = desde;
 }
 
-/** Rasgos de lo que está sonando ahora (para "No se oye"). */
+/** Rasgos de lo que está sonando ahora (para "No se oye"/"No se ve"). */
 export function rasgosActuales(): { tvId: string; rasgos: Rasgos | null } | null {
   return seg ? { tvId: seg.tvId, rasgos: seg.rasgos } : null;
 }
