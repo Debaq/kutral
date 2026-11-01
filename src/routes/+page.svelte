@@ -3188,8 +3188,11 @@
                   {#if it.poster_path}
                     <img src={art(it.poster_path, "w342", 342)} alt={title} loading="lazy" onerror={onImgError} />
                   {:else}
-                    <div class="no-poster">sin poster</div>
+                    <div class="no-poster">{title}</div>
                   {/if}
+                  <!-- Título sobre el pie del póster, solo en la card enfocada: identifica
+                       el título sin esperar a la ficha y sin agrandar la grilla. -->
+                  {#if it.poster_path}<span class="card-titulo">{title}</span>{/if}
                   {#if st === "trailer"}
                     <span class="card-badge badge-trailer">TRAILER</span>
                   {/if}
@@ -3856,6 +3859,25 @@
   }
   .card { position: relative; }
   .card.status-checking { opacity: 0.85; }
+  .card-titulo {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 3;
+    padding: 28px 10px 10px;
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.88) 55%);
+    color: #fff; font-size: 14px; font-weight: 700; line-height: 1.25;
+    display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    opacity: 0; pointer-events: none;
+  }
+  /* En reposo, solo lo que cambia la decisión: visto/a medias, no disponible,
+     trailer y favorito. Nota, temporadas y premios aparecen al enfocar. */
+  .card .card-rating,
+  .card .badge-seasons,
+  .card .card-awards { opacity: 0; }
+  .card:hover .card-titulo, .card:focus-visible .card-titulo, .card.focused .card-titulo,
+  .card:hover .card-rating, .card:focus-visible .card-rating, .card.focused .card-rating,
+  .card:hover .badge-seasons, .card:focus-visible .badge-seasons, .card.focused .badge-seasons,
+  .card:hover .card-awards, .card:focus-visible .card-awards, .card.focused .card-awards {
+    opacity: 1;
+  }
   .card-badge {
     position: absolute; top: 8px; right: 8px;
     padding: 4px 10px; border-radius: 4px;
@@ -4004,7 +4026,11 @@
     text-shadow: 0 0 6px rgba(255, 215, 0, 0.5);
   }
   .card img, .no-poster { width: 100%; aspect-ratio: 2/3; object-fit: cover; background: #222; }
-  .no-poster { display: flex; align-items: center; justify-content: center; color: var(--texto-4); font-size: 13px; }
+  .no-poster {
+    display: flex; align-items: center; justify-content: center; text-align: center;
+    padding: 12px; box-sizing: border-box;
+    color: var(--texto-2); font-size: 15px; font-weight: 600;
+  }
 
 
   /* PLAY mode */

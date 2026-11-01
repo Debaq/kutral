@@ -159,13 +159,20 @@
       </div>
     </label>
   </div>
+</section>
 
+<!-- Lo que casi nadie necesita tocar va plegado: antes "release/grupo",
+     "x265, HEVC, CAM" y "cacheo de red" estaban al mismo nivel que el idioma. -->
+<details class="avanzado">
+  <summary data-nav>⚙ Avanzado: fuentes y red</summary>
+
+<section class="block">
+  <h2>Palabras en el nombre del archivo</h2>
   <h3 class="subhead">Preferidas</h3>
   <p class="hint">
-    Texto de interés en el nombre del torrent (release/grupo). Si el nombre
-    o el proveedor lo contiene, esa fuente sube al tope (en modo automático,
-    es la que se abre). Útil para grupos que suelen traer audio en
-    español. Varias separadas por coma.
+    Palabras que quieres ver en el nombre del archivo (por ejemplo, el grupo
+    que lo publica). Si el nombre o el proveedor las contiene, esa fuente sube
+    al tope y en modo automático es la que se abre. Varias separadas por coma.
   </p>
   <label class="field">
     <span class="field-label">Películas</span>
@@ -201,11 +208,11 @@
     />
   </label>
 
-  <h3 class="subhead">Lista negra</h3>
+  <h3 class="subhead">A evitar</h3>
   <p class="hint">
-    Texto que NO quieres. Si el nombre del torrent o el proveedor lo contiene,
-    esa fuente se hunde al fondo del orden (nunca arranca sola salvo que
-    no haya otra). Varias separadas por coma.
+    Palabras que NO quieres (por ejemplo "CAM", grabadas en el cine). Si el
+    nombre o el proveedor las contiene, esa fuente va al fondo y nunca
+    arranca sola salvo que no haya otra. Varias separadas por coma.
   </p>
   <label class="field">
     <span class="field-label">Películas</span>
@@ -243,11 +250,11 @@
 </section>
 
 <section class="block">
-  <h2>Cacheo de red</h2>
+  <h2>Cortes de conexión</h2>
   <p class="hint">
-    Cuánto video junta el reproductor antes de seguir cuando la conexión
-    se atraganta. El problema típico no es que el cache sea chico, sino
-    que arranca de nuevo con muy poco y se vuelve a cortar enseguida.
+    Cuánto video junta el reproductor antes de seguir cuando la conexión se
+    corta. El problema típico no es guardar poco, sino seguir con muy poco
+    y volver a cortarse enseguida.
   </p>
   <div class="mode-group">
     {#each CACHE_PRESETS as p}
@@ -300,11 +307,10 @@
 </section>
 
 <section class="block">
-  <h2>Verificación de disponibilidad</h2>
+  <h2>Revisar qué títulos se pueden ver</h2>
   <p class="hint">
-    Verificaciones simultáneas al detectar si una película se puede
-    ver. Más alto = los avisos "no disponible" aparecen
-    más rápido, pero puede saturar la red y cortar el video.
+    Cuántos títulos se revisan a la vez para marcar los "no disponible".
+    Más alto los marca más rápido, pero puede saturar la red y cortar el video.
   </p>
   <div class="mode-group">
     {#each Array.from({ length: SCREENING_MAX - SCREENING_MIN + 1 }, (_, i) => i + SCREENING_MIN) as n}
@@ -329,3 +335,21 @@
     {/each}
   </div>
 </section>
+</details>
+
+<style>
+  .avanzado { margin-top: 8px; }
+  .avanzado > summary {
+    cursor: pointer;
+    list-style: none;
+    padding: 12px 16px;
+    border-radius: 10px;
+    background: var(--superficie-1);
+    border: 1px solid var(--borde);
+    color: var(--texto-suave);
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .avanzado > summary::-webkit-details-marker { display: none; }
+  .avanzado[open] > summary { margin-bottom: 8px; }
+</style>

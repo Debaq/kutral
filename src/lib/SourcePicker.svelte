@@ -180,6 +180,16 @@
   // Debajo del mensaje de espera: qué fuente se está probando (calidad ·
   // proveedor). Sin esto "Probando fuente 3 de 12" no decía cuál.
   let resolvingDetalle = $state("");
+  // Pantalla "Buscando fuentes": en qué etapa va y hace cuánto. Antes era un
+  // spinner mudo y con un buscador lento no se sabía si estaba colgado.
+  let cargaMsg = $state("Buscando fuentes…");
+  let cargaSeg = $state(0);
+  $effect(() => {
+    if (!loading) return;
+    cargaSeg = 0;
+    const id = setInterval(() => cargaSeg++, 1000);
+    return () => clearInterval(id);
+  });
   let playing = $state(false);
   // Cuándo arrancó el video (ms). Enter recién abierto suele ser el mismo
   // Enter (o su repetición) que eligió la fuente: no debe cortarlo.
@@ -445,6 +455,7 @@
 
   async function load() {
     loading = true;
+    cargaMsg = "Buscando fuentes…";
     error = "";
     try {
       // Anime sin temporada/episodio = película anime (formato MOVIE):
@@ -526,6 +537,7 @@
       let srcs: Src[];
       try {
         // La ficha ya las pidió al abrirse (precarga.ts): casi siempre llegan listas.
+        cargaMsg = "Preguntando a los buscadores de fuentes…";
         srcs = await buscarFuentes({
           imdbId,
           kind,
@@ -546,6 +558,7 @@
         return;
       }
       if (rdLinked) {
+        cargaMsg = `${srcs.length} encontradas · revisando cuáles abren al instante…`;
         const hashes = srcs.map((s) => s.info_hash).filter(Boolean) as string[];
         try {
           const cached = await invoke<string[]>("rd_instant_available", { hashes });
@@ -1455,7 +1468,7 @@
     if (!rdLinked && !config.torrentLocal && !view.some((s) => s.url)) {
       error =
         'Sin debrid y sin descarga local no hay forma de verla. ' +
-        'Activa "Descarga local" en Configuración o vincula un debrid.';
+        'Activa "Descarga local" en Configuración o vincula Real-Debrid.';
       return;
     }
     // Un intento nuevo invalida el anterior (Esc y luego otra fuente): el
@@ -1635,8 +1648,8 @@
       if (iMejor >= 0) focusIdx = iMejor;
       avisoLista =
         `Ninguna de las ${tried} fuentes que se probaron abrió en Real-Debrid` +
-        (blocked ? ` (${blocked} bloqueada${blocked > 1 ? "s" : ""} por DMCA)` : "") +
-        `. Elige una de abajo para verla por torrent: empieza apenas haya buffer y sigue bajando mientras la ves.`;
+        (blocked ? ` (${blocked} bloqueada${blocked > 1 ? "s" : ""} por derechos de autor)` : "") +
+        `. Elige una de abajo para verla por torrent: empieza apenas baja un trozo y sigue bajando mientras la ves.`;
       scrollFocused();
       return;
     }
@@ -1668,7 +1681,7 @@
     agrupar();
     if (error) return; // playViaTorrent ya dejó un mensaje más específico
     if (blocked > 0 && !config.torrentLocal) {
-      error = `Ninguna fuente abrió: ${blocked} bloqueada(s) por el debrid (DMCA). Activa "Descarga local" en Configuración para bajarlas igual, o prueba otra calidad.`;
+      error = `Ninguna fuente abrió: ${blocked} bloqueada(s) en Real-Debrid por derechos de autor. Activa "Descarga local" en Configuración para bajarlas igual, o prueba otra calidad.`;
     } else if (pesadas > 0) {
       // Sí había fuentes bajables, pero pasan el techo que puso el usuario.
       error =
@@ -1676,7 +1689,7 @@
         `(${QLABEL[config.torrentMaxQuality]} y ${config.torrentMaxGb} GB). ` +
         `Sube el tope en Configuración o busca una versión más liviana.`;
     } else if (blocked > 0) {
-      error = `Ninguna fuente abrió: ${blocked} bloqueada(s) por el debrid (DMCA) y la descarga local tampoco pudo. Prueba "🔄 Rebuscar fuentes" u otra calidad.`;
+      error = `Ninguna fuente abrió: ${blocked} bloqueada(s) en Real-Debrid por derechos de autor y la descarga local tampoco pudo. Prueba "🔄 Rebuscar fuentes" u otra calidad.`;
     } else if (marcadas > 0 && tried === 0) {
       error =
         `Real-Debrid ya no pudo con ${marcadas === 1 ? "la fuente que queda" : `las ${marcadas} fuentes que quedan`} ` +
@@ -1813,7 +1826,7 @@
       avisoLista = [
         o.sinIdioma ? `La que abrió no trae ${idiomaProbe().texto}.` : "",
         o.n
-          ? "Las bloqueadas por DMCA en Real-Debrid se ven por torrent: elige una."
+          ? "Las bloqueadas en Real-Debrid por derechos de autor se ven por torrent: elige una."
           : "Elige otra de la lista.",
       ]
         .filter(Boolean)
@@ -2023,7 +2036,7 @@
     torrentId = null;
     torrentReutilizado = false;
     torrentHash = "";
-    torrentMsg = "Buscando peers…";
+    torrentMsg = "Buscando gente que la comparta…";
     const t0 = Date.now();
     // El torrent ya estaba (otro capítulo del pack): si este falla, se queda.
     let reutilizado = false;
@@ -2076,14 +2089,14 @@
         "warn",
         "Viendo desde descarga local",
         rdLinked
-          ? "El debrid bloqueó esta fuente por DMCA. La estás bajando y compartiendo tú."
-          : "Sin debrid: la estás bajando y compartiendo tú. Tu IP queda visible para el resto del torrent.",
+          ? "Real-Debrid no tiene esta versión (derechos de autor). La estás bajando y compartiendo tú."
+          : "Sin Real-Debrid: la estás bajando y compartiendo tú. Tu IP queda visible para el resto del torrent.",
       );
       void mpv([
         "show-text",
         rdLinked
-          ? "Descarga local: el debrid bloqueó esta fuente"
-          : "Descarga local: sin debrid",
+          ? "Descarga local: Real-Debrid no la tiene"
+          : "Descarga local: sin Real-Debrid",
         "5000",
       ]);
       return true;
@@ -2341,8 +2354,23 @@
       stopMpvPoll();
       if (!esFinReal(e.payload)) {
         dbg("corte a mitad: vuelvo a la lista de fuentes");
+        const pos = Math.floor(e.payload?.pos ?? 0);
+        const actual = playingSrc;
         volverALista();
-        error = "Esa fuente se cortó antes de terminar. Prueba con otra.";
+        // Queda elegida la siguiente que no se probó ni bloqueó RD, y elegir
+        // cualquiera retoma en el mismo minuto. No arranca sola: un Enter.
+        const desde = actual ? view.indexOf(actual) : focusIdx;
+        const sig = view.findIndex((x, k) => k > desde && !esProbada(x) && !marcaRd(x));
+        if (sig >= 0) focusIdx = sig;
+        if (pos > 30) desdeForzado = pos;
+        error = "";
+        const min = minutoTxt(pos);
+        avisoLista =
+          `Esa versión se cortó en ${min}. ` +
+          (sig >= 0
+            ? `Quedó elegida la siguiente: Enter para seguir desde ${min}.`
+            : `Elige otra de la lista para seguir desde ${min}.`);
+        scrollFocused();
       }
     }).then((u) => (un = u));
     return () => {
@@ -2410,6 +2438,47 @@
     sources = [];
     focusIdx = 0;
     void load();
+  }
+
+  /** 2412 → "40:12"; con horas, "1:05:03". */
+  function minutoTxt(seg: number): string {
+    const h = Math.floor(seg / 3600);
+    const m = Math.floor((seg % 3600) / 60);
+    const s = String(seg % 60).padStart(2, "0");
+    return h ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
+  }
+
+  // ---- Fila de fuente en dos niveles ----------------------------------------
+  // Antes cada fila mostraba el nombre crudo del release, hasta 5 chips
+  // técnicos y 9 avisos, todo en 10-12 px: ilegible desde el sofá.
+  const TECNICOS = new Set(["HEVC", "AV1", "H264", "DV", "HDR10+", "HDR", "Atmos", "TrueHD", "DTS", "DD+", "AC3"]);
+  function tecnicaFila(s: Src): string[] {
+    return infoChips(s).filter((c) => TECNICOS.has(c));
+  }
+  /** Idioma: lo verificado en el archivo manda; si no, lo que dice el nombre. */
+  function idiomaFila(s: Src): string {
+    const sub = idiomaSubs().toUpperCase();
+    if (s._es === "audio") return `🗣 Audio ${sub} ✓`;
+    if (s._es === "subs") return `💬 Subs ${sub} ✓`;
+    if (s._es === "none") return `Sin ${idiomaProbe().texto}`;
+    return infoChips(s).filter((c) => !TECNICOS.has(c)).join(" · ");
+  }
+  /** Si abre ya: en el equipo, enlace directo o lista en Real-Debrid. */
+  function estadoFila(s: Src): string {
+    if (s.local) return "📁 En tu equipo";
+    if (s.hardsub) return HARDSUB_LABEL[s.hardsub] || "🔗 Enlace directo";
+    if (s.rd_cached) return "⚡ Al instante";
+    return "";
+  }
+  /** Avisos, por prioridad y como mucho tres. */
+  function avisosFila(s: Src): { txt: string; cls: string; title?: string }[] {
+    const out: { txt: string; cls: string; title?: string }[] = [];
+    const f = marcaRd(s);
+    if (f) out.push({ txt: `⛔ Real-Debrid: ${f.corto}`, cls: "sp-es-no", title: f.motivo });
+    if (destinoTv && s._tv) out.push({ txt: `📺✗ ${s._tv}`, cls: "sp-es-no", title: s._tv });
+    if (esProbada(s)) out.push({ txt: "↩ Ya probada", cls: "sp-probada" });
+    if (prefScore(s, kind)) out.push({ txt: "★ Preferida", cls: "sp-pref" });
+    return out.slice(0, 3);
   }
 
   function scrollFocused() {
@@ -2590,7 +2659,7 @@
       <span class="sp-sub">
         {#if descargarSolo}Elige qué versión bajar
         {:else if famFilter === "hardsub"}Enlace directo
-        {:else if famFilter === "torrent"}Torrents vía debrid
+        {:else if famFilter === "torrent"}Torrents vía Real-Debrid
         {:else}Elige una fuente{/if}
       </span>
       {#if cast.tv && !descargarSolo}
@@ -2713,7 +2782,7 @@
           </p>
         {:else if desdeTorrent}
           <p class="sp-desde-local">
-            📥 Desde descarga local — el debrid bloqueó esta fuente por DMCA.
+            📥 Desde descarga local — Real-Debrid no tenía esta versión.
             Sigue bajando mientras la ves.
           </p>
         {/if}
@@ -2723,7 +2792,10 @@
     {:else if loading}
       <div class="sp-center">
         <span class="sp-spinner"></span>
-        <p>Buscando fuentes…</p>
+        <p>{cargaMsg}</p>
+        {#if cargaSeg >= 12}
+          <p class="sp-detalle">Algunos buscadores tardan más de la cuenta ({cargaSeg} s). Sigue buscando…</p>
+        {/if}
         <span class="sp-hint">Esc para volver</span>
       </div>
     {:else if avisoRd}
@@ -2736,7 +2808,7 @@
           a probar sola.
           {#if a.s.magnet}
             Por torrent se baja directo de la gente que la comparte, sin pasar
-            por RD (se baja y se comparte desde tu equipo).
+            por Real-Debrid (se baja y se comparte desde tu equipo).
           {/if}
         </p>
         <div class="sp-cast-btns">
@@ -2841,10 +2913,12 @@
     {:else if torrenting}
       <div class="sp-center">
         <span class="sp-spinner"></span>
-        <p class="sp-tor-head">📥 Bajando del swarm</p>
+        <p class="sp-tor-head">📥 Bajándola a tu equipo</p>
         <p class="sp-tor-why">
-          El debrid bloqueó esta fuente (DMCA). El torrent sigue vivo, así que
-          lo bajamos aquí y empieza apenas haya buffer.
+          {rdLinked
+            ? "Real-Debrid no tiene esta versión, pero hay gente compartiéndola:"
+            : "Se baja directo de la gente que la comparte:"}
+          empieza apenas baje un trozo y sigue bajando mientras la ves.
         </p>
         {#if torrentStat}
           {@const t = torrentStat}
@@ -2853,17 +2927,17 @@
             : 0}
           <div class="sp-bar"><div class="sp-bar-fill" style="width: {bufPct}%"></div></div>
           <p class="sp-tor-line">
-            Buffer {Math.round(bufPct)}% · {fmtBytes(t.buffered_bytes)} de
+            Preparando {Math.round(bufPct)}% · {fmtBytes(t.buffered_bytes)} de
             {fmtBytes(t.buffer_target)}
           </p>
           <p class="sp-tor-meta">
-            {fmtSpeed(t.download_bps)} · {t.peers} peers · listo en {fmtEta(t.eta_secs)}
+            {fmtSpeed(t.download_bps)} · {t.peers} {t.peers === 1 ? "persona compartiendo" : "personas compartiendo"} · empieza en {fmtEta(t.eta_secs)}
           </p>
         {:else}
           <p class="sp-tor-line">{torrentMsg}</p>
         {/if}
         {#if torrentSlow}
-          <p class="sp-tor-slow">Este swarm va lento.</p>
+          <p class="sp-tor-slow">Va lenta: poca gente la está compartiendo.</p>
           <button class="sp-foot-btn focused" onclick={torrentToQueue}>
             📥 Seguir bajando de fondo y avisarme
           </button>
@@ -2906,6 +2980,8 @@
 
       <div class="sp-list">
         {#each view as s, i (s.info_hash || s.url || i)}
+          {@const avisos = avisosFila(s)}
+          {@const estado = estadoFila(s)}
           {#if hayGrupos && i === 0 && !marcaRd(s)}
             <p class="sp-grupo">⚡ Real-Debrid</p>
           {:else if hayGrupos && marcaRd(s) && !marcaRd(view[i - 1])}
@@ -2925,26 +3001,23 @@
           >
             <span class="sp-q sp-q-{s.quality}">{QLABEL[s.quality] || "—"}</span>
             <div class="sp-mid">
-              <span class="sp-title">{s.title}</span>
+              <!-- Nivel 1, grande: lo que decide (idioma · peso · si abre ya). -->
+              <span class="sp-linea1">
+                {#if idiomaFila(s)}<span class="sp-idioma" class:no={s._es === "none"}>{idiomaFila(s)}</span>{/if}
+                {#if s.size_bytes}<span>{fmtSize(s.size_bytes)}</span>{/if}
+                {#if estado}<span class="sp-estado">{estado}</span>{/if}
+              </span>
+              <!-- Nivel 2, chico: avisos (máx. 3), técnica y proveedor. -->
               <div class="sp-chips">
-                {#if esProbada(s)}<span class="sp-probada">↩ Ya probada</span>{/if}
-                {#if marcaRd(s)}{@const f = marcaRd(s)}<span class="sp-es-no" title="Real-Debrid: {f?.motivo}">⛔ RD: {f?.corto}</span>{/if}
-                {#if s.local}<span class="sp-en-disco">📁 En tu equipo</span>{/if}
-                {#if prefScore(s, kind)}<span class="sp-pref">★ Preferida</span>{/if}
-                {#if s.rd_cached}<span class="sp-cached">⚡ Instantáneo</span>{/if}
-                {#if s.hardsub}<span class="sp-hardsub">{HARDSUB_LABEL[s.hardsub] || "🔗 Enlace directo"}</span>{/if}
-                {#if s._es === "audio"}<span class="sp-es-ok">🗣 Audio {idiomaSubs().toUpperCase()} ✓</span>
-                {:else if s._es === "subs"}<span class="sp-es-ok">💬 Subs {idiomaSubs().toUpperCase()} ✓</span>
-                {:else if s._es === "none"}<span class="sp-es-no">Sin {idiomaProbe().texto}</span>{/if}
-                {#if destinoTv && s._tv}<span class="sp-es-no" title={s._tv}>📺✗ {s._tv}</span>{/if}
-                {#each infoChips(s) as c}<span class="sp-chip">{c}</span>{/each}
+                {#each avisos as a}<span class={a.cls} title={a.title}>{a.txt}</span>{/each}
+                {#each tecnicaFila(s) as c}<span class="sp-chip">{c}</span>{/each}
                 <span class="sp-prov">{s.source}</span>
               </div>
+              <span class="sp-title" class:abierto={focusIdx === i}>{s.title}</span>
             </div>
             <span class="sp-meta">
               {#if s._count && s._count > 1}<span class="sp-dupe">×{s._count}</span>{/if}
-              {#if s.seeders}<span>{s.seeders} 🌱</span>{/if}
-              {#if s.size_bytes}<span>{fmtSize(s.size_bytes)}</span>{/if}
+              {#if s.seeders}<span title="Gente compartiéndola">{s.seeders} 🌱</span>{/if}
             </span>
           </button>
         {/each}
@@ -3185,12 +3258,30 @@
     flex-direction: column;
     gap: 5px;
   }
-  .sp-title {
+  .sp-linea1 {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 14px;
     color: #f0f0f4;
-    font-size: 14px;
+    font-size: 17px;
+    font-weight: 600;
+  }
+  .sp-idioma { color: var(--texto); }
+  .sp-idioma.no { color: #ffb0a0; }
+  .sp-estado { color: var(--amarillo); font-size: 15px; }
+  /* El nombre del release: una línea apagada; entero en la fila enfocada. */
+  .sp-title {
+    color: var(--texto-4);
+    font-size: 12.5px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .sp-title.abierto {
+    white-space: normal;
+    word-break: break-all;
+    color: var(--texto-2);
   }
   .sp-chips { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
   .sp-chip {
