@@ -5,8 +5,21 @@
   import { isKutralOs, isSandboxed } from "$lib/os";
   import { notify } from "$lib/notifStore.svelte";
   import { player } from "$lib/playerState.svelte";
+  import { cast } from "$lib/cast.svelte";
 
-  type Stage = "idle" | "available" | "downloading" | "installing" | "ready" | "error" | "uptodate";
+  type Stage =
+    | "idle"
+    | "available"
+    | "downloading"
+    | "installing"
+    | "ready"
+    | "error"
+    | "uptodate"
+    // Kütral OS: bajando en segundo plano / bajada, esperando un momento
+    // tranquilo / avisando antes de reiniciar.
+    | "fondo"
+    | "pendiente"
+    | "aviso";
 
   let stage = $state<Stage>("idle");
   let update = $state<Update | null>(null);
@@ -15,6 +28,101 @@
   let total = $state(0);
   let errMsg = $state("");
   let primaryBtn = $state<HTMLButtonElement | null>(null);
+  let laterBtn = $state<HTMLButtonElement | null>(null);
+
+  // Kütral OS (TV de sala): nadie confirma a mano, así que se actualiza solo,
+  // pero antes instalaba y reiniciaba apenas arrancaba, aunque se estuviera
+  // viendo algo. Ahora baja en segundo plano, espera a que no suene nada y
+  // avisa unos segundos antes de reiniciar; "Más tarde" lo posterga.
+  const AVISO_SEG = 10;
+  const POSTERGAR_MS = 30 * 60 * 1000;
+  let cuenta = $state(AVISO_SEG);
+  let cuentaTimer: ReturnType<typeof setInterval> | null = null;
+  let postergado = $state(false);
+  let postergaTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Algo sonando o vivo: mpv (también suspendido o IPTV de fondo) o la TV.
+  const ocupado = $derived(player.playing || player.suspended || player.live || cast.estado != null);
+
+  $effect(() => {
+    if (stage === "pendiente" && !ocupado && !postergado) empezarAviso();
+    else if (stage === "aviso" && ocupado) {
+      // Empezó algo durante el aviso: se espera al próximo momento tranquilo.
+      pararCuenta();
+      stage = "pendiente";
+    }
+  });
+
+  $effect(() => () => {
+    pararCuenta();
+    if (postergaTimer) clearTimeout(postergaTimer);
+  });
+
+  async function bajarEnFondo() {
+    if (!update) return;
+    stage = "fondo";
+    try {
+      await update.download();
+      stage = "pendiente";
+    } catch (e) {
+      console.warn("[updater] descarga en segundo plano falló", e);
+      stage = "error";
+      errMsg = String(e);
+    }
+  }
+
+  function empezarAviso() {
+    stage = "aviso";
+    cuenta = AVISO_SEG;
+    pararCuenta();
+    cuentaTimer = setInterval(() => {
+      cuenta--;
+      if (cuenta <= 0) void instalarYReiniciar();
+    }, 1000);
+    // El foco en "Más tarde": un Enter suelto del control posterga, no
+    // reinicia. Si nadie toca nada, la cuenta llega a cero y se actualiza.
+    setTimeout(() => laterBtn?.focus(), 30);
+  }
+
+  function pararCuenta() {
+    if (cuentaTimer) clearInterval(cuentaTimer);
+    cuentaTimer = null;
+  }
+
+  function masTarde() {
+    pararCuenta();
+    stage = "pendiente";
+    postergado = true;
+    if (postergaTimer) clearTimeout(postergaTimer);
+    postergaTimer = setTimeout(() => (postergado = false), POSTERGAR_MS);
+  }
+
+  async function instalarYReiniciar() {
+    if (!update) return;
+    pararCuenta();
+    stage = "installing";
+    try {
+      await update.install();
+      stage = "ready";
+      await relaunch();
+    } catch (e) {
+      console.error("[updater] install fail", e);
+      stage = "error";
+      errMsg = String(e);
+    }
+  }
+
+  function onKeyAviso(e: KeyboardEvent) {
+    // Que la navegación de la página no saque el foco del aviso.
+    e.stopPropagation();
+    if (e.key === "Escape" || e.key === "Backspace") {
+      e.preventDefault();
+      masTarde();
+    } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      e.preventDefault();
+      (document.activeElement === laterBtn ? primaryBtn : laterBtn)?.focus();
+    }
+  }
 
   onMount(async () => {
     try {
@@ -43,7 +151,7 @@
       stage = "available";
       notify("info", `Actualización ${u.version} disponible`, u.body || undefined);
       if (kutral) {
-        await runUpdate();
+        await bajarEnFondo();
       } else {
         setTimeout(() => primaryBtn?.focus(), 30);
       }
@@ -121,6 +229,28 @@
       <div class="actions">
         <button class="btn-later" onclick={dismiss}>Después</button>
         <button class="btn-now" bind:this={primaryBtn} onclick={runUpdate}>
+          Actualizar ahora
+        </button>
+      </div>
+    </div>
+  </div>
+{:else if stage === "aviso"}
+  <div
+    class="up-backdrop"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Actualización lista"
+    onkeydown={onKeyAviso}
+    tabindex="-1"
+  >
+    <div class="up-card">
+      <h2>Kütral se actualiza en {cuenta} s</h2>
+      <p class="ver">
+        Versión <strong>{update?.version}</strong> lista. Se reinicia un momento y vuelve solo.
+      </p>
+      <div class="actions">
+        <button class="btn-later" bind:this={laterBtn} onclick={masTarde}>Más tarde</button>
+        <button class="btn-now" bind:this={primaryBtn} onclick={() => void instalarYReiniciar()}>
           Actualizar ahora
         </button>
       </div>
