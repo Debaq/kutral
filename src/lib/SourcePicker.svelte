@@ -289,6 +289,18 @@
   // esperar un torrent) no puede terminar abriendo el reproductor: volver a
   // entrar arrancaba otra búsqueda y las dos lanzaban mpv una encima de otra.
   let vivo = true;
+  // Lo mismo dentro del selector abierto: cada playFrom/desdePack toma un
+  // número de intento. Esc durante "Probando fuente…" (o elegir otra fuente)
+  // lo invalida, y el intento viejo sale sin tocar nada en vez de abrir el
+  // reproductor cuando el debrid termina de resolver.
+  let intento = 0;
+  // El usuario canceló: en esta apertura ya nada arranca solo (load no
+  // vuelve a lanzar la mejor fuente por su cuenta).
+  let cancelado = false;
+  function cancelarIntento() {
+    intento++;
+    cancelado = true;
+  }
   $effect(() => () => {
     vivo = false;
     torrentCancel = true;
@@ -442,13 +454,16 @@
         loading = false;
         await playFrom(0);
         if (playing || casting || torrentCancel) return;
-        dbg("la copia local no abrió → a buscar fuentes");
+        dbg(cancelado ? "cancelado con Esc → a buscar fuentes" : "la copia local no abrió → a buscar fuentes");
         // No abrió (archivo corrupto, códec imposible): se olvida y se sigue
         // por el camino normal. Un archivo que no se puede ver no es una
         // copia local. Salvo en la TV: ahí puede ser solo que ESA TV no la
         // reproduce, y en el equipo sí se ve. La que baja no se olvida: lo
-        // que falló puede ser solo que todavía no hay peers.
-        if (fila && !destinoTv) {
+        // que falló puede ser solo que todavía no hay peers. Si el usuario
+        // canceló no se sabe si abría: se conserva.
+        if (cancelado) {
+          // sigue a la lista con la copia local primera
+        } else if (fila && !destinoTv) {
           await olvidarDescarga(fila.clave, fila.season, fila.episode, fila.info_hash);
           local = null;
         } else if (!fila) {
@@ -460,7 +475,7 @@
 
       // Capítulo del pack que venía sonando: sale del mismo torrent, sin
       // buscar ni elegir de nuevo.
-      if (autoplay && !descargarSolo && !local && (await desdePack())) return;
+      if (autoplay && !cancelado && !descargarSolo && !local && (await desdePack())) return;
 
       let srcs: Src[];
       try {
@@ -481,7 +496,7 @@
         dbg(`búsqueda falló pero hay copia local: ${String(e).slice(0, 60)}`);
         sources = [local];
         loading = false;
-        if (autoplay && config.sourceSelect === "auto") void playFrom(0);
+        if (autoplay && !cancelado && config.sourceSelect === "auto") void playFrom(0);
         return;
       }
       if (rdLinked) {
@@ -545,7 +560,7 @@
       recordarIdiomas();
       if (!sources.length) {
         error = "No encontramos fuentes para esta película.";
-      } else if (autoplay && config.sourceSelect === "auto") {
+      } else if (autoplay && !cancelado && config.sourceSelect === "auto") {
         // ⚡ Ver con RealDebrid en modo automático: reproduce directo la mejor
         // (ya ordenada: preferida > cacheada > idioma > calidad > seeders).
         loading = false;
@@ -701,6 +716,7 @@
     const s = cap.src;
     dbg(`capítulo del pack (${cap.via}): ${s.filename}`);
     loading = false;
+    const mio = ++intento;
     try {
       if (cap.via === "rd" && rdLinked && s.magnet) {
         resolving = true;
@@ -710,6 +726,8 @@
           pista: pistaDe(s, season ?? null, episode ?? null),
         });
         recordarPack(clave, season ?? null, s, "rd", r.pack);
+        // Esc mientras RD resolvía: no se abre (load sigue a la lista).
+        if (!vivo || mio !== intento) throw new Error("cancelado por el usuario");
         await launch(r.url, s);
         return true;
       }
@@ -1389,6 +1407,10 @@
         'Activa "Descarga local" en Configuración o vincula un debrid.';
       return;
     }
+    // Un intento nuevo invalida el anterior (Esc y luego otra fuente): el
+    // viejo no debe lanzar ni reordenar la lista mientras este la recorre.
+    const mio = ++intento;
+    const vigente = () => vivo && mio === intento;
     resolving = true;
     error = "";
     avisoLista = "";
@@ -1409,7 +1431,7 @@
     const rechazadas: Src[] = [];
 
     for (let i = startIdx; i < view.length && tried < MAX_TRIES; i++) {
-      if (!vivo) return;
+      if (!vigente()) return;
       const s = view[i];
       if (!s.magnet && !s.url) { dbg(`#${i} SKIP (sin magnet ni url)`); continue; }
       // La que ya baja en este equipo: del torrent de la sesión, sin debrid.
@@ -1481,6 +1503,7 @@
           resolvingMsg = `Inspeccionando pistas de la fuente ${i + 1}… 🔎`;
           await revisarIdioma(url, s);
         }
+        if (!vigente()) return;
         if (config.verifyEsTracks && !s.hardsub && s._es === "none") {
           sinEs++;
           if (!fallback) fallback = { url, s, archivos };
@@ -1489,9 +1512,11 @@
         }
         recordarPack(clave, season ?? null, s, "rd", archivos);
         if (await ofrecerOpciones(url, s, elegida, sinEs)) return;
+        if (!vigente()) return;
         await launch(url, s);
         return;
       } catch (e) {
+        if (!vigente()) return;
         lastErr = String(e);
         // La TV no está / no alcanza a Kütral / el usuario canceló: probar
         // más versiones no cambia nada.
@@ -1518,6 +1543,8 @@
       }
     }
 
+    if (!vigente()) return;
+
     // Nada con español embebido entre lo inspeccionado: reproducir la mejor
     // que SÍ resolvió. Los subtítulos externos (Wyzie/OpenSubtitles) cubren.
     if (fallback) {
@@ -1525,6 +1552,7 @@
       try {
         recordarPack(clave, season ?? null, fallback.s, "rd", fallback.archivos);
         if (await ofrecerOpciones(fallback.url, fallback.s, elegida, sinEs)) return;
+        if (!vigente()) return;
         await launch(fallback.url, fallback.s);
         avisoSinIdioma();
         return;
@@ -1532,6 +1560,7 @@
         lastErr = String(e);
       }
     }
+    if (!vigente()) return;
 
     dbg(`fin RD: tried=${tried} blocked=${blocked} sinEs=${sinEs} lastErr=${lastErr.slice(0, 60)}`);
 
@@ -1573,10 +1602,12 @@
       }
       const tope = rdLinked ? MAX_TORRENT_TRIES : MAX_TORRENT_TRIES_SOLO;
       for (const cand of porSeeders.slice(0, tope)) {
+        if (!vigente()) return;
         if (await playViaTorrent(cand)) return;
         if (torrentCancel) return; // el usuario canceló o lo mandó a la cola
       }
     }
+    if (!vigente()) return;
 
     resolving = false;
     agrupar();
@@ -1678,6 +1709,7 @@
   // `revisadas`: cuántas se inspeccionaron sin el idioma (verifyEsTracks).
   async function ofrecerOpciones(url: string, s: Src, elegida: boolean, revisadas: number): Promise<boolean> {
     if (elegida || desdeForzado != null || !vivo) return false;
+    const mio = intento;
     resolvingMsg = "Revisando las otras versiones…";
     // Sin la verificación activada no se inspeccionó nada: se mira al menos
     // la que va a sonar (el hardsub no expone pistas, ver playFrom).
@@ -1687,6 +1719,8 @@
       inspeccionar ? revisarIdioma(url, s) : null,
     ]);
     if (!vivo) return false;
+    // Cancelado mientras se revisaba: true = el que llama no lanza nada.
+    if (mio !== intento) return true;
     const n = bloqueadasDmca(s).length;
     const sinIdioma = s._es === "none";
     if (!n && !sinIdioma) return false;
@@ -2416,7 +2450,10 @@
         toggleDestino();
       } else if (e.key === "Escape" || e.key === "Backspace") {
         e.preventDefault();
-        resolving = false; // cancela visualmente; el resolve sigue en backend
+        // El resolve sigue en backend, pero el intento queda invalidado: lo
+        // que vuelva ya no abre el reproductor (ver `intento`).
+        cancelarIntento();
+        resolving = false;
         castCancel = true; // si la TV estaba cargando, se corta
       }
       return;
