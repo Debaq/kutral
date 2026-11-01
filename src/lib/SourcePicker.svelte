@@ -1,3 +1,10 @@
+<script module lang="ts">
+  // Fuentes ya vistas y descartadas, por título y capítulo, mientras dura la
+  // app abierta: reabrir el selector no vuelve a ofrecer como nueva la que se
+  // cortó.
+  const probadasPorCap = new Map<string, string[]>();
+</script>
+
 <script lang="ts">
   // Lista de fuentes torrent (estilo Stremio) para reproducir vía RealDebrid+mpv.
   // Autocontenido: hace la búsqueda, marca cacheadas (⚡), resuelve y lanza mpv.
@@ -284,10 +291,32 @@
   let rendicionSrc: { url: string; s: Src } | null = null;
   // El usuario eligió seguir viendo igual: no se le vuelve a ofrecer nada.
   let sinRendirse = false;
-  // Fuentes que ya se vieron y se descartaron desde el reproductor (por título:
-  // es lo que identifica al release en la lista). Se marcan como "ya probada".
-  // (array y no Set: $state no rastrea mutaciones de Set sin svelte/reactivity)
-  let descartadas = $state<string[]>([]);
+  // Fuentes que ya se vieron y se descartaron desde el reproductor. Se marcan
+  // como "ya probada". Por hash (o URL), no por título: dos releases con el
+  // mismo nombre de distintos proveedores se marcaban juntos.
+  // Viven en probadasPorCap (sobreviven al cerrar el selector); `probadasVer`
+  // avisa a la vista cuando se agrega una.
+  const capProbadas = $derived(`${clave || imdbId}|${season ?? ""}|${episode ?? ""}`);
+  let probadasVer = $state(0);
+  const descartadas = $derived.by(() => {
+    void probadasVer;
+    return probadasPorCap.get(capProbadas) ?? [];
+  });
+  function idFuente(s: Src): string {
+    return hashDe(s)?.toLowerCase() || s.url || s.title;
+  }
+  function esProbada(s: Src): boolean {
+    return descartadas.includes(idFuente(s));
+  }
+  function descartar(s: Src) {
+    const id = idFuente(s);
+    const lista = probadasPorCap.get(capProbadas) ?? [];
+    if (lista.includes(id)) return;
+    probadasPorCap.set(capProbadas, [...lista, id]);
+    probadasVer++;
+  }
+  // La que está sonando en mpv (para marcarla al volver a la lista).
+  let playingSrc: Src | null = null;
   let torrentCancel = false;
   // Cerrado el selector, lo que quedaba en vuelo (probar fuentes en el debrid,
   // esperar un torrent) no puede terminar abriendo el reproductor: volver a
@@ -699,6 +728,7 @@
     playing = true;
     playingDesde = Date.now();
     playingTitle = s.title;
+    playingSrc = s;
     startMpvPoll();
     // Hardsub: el subtítulo está QUEMADO en la imagen. No hay pista que
     // seleccionar ni subtítulo externo que bajar — buscarlos solo gastaría
@@ -1351,7 +1381,7 @@
     await castDetener().catch(() => {});
     if (castSrc) {
       castSrc._tv = motivo;
-      if (!descartadas.includes(castSrc.title)) descartadas = [...descartadas, castSrc.title];
+      descartar(castSrc);
     }
     const sig = castSrc ? view.indexOf(castSrc) + 1 : focusIdx + 1;
     castSrc = null;
@@ -2317,11 +2347,10 @@
     detenerVigilancia();
     // Otra fuente es otra red y otro peso: la decisión anterior no la ata.
     sinRendirse = false;
-    if (playing && playingTitle && !descartadas.includes(playingTitle)) {
-      descartadas = [...descartadas, playingTitle];
-    }
+    if (playing && playingSrc) descartar(playingSrc);
     playing = false;
     playingTitle = "";
+    playingSrc = null;
     desdeTorrent = false;
     desdeLocal = false;
     resolving = false;
@@ -2832,7 +2861,7 @@
             data-nav
             class="sp-row"
             class:focused={focusIdx === i}
-            class:probada={descartadas.includes(s.title)}
+            class:probada={esProbada(s)}
             onclick={() => {
               focusIdx = i;
               if (descargarSolo) void encolar(s);
@@ -2844,7 +2873,7 @@
             <div class="sp-mid">
               <span class="sp-title">{s.title}</span>
               <div class="sp-chips">
-                {#if descartadas.includes(s.title)}<span class="sp-probada">↩ Ya probada</span>{/if}
+                {#if esProbada(s)}<span class="sp-probada">↩ Ya probada</span>{/if}
                 {#if marcaRd(s)}{@const f = marcaRd(s)}<span class="sp-es-no" title="Real-Debrid: {f?.motivo}">⛔ RD: {f?.corto}</span>{/if}
                 {#if s.local}<span class="sp-en-disco">📁 En tu equipo</span>{/if}
                 {#if prefScore(s, kind)}<span class="sp-pref">★ Preferida</span>{/if}
