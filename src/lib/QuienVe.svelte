@@ -42,8 +42,15 @@
   let error = $state("");
   let raiz = $state<HTMLElement | null>(null);
 
+  // El último perfil usado primero: en una TV compartida casi siempre es el
+  // mismo, y caer siempre en el primero obligaba a moverse cada vez.
   function enfocar() {
-    setTimeout(() => raiz && enfocarPrimero(raiz.querySelector(".zona") ?? raiz), 40);
+    setTimeout(() => {
+      if (!raiz) return;
+      const actual = raiz.querySelector<HTMLElement>(".zona .perfil.actual");
+      if (actual) actual.focus();
+      else enfocarPrimero(raiz.querySelector(".zona") ?? raiz);
+    }, 40);
   }
 
   // El asistente de la primera vez va antes: la bienvenida del perfil sale

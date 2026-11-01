@@ -339,12 +339,52 @@
     });
   }
 
-  // Supr sobre una tarjeta: la tarjeta enfocada dice a quién borrar. Sin esto
-  // el quitar sería un botón que solo alcanza el mouse.
+  // Última tarjeta enfocada: el botón "✕ Quitar" de arriba actúa sobre ella.
+  // Supr no existe en el control remoto; subir con las flechas hasta el botón
+  // sí. Lleva el título para que se vea a quién borra.
+  let ultimoIdx = $state<number | null>(null);
+  let ultimoTitulo = $state("");
+  function onFocusGaleria(e: FocusEvent) {
+    const el = e.target as HTMLElement | null;
+    const idx = el?.dataset?.idx;
+    if (idx == null) return;
+    ultimoIdx = Number(idx);
+    ultimoTitulo = (el?.title || "").split(": \"")[0];
+  }
+  $effect(() => {
+    // Otra pestaña u otra lista: los índices ya no apuntan a lo mismo.
+    void pestana;
+    void listaVista;
+    ultimoIdx = null;
+    ultimoTitulo = "";
+  });
+  // En la vista de todas las listas no se borra desde aquí (va con su botón).
+  const puedeQuitar = $derived(ultimoIdx != null && !(pestana === "listas" && !listaVista));
+
+  function quitarUltimo() {
+    if (ultimoIdx == null) return;
+    const idx = ultimoIdx;
+    borrarIdx(String(idx));
+    // Historial y "seguir viendo" piden confirmación: el foco es del diálogo.
+    if (confirmar) return;
+    // De vuelta a la galería, a la tarjeta que quedó en ese lugar.
+    setTimeout(() => {
+      const el =
+        document.querySelector<HTMLElement>(`.galeria [data-idx="${idx}"]`) ??
+        document.querySelector<HTMLElement>(`.galeria [data-idx="${Math.max(0, idx - 1)}"]`);
+      el?.focus();
+    }, 60);
+  }
+
+  // Supr sobre una tarjeta: la tarjeta enfocada dice a quién borrar.
   function borrarEnfocado() {
     const el = document.activeElement as HTMLElement | null;
     const idx = el?.dataset?.idx;
     if (idx == null) return;
+    borrarIdx(idx);
+  }
+
+  function borrarIdx(idx: string) {
     if (pestana === "favoritos") {
       const f = favoritos[Number(idx)];
       if (f) void quitarFavorito(f);
@@ -526,12 +566,17 @@
         </button>
       {/each}
     </div>
+    {#if puedeQuitar}
+      <button data-nav class="chip quitar" onclick={quitarUltimo} title="Quitar la última tarjeta elegida">
+        ✕ Quitar{ultimoTitulo ? ` «${ultimoTitulo}»` : ""}
+      </button>
+    {/if}
     <span class="ayuda-teclas">
-      <b>Enter</b> descubrir · <b>Supr</b> quitar{#if listaVista} · <b>Shift+←→</b> mover{/if} · <b>Esc</b> volver
+      <b>Enter</b> descubrir · <b>Supr</b> o <b>✕ Quitar</b> quitar{#if listaVista} · <b>Shift+←→</b> mover{/if} · <b>Esc</b> volver
     </span>
   </header>
 
-  <div class="galeria" data-section="galeria">
+  <div class="galeria" data-section="galeria" onfocusin={onFocusGaleria}>
     {#if pestana === "seguir"}
       {#if !pendientes.length}
         <p class="vacio">No dejaste nada a medias. Todo lo que empezaste, lo terminaste.</p>
@@ -986,10 +1031,18 @@
     opacity: 0.75;
     font-weight: 700;
   }
+  .chip.quitar {
+    max-width: 280px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    border-color: rgba(255, 107, 107, 0.45);
+    color: #ffb3b3;
+  }
   .ayuda-teclas {
     margin-left: auto;
-    font-size: 11px;
-    color: #6a6a74;
+    font-size: 13px;
+    color: #9a9aa4;
     letter-spacing: 0.3px;
   }
   .ayuda-teclas b {

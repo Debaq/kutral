@@ -487,13 +487,18 @@
       log(`✗ cuenta error: ${String(e)}`);
     }
   }
+
+  // Abre el teclado por celular de /config (lo maneja la página: QR arriba).
+  function pedirCelular() {
+    window.dispatchEvent(new CustomEvent("kutral:teclado-celular"));
+  }
 </script>
 
 <section class="block">
   <h2>Claves de API</h2>
   <p class="hint">
-    Si una clave es muy larga para el control, usa <em>📱 Escribir desde el celular</em>
-    arriba.
+    Si una clave es muy larga para el control, usa el 📱 junto al campo: abre un
+    QR para escribirla, pegarla o escanearla desde el celular.
   </p>
   <label class="field">
     <span class="field-label">TMDb — sin esto no hay catálogo</span>
@@ -509,6 +514,7 @@
       <button data-nav type="button" class="reveal" onclick={() => (showTmdb = !showTmdb)} title={showTmdb ? "Ocultar" : "Mostrar"}>
         {showTmdb ? "🙈" : "👁"}
       </button>
+      <button data-nav type="button" class="reveal" onclick={pedirCelular} title="Escribir desde el celular">📱</button>
     </div>
   </label>
   <p class="hint">Gratis en <code>themoviedb.org/settings/api</code>.</p>
@@ -527,6 +533,7 @@
       <button data-nav type="button" class="reveal" onclick={() => (showOmdb = !showOmdb)} title={showOmdb ? "Ocultar" : "Mostrar"}>
         {showOmdb ? "🙈" : "👁"}
       </button>
+      <button data-nav type="button" class="reveal" onclick={pedirCelular} title="Escribir desde el celular">📱</button>
     </div>
   </label>
   <p class="hint">
@@ -548,6 +555,7 @@
       <button data-nav type="button" class="reveal" onclick={() => (showWyzie = !showWyzie)} title={showWyzie ? "Ocultar" : "Mostrar"}>
         {showWyzie ? "🙈" : "👁"}
       </button>
+      <button data-nav type="button" class="reveal" onclick={pedirCelular} title="Escribir desde el celular">📱</button>
     </div>
   </label>
   <p class="hint">
@@ -599,6 +607,7 @@
           autocomplete="off"
           spellcheck="false"
         />
+        <button data-nav type="button" class="reveal" onclick={pedirCelular} title="Escribir desde el celular">📱</button>
         <button data-nav class="btn-sec" onclick={saveManualToken} disabled={!rdManual.trim()}>
           Guardar
         </button>
@@ -611,11 +620,12 @@
 
   <div class="diag">
     <button data-nav class="link-tiny" onclick={() => (showDiag = !showDiag)}>
-      {showDiag ? "Ocultar diagnóstico" : "Diagnóstico de Real-Debrid"}
+      {showDiag ? "Ocultar herramientas de soporte" : "🛠 Soporte: probar Real-Debrid (avanzado)"}
     </button>
     {#if showDiag}
       <p class="hint" style="margin: 10px 0 8px;">
-        Prueba: busca fuentes torrent y resuelve la 1ª vía RD.
+        Para diagnosticar problemas: busca fuentes de una película de prueba
+        (código IMDb) y abre la primera por Real-Debrid.
       </p>
       <div class="key-row">
         <input data-nav

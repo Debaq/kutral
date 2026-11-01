@@ -172,7 +172,7 @@
 </section>
 
 <section class="block">
-  <h2>TV en vivo — Listas de canales</h2>
+  <h2>Canales de TV en vivo (listas M3U)</h2>
   <p class="hint">
     Playlists M3U que alimentan los canales en vivo. Puedes tener varias
     (iptv-org, tu proveedor, listas propias). Se cargan todas juntas en

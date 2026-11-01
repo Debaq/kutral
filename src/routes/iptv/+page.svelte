@@ -25,6 +25,9 @@
 
   let cargando = $state(true);
   let errorMsg = $state("");
+  // Listas que no cargaron cuando otras sí: antes solo quedaba en la consola y
+  // el usuario no sabía que le faltaban canales.
+  let listasFallidas = $state<string[]>([]);
   let canales = $state<Canal[]>([]);
   // [{ name, count }] orden por cantidad desc; el desplegable lo usa.
   let grupos = $state<{ name: string; count: number }[]>([]);
@@ -83,6 +86,7 @@
   async function cargar() {
     cargando = true;
     errorMsg = "";
+    listasFallidas = [];
     const listas = config.iptvLists.length ? config.iptvLists : IPTV_DEFAULT_LISTS;
     try {
       // Carga todas las listas en paralelo; tolera que alguna falle.
@@ -94,6 +98,7 @@
             return parseM3U(await resp.text(), l.name);
           } catch (e) {
             console.warn("[iptv] lista falló:", l.name, e);
+            listasFallidas = [...listasFallidas, l.name];
             return [] as Canal[];
           }
         }),
@@ -170,6 +175,12 @@
   function elegirFuente(f: string) {
     fuenteSel = f;
     cerrarMenus();
+    void focoPrimerCanal();
+  }
+  function quitarFiltros() {
+    query = "";
+    grupoSel = "Todos";
+    fuenteSel = "Todas";
     void focoPrimerCanal();
   }
   function elegirGrupo(g: string) {
@@ -416,6 +427,9 @@
         {/if}
       </div>
     {/if}
+    <button data-nav class="back" onclick={() => goto("/config?tab=transmitir")} title="Agregar o quitar listas de canales">
+      ⚙ Administrar listas
+    </button>
     <div class="search-wrap">
       <input
         data-nav
@@ -430,6 +444,12 @@
     </div>
   </header>
 
+  {#if listasFallidas.length && !cargando && !errorMsg}
+    <p class="aviso-listas">
+      {listasFallidas.length} lista{listasFallidas.length > 1 ? "s" : ""} no cargó: {listasFallidas.join(", ")}.
+      Revisa su dirección en «Administrar listas».
+    </p>
+  {/if}
   {#if cargando}
     <div class="estado">Cargando lista de canales…</div>
   {:else if errorMsg}
@@ -438,7 +458,10 @@
       <button class="reintentar" onclick={cargar}>Reintentar</button>
     </div>
   {:else if !visibles.length}
-    <div class="estado">Sin canales para este filtro.</div>
+    <div class="estado">
+      Sin canales para este filtro.
+      <button data-nav class="reintentar" onclick={quitarFiltros}>Quitar filtros</button>
+    </div>
   {:else}
     <div class="grid">
       {#each visibles as c, i (c.url + i)}
@@ -740,6 +763,15 @@
     overflow: hidden;
   }
 
+  .aviso-listas {
+    margin: 8px 0 0;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: rgba(249, 115, 22, 0.1);
+    border: 1px solid rgba(249, 115, 22, 0.35);
+    color: #fcbf8f;
+    font-size: 13px;
+  }
   .estado {
     padding: 60px 0;
     text-align: center;

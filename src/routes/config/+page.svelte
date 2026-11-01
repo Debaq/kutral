@@ -29,6 +29,9 @@
     { id: "sistema", icono: "⚙", label: "Sistema" },
   ];
 
+  // /config?tab=transmitir (p. ej. desde "Administrar listas" de TV en vivo).
+  const pedida = new URLSearchParams(window.location.search).get("tab") as Tab | null;
+  if (pedida && TABS.some((x) => x.id === pedida)) ultima = pedida;
   let tab = $state<Tab>(ultima);
   let raiz: HTMLDivElement;
   let barra: HTMLElement;
@@ -84,7 +87,15 @@
     }
   }
 
+  // Los 📱 junto a cada campo de clave (TabCuenta) piden lo mismo que el
+  // botón de la cabecera, sin tener que subir hasta él.
+  function onPedirCelular() {
+    if (!phoneAbierto) void conectarCelular();
+    raiz?.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   onMount(async () => {
+    window.addEventListener("kutral:teclado-celular", onPedirCelular);
     ayuda.set("config", [
       { tecla: "← → ↑ ↓", desc: "Moverse entre pestañas y ajustes" },
       { tecla: "Enter · Espacio", desc: "Activar / marcar" },
@@ -101,6 +112,7 @@
   // Un campo de texto se guarda al soltarlo (change); si se sale con Esc
   // estando adentro, el blur lo dispara antes de desmontar.
   onDestroy(() => {
+    window.removeEventListener("kutral:teclado-celular", onPedirCelular);
     (document.activeElement as HTMLElement | null)?.blur?.();
   });
 

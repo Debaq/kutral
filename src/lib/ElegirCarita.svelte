@@ -7,6 +7,7 @@
   // Vive dentro de "¿Quién está viendo?", que maneja las flechas y Esc.
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import { goto } from "$app/navigation";
   import { config } from "$lib/config.svelte";
   import { enfocarPrimero } from "$lib/nav";
   import type { PersonMini } from "$lib/tipos";
@@ -48,7 +49,7 @@
         if (g === gen) opciones = r;
       } else {
         const apiKey = config.tmdbKey;
-        if (!apiKey) throw new Error("Falta la clave de TMDb en Configuración.");
+        if (!apiKey) throw new Error("Falta la clave de TMDb (Configuración → Cuenta y servicios).");
         type Resp = { results: { id: number; title?: string; name?: string; poster_path?: string; popularity?: number }[] };
         const [pelis, series] = await Promise.all(
           (["movie", "tv"] as const).map((mt) =>
@@ -180,7 +181,12 @@
     {/if}
   </div>
   {#if cargando}<p class="ayuda">Buscando…</p>{/if}
-  {#if error}<p class="error">{error}</p>{/if}
+  {#if error}
+    <p class="error">{error}</p>
+    {#if error.includes("clave de TMDb")}
+      <button data-nav class="ir-config" onclick={() => goto("/config")}>Ir a Configuración</button>
+    {/if}
+  {/if}
 </div>
 
 <style>
@@ -304,6 +310,11 @@
     cursor: pointer;
     margin-left: 8px;
   }
+  .ir-config {
+    margin-top: 6px; padding: 8px 16px; border-radius: 8px; cursor: pointer;
+    background: #22222c; color: #e6e6ec; border: 1px solid #f3a951; font-size: 14px;
+  }
+  .ir-config:focus-visible { outline: 3px solid #f5c518; outline-offset: 2px; }
   .error {
     margin: 0;
     color: #ff7373;
