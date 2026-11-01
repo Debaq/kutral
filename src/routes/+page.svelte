@@ -2870,7 +2870,7 @@
       {/if}
       <div class="key-edit">
         <button class="link" onclick={() => (showKey = !showKey)}>
-          {showKey ? "Cerrar" : "Cambiar API key"}
+          {showKey ? "Cerrar" : "Cambiar clave de TMDb"}
         </button>
       </div>
     </aside>

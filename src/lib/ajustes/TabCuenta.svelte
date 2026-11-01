@@ -188,7 +188,7 @@
     ctaBusy = true;
     try {
       const v = await probarServidor(ctaServidor);
-      ctaOk = `Servidor de Kutral encontrado (versión ${v}).`;
+      ctaOk = `Servidor de Kütral encontrado (versión ${v}).`;
     } catch (e) {
       ctaErr = String(e);
     } finally {
@@ -541,7 +541,7 @@
         type={showWyzie ? "text" : "password"}
         value={config.wyzieKey}
         onchange={(e) => (config.wyzieKey = texto(e))}
-        placeholder="Sin key: el reproductor usa OpenSubtitles"
+        placeholder="Sin clave: se usa OpenSubtitles"
         autocomplete="off"
         spellcheck="false"
       />
@@ -552,13 +552,13 @@
   </label>
   <p class="hint">
     Con ella Kütral busca subtítulos ahí (más cuota que OpenSubtitles).
-    <a href="https://store.wyzie.io/redeem" target="_blank" rel="noopener">Generar key gratis →</a>
+    <a href="https://store.wyzie.io/redeem" target="_blank" rel="noopener">Generar clave gratis →</a>
   </p>
 </section>
 
 <section class="block">
-  <h2>RealDebrid</h2>
-  <p class="hint">Vincula tu cuenta para streaming premium sin publicidad.</p>
+  <h2>Real-Debrid</h2>
+  <p class="hint">Vincula tu cuenta para que las películas empiecen al instante y sin exponer tu IP.</p>
 
   {#if config.rdLinked && !rdLink && !llavero.rdPropio && llavero.rdDe}
     <div class="rd-linked">
@@ -611,7 +611,7 @@
 
   <div class="diag">
     <button data-nav class="link-tiny" onclick={() => (showDiag = !showDiag)}>
-      {showDiag ? "Ocultar diagnóstico" : "Diagnóstico de RealDebrid"}
+      {showDiag ? "Ocultar diagnóstico" : "Diagnóstico de Real-Debrid"}
     </button>
     {#if showDiag}
       <p class="hint" style="margin: 10px 0 8px;">
@@ -653,8 +653,7 @@
   <h2>OpenSubtitles <span class="badge-opt">opcional</span></h2>
   {#if !config.osHasKey}
     <p class="hint">
-      Subtítulos externos deshabilitados: falta la API key de la app.
-      Configúrala en el código (módulo opensubtitles.rs).
+      Los subtítulos de OpenSubtitles no están disponibles en esta versión.
     </p>
   {:else if config.osLinked}
     <div class="key-row">
@@ -679,13 +678,13 @@
 </section>
 
 <section class="block">
-  <h2>Cuenta de Kutral <span class="badge-opt">opcional</span></h2>
+  <h2>Cuenta de Kütral <span class="badge-opt">opcional</span></h2>
   <p class="hint">
     Sincroniza tus favoritos, lo que viste (con el minuto donde quedaste),
     tus listas, tus claves de API, tus ajustes y tus vinculaciones (Real-Debrid,
     OpenSubtitles) entre tus equipos, usando tu propio servidor. Las claves
     viajan cifradas con tu contraseña.
-    Sin cuenta, Kutral funciona igual, solo en este equipo.
+    Sin cuenta, Kütral funciona igual, solo en este equipo.
   </p>
 
   {#if cuenta.usuario}

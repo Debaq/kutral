@@ -99,7 +99,7 @@
         }),
       );
       const merged = resultados.flat();
-      if (!merged.length) throw new Error("Ninguna lista trajo canales (revisá las URLs en config).");
+      if (!merged.length) throw new Error("Ninguna lista trajo canales (revisa las direcciones de las listas en Configuración → Transmitir y TV).");
       canales = merged;
       // Fuentes con al menos un canal (para el filtro por lista).
       const conFuente = listas.filter((l, i) => resultados[i].length).map((l) => l.name);
@@ -232,7 +232,7 @@
           // Intento de recuperación antes de rendirse.
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls?.startLoad();
           else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls?.recoverMediaError();
-          else { playError = "No se pudo reproducir este canal."; buffering = false; }
+          else { playError = "No se pudo abrir este canal."; buffering = false; }
         });
       } else {
         // Safari/WebKit con HLS nativo, o stream directo (mp4/ts).
@@ -353,7 +353,7 @@
   onMount(async () => {
     ayuda.set("iptv", [
       { tecla: "← → ↑ ↓", desc: "Navegar canales" },
-      { tecla: "Enter · A", desc: "Reproducir" },
+      { tecla: "Enter · A", desc: "Ver canal" },
       { tecla: "Esc · Backspace", desc: "Volver / detener" },
     ]);
     if (!config.loaded) loadConfig();
@@ -460,7 +460,7 @@
       {/each}
     </div>
     {#if ocultos > 0}
-      <p class="capnote">Mostrando {visibles.length} de {filtrados.length}. Afiná la búsqueda o el grupo para ver los {ocultos} restantes.</p>
+      <p class="capnote">Mostrando {visibles.length} de {filtrados.length}. Afina la búsqueda o el grupo para ver los {ocultos} restantes.</p>
     {/if}
   {/if}
 </div>
@@ -486,7 +486,7 @@
       onvolumechange={syncVideo}
       onplaying={() => { buffering = false; syncVideo(); }}
       onwaiting={() => (buffering = true)}
-      onerror={() => { playError = "No se pudo reproducir este canal."; buffering = false; }}
+      onerror={() => { playError = "No se pudo abrir este canal."; buffering = false; }}
     ></video>
 
     <!-- Barra superior: volver + canal + estado -->
@@ -505,7 +505,7 @@
         disabled={playingIdx <= 0}
         onclick={() => cambiarCanal(-1)}
       >⏮</button>
-      <button class="cbtn big" title="Pausa / Play (Espacio)" onclick={togglePausa}>
+      <button class="cbtn big" title="Pausa / Seguir (Espacio)" onclick={togglePausa}>
         {paused ? "▶" : "⏸"}
       </button>
       <button

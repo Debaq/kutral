@@ -23,7 +23,7 @@
   </div>
   <div class="trailer-qr">
     <h2>Trailer disponible en YouTube</h2>
-    <p>Escanea el código con el celular, o ábrelo acá en el navegador.</p>
+    <p>Escanea el código con el celular, o ábrelo aquí en el navegador.</p>
     <img src={qr} alt="Código QR del trailer en YouTube" />
     <code>{url}</code>
     <button data-nav class="trailer-open" onclick={onAbrir}>

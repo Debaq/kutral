@@ -15,7 +15,7 @@
 </script>
 
 <div class="key-box">
-  <h3>TMDb API Key</h3>
+  <h3>Clave de TMDb</h3>
   <p class="hint">
     Consíguela en <code>themoviedb.org/settings/api</code> (gratis).
   </p>
@@ -34,7 +34,7 @@
         <strong>¿Difícil escribir con el control?</strong>
         <span>
           Escanea este QR con el celular. Desde ahí puedes escribir,
-          pegar o escanear la key con la cámara: aparece sola en el campo
+          pegar o escanear la clave con la cámara: aparece sola en el campo
           de arriba. Luego pulsa Guardar.
         </span>
       </div>

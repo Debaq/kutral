@@ -34,7 +34,7 @@
         "show-text",
         config.wyzieKey
           ? "No se encontraron subtítulos"
-          : "No se encontraron subtítulos (sin API key de Wyzie)",
+          : "No se encontraron subtítulos (sin clave de Wyzie)",
         "3000",
       ]);
       return;

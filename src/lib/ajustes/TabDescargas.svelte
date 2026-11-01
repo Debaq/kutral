@@ -57,13 +57,13 @@
 <section class="block">
   <h2>Descarga local</h2>
   <p class="hint">
-    Kütral baja el torrent y lo reproduce mientras se descarga, sin
+    Kütral baja el torrent y puedes verlo mientras se descarga, sin
     debrid de por medio.
     {#if config.rdLinked}
       Con tu debrid vinculado se usa solo cuando él rechaza una fuente
       por DMCA (error 451).
     {:else}
-      <strong>Sin debrid vinculado es la única forma de reproducir.</strong>
+      <strong>Sin debrid vinculado es la única forma de ver películas y series.</strong>
     {/if}
   </p>
   <p class="warn-box">
@@ -73,7 +73,7 @@
   </p>
   <label class="toggle-row">
     <input data-nav type="checkbox" bind:checked={config.torrentLocal} />
-    <span>Bajar y reproducir en local</span>
+    <span>Bajar y ver en local</span>
   </label>
 </section>
 

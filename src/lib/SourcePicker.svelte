@@ -1438,7 +1438,7 @@
     // que intentar.
     if (!rdLinked && !config.torrentLocal && !view.some((s) => s.url)) {
       error =
-        'Sin debrid y sin descarga local no hay forma de reproducir. ' +
+        'Sin debrid y sin descarga local no hay forma de verla. ' +
         'Activa "Descarga local" en Configuración o vincula un debrid.';
       return;
     }
@@ -1648,7 +1648,7 @@
     agrupar();
     if (error) return; // playViaTorrent ya dejó un mensaje más específico
     if (blocked > 0 && !config.torrentLocal) {
-      error = `Sin fuentes reproducibles: ${blocked} bloqueada(s) por el debrid (DMCA). Activa "Descarga local" en Configuración para bajarlas igual, o prueba otra calidad.`;
+      error = `Ninguna fuente abrió: ${blocked} bloqueada(s) por el debrid (DMCA). Activa "Descarga local" en Configuración para bajarlas igual, o prueba otra calidad.`;
     } else if (pesadas > 0) {
       // Sí había fuentes bajables, pero pasan el techo que puso el usuario.
       error =
@@ -1656,7 +1656,7 @@
         `(${QLABEL[config.torrentMaxQuality]} y ${config.torrentMaxGb} GB). ` +
         `Sube el tope en Configuración o busca una versión más liviana.`;
     } else if (blocked > 0) {
-      error = `Sin fuentes reproducibles: ${blocked} bloqueada(s) por el debrid (DMCA) y la descarga local tampoco pudo. Prueba "🔄 Rebuscar fuentes" u otra calidad.`;
+      error = `Ninguna fuente abrió: ${blocked} bloqueada(s) por el debrid (DMCA) y la descarga local tampoco pudo. Prueba "🔄 Rebuscar fuentes" u otra calidad.`;
     } else if (marcadas > 0 && tried === 0) {
       error =
         `Real-Debrid ya no pudo con ${marcadas === 1 ? "la fuente que queda" : `las ${marcadas} fuentes que quedan`} ` +
@@ -1666,7 +1666,7 @@
         "La descarga local no pudo arrancar ninguna fuente. Casi siempre es falta de " +
         'gente compartiendo: prueba otra calidad o "🔄 Rebuscar fuentes".';
     } else {
-      error = `No se pudo reproducir ninguna fuente. ${lastErr}`;
+      error = `No se pudo abrir ninguna fuente. ${lastErr}`;
     }
   }
 
@@ -2053,7 +2053,7 @@
       await launch(added.stream_url, s);
       notify(
         "warn",
-        "Reproduciendo desde descarga local",
+        "Viendo desde descarga local",
         rdLinked
           ? "El debrid bloqueó esta fuente por DMCA. La estás bajando y compartiendo tú."
           : "Sin debrid: la estás bajando y compartiendo tú. Tu IP queda visible para el resto del torrent.",
@@ -2666,7 +2666,7 @@
       </div>
     {:else if playing}
       <div class="sp-center">
-        <p class="sp-playing">▶ Reproduciendo</p>
+        <p class="sp-playing">▶ Viendo ahora</p>
         <p class="sp-playing-title">{playingTitle}</p>
         {#if desdeLocal}
           <p class="sp-desde-disco">

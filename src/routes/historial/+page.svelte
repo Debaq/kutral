@@ -566,7 +566,7 @@
     {:else if pestana === "vistos"}
       {#if !historial.filas.length}
         <p class="vacio">
-          Todavía no hay nada registrado. Lo que reproduzcas aparece acá, con la fecha.
+          Todavía no hay nada registrado. Lo que descubras aparece aquí, con la fecha.
         </p>
       {:else}
         {#each grupos as g (g.titulo)}
@@ -831,7 +831,7 @@
       {/if}
     {:else if !favoritos.length}
       <p class="vacio">
-        Sin favoritos todavía. En la ficha de una película o serie, el botón ☆ la guarda acá.
+        Sin favoritos todavía. En la ficha de una película o serie, el botón ☆ la guarda aquí.
       </p>
     {:else}
       <div class="grid">

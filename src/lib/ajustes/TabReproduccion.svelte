@@ -59,7 +59,7 @@
   </div>
   <label class="toggle-row">
     <input data-nav type="checkbox" bind:checked={config.verifyEsTracks} />
-    <span>Verificar español real antes de reproducir</span>
+    <span>Verificar español real antes de empezar</span>
   </label>
   <p class="hint">
     Inspecciona las pistas del archivo (sin descargarlo) y confirma si
@@ -141,14 +141,14 @@
 <section class="block">
   <h2>Selección de fuente</h2>
   <p class="hint">
-    Al "Ver con debrid", cómo se elige qué fuente reproducir.
+    Al Descubrir, cómo se elige qué fuente ver.
   </p>
   <div class="mode-group">
     <label class="mode-card" class:sel={config.sourceSelect === "auto"}>
       <input data-nav type="radio" name="sourceSelect" value="auto" bind:group={config.sourceSelect} />
       <div>
         <strong>Automática</strong>
-        <span>Reproduce la mejor al instante, sin preguntar.</span>
+        <span>Abre la mejor al instante, sin preguntar.</span>
       </div>
     </label>
     <label class="mode-card" class:sel={config.sourceSelect === "manual"}>
@@ -164,7 +164,7 @@
   <p class="hint">
     Texto de interés en el nombre del torrent (release/grupo). Si el nombre
     o el proveedor lo contiene, esa fuente sube al tope (en modo automático,
-    es la que se reproduce). Útil para grupos que suelen traer audio en
+    es la que se abre). Útil para grupos que suelen traer audio en
     español. Varias separadas por coma.
   </p>
   <label class="field">
@@ -204,7 +204,7 @@
   <h3 class="subhead">Lista negra</h3>
   <p class="hint">
     Texto que NO quieres. Si el nombre del torrent o el proveedor lo contiene,
-    esa fuente se hunde al fondo del orden (nunca se auto-reproduce salvo que
+    esa fuente se hunde al fondo del orden (nunca arranca sola salvo que
     no haya otra). Varias separadas por coma.
   </p>
   <label class="field">
@@ -303,7 +303,7 @@
   <h2>Verificación de disponibilidad</h2>
   <p class="hint">
     Verificaciones simultáneas al detectar si una película se puede
-    reproducir. Más alto = los badges "no disponible" aparecen
+    ver. Más alto = los avisos "no disponible" aparecen
     más rápido, pero puede saturar la red y cortar el video.
   </p>
   <div class="mode-group">

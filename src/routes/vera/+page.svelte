@@ -226,7 +226,7 @@
       if (g !== gen) return;
       error =
         e instanceof TmdbNoKeyError
-          ? "Vera necesita la key de TMDb (Configuración → Cuenta)."
+          ? "Vera necesita la clave de TMDb (Configuración → Cuenta y servicios)."
           : `No pude buscar: ${e instanceof Error ? e.message : String(e)}`;
       pantalla = "preguntas";
     }

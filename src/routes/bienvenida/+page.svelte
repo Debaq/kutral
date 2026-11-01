@@ -294,15 +294,15 @@
           <span class="ob-punto" class:on={n <= i} title={p}></span>
         {/each}
       </div>
-      <button data-nav class="ob-saltar" onclick={saltarTodo}>Saltar</button>
+      <button data-nav class="ob-saltar" onclick={saltarTodo}>Saltar y configurar después</button>
     </header>
 
     <div class="ob-body" data-section="ob-body">
       {#if paso === "idioma"}
         <h1>Idioma y pantalla</h1>
         <p class="ob-sub">
-          El de títulos, sinopsis, pósters, audio y subtítulos. Los menús siguen
-          en español por ahora. Se cambia después en Configuración.
+          Para títulos, sinopsis, pósters, audio y subtítulos (los menús quedan
+          en español). Se cambia después en Configuración.
         </p>
         <div class="ob-group">
           {#each LANGS as l}
@@ -338,9 +338,9 @@
           <tbody>
             <tr><td>TV en vivo y anime con enlace directo</td><td class="ok">Nada. Funcionan ya.</td></tr>
             <tr><td>Subtítulos</td><td class="ok">Nada.</td></tr>
-            <tr><td>Películas y series</td><td>Key de TMDb — gratis, un formulario.</td></tr>
+            <tr><td>Películas y series</td><td>Clave de TMDb — gratis, un formulario.</td></tr>
             <tr>
-              <td>Reproducir</td>
+              <td>Descubrir</td>
               <td>Gratis con descarga local (más lento), o Real-Debrid (de pago, rápido).</td>
             </tr>
           </tbody>
@@ -351,12 +351,12 @@
         <h1>Sin conexión</h1>
         <p class="ob-sub">Kütral necesita internet para todo salvo lo ya descargado.</p>
         <button data-nav class="ob-btn" onclick={() => (wifiOpen = true)}>Conectar a una red wifi</button>
-        <p class="ob-nota">Si estás por cable y aun así aparece esto, sigue de largo.</p>
+        <p class="ob-nota">Si estás por cable y aun así aparece esto, continúa con Siguiente.</p>
 
       {:else if paso === "catalogo"}
         <h1>Catálogo de películas y series</h1>
         <p class="ob-sub">
-          Kütral usa TMDb para el catálogo. La key es gratis y se pide en
+          Kütral usa TMDb para el catálogo. La clave es gratis y se pide en
           <code>themoviedb.org/settings/api</code>. Sin ella, Pelis y Series
           quedan vacías; Anime y TV en vivo funcionan igual.
         </p>
@@ -376,7 +376,7 @@
           <div class="ob-phone">
             <RemoteQr url={phoneUrl} label="Teclado" size={110} />
             <p>
-              Escanea con el celular para escribir, pegar o leer la key con la
+              Escanea con el celular para escribir, pegar o leer la clave con la
               cámara. Aparece sola en el campo de arriba.
             </p>
           </div>
@@ -385,7 +385,7 @@
         {/if}
 
       {:else if paso === "reproducir"}
-        <h1>Cómo reproducir</h1>
+        <h1>Cómo ver las películas</h1>
         <p class="ob-sub">
           Las películas y series salen de torrents. Hay dos formas de verlas y
           las dos funcionan: elige una, o las dos, y cámbialo cuando quieras.
@@ -394,7 +394,7 @@
         <section class="ob-op" class:elegida={config.torrentLocal}>
           <h2>Gratis, sin cuenta <span class="ob-tag gratis">gratis</span></h2>
           <p>
-            Kütral baja el torrent en este equipo y empieza a reproducir apenas
+            Kütral baja el torrent en este equipo y empieza a mostrarla apenas
             tiene un trozo. <strong>Es más lento:</strong> tarda más en empezar y
             depende de cuánta gente comparte el archivo. Lo conocido suele andar
             bien; lo raro puede no arrancar.
@@ -497,7 +497,7 @@
             <div><strong>Subtitulado</strong><span>Audio original + subtítulos en {nombreIdioma(idiomaContenido(lang))}.</span></div>
           </label>
         </div>
-        <h2>Key de OMDb</h2>
+        <h2>Clave de OMDb</h2>
         <p class="ob-sub">
           Gratis en <code>omdbapi.com/apikey.aspx</code>. Agrega premios,
           recaudación y ratings de IMDb / Rotten Tomatoes al detalle.
@@ -511,11 +511,11 @@
         <ul class="ob-check">
           <li class:ok={puedeVerCatalogo}>
             {puedeVerCatalogo ? "✓" : "—"} Películas y series
-            {#if !puedeVerCatalogo}<span> · falta la key de TMDb</span>{/if}
+            {#if !puedeVerCatalogo}<span> · falta la clave de TMDb</span>{/if}
           </li>
           <li class="ok">✓ TV en vivo y anime con enlace directo</li>
           <li class:ok={puedeReproducir}>
-            {puedeReproducir ? "✓" : "—"} Reproducción
+            {puedeReproducir ? "✓" : "—"} Descubrir películas y series
             {#if config.rdLinked}<span> · Real-Debrid{config.torrentLocal ? " y descarga local" : ""}</span>
             {:else if config.torrentLocal}<span> · descarga local (gratis, más lenta)</span>
             {:else}<span> · sin debrid ni descarga local</span>{/if}

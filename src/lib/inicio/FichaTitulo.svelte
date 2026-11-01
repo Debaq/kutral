@@ -93,7 +93,7 @@
           class="hist-btn"
           class:on={yaVista}
           onclick={() => onVisto(!yaVista)}
-          title={yaVista ? "Desmarcar" : "Marcar como vista sin reproducirla"}
+          title={yaVista ? "Desmarcar" : "Marcar como vista sin verla"}
         >
           {yaVista ? "✓ Vista" : "✓ Marcar vista"}
         </button>
@@ -150,7 +150,7 @@
     {/if}
   {:else}
     <div class="unavail-note">
-      Este título no está disponible para reproducir.
+      Este título no está disponible para ver.
     </div>
     <div class="action-row">
       <button data-nav class="discover-btn" onclick={onTrailer}>

@@ -164,7 +164,7 @@
               : capitulo
                 ? `${hasRd ? "⚡" : "▶"}  Ver ${capitulo}`
                 : hasRd
-                  ? "⚡  Ver con debrid"
+                  ? "⚡  Descubrir"
                   : "▶  Descubrir",
         primary: true,
       });

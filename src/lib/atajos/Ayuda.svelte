@@ -77,7 +77,7 @@
         { tecla: "Esc · Backspace", desc: "Salir a los menús dejando en pausa" },
         { tecla: "P", desc: "Volver a lo que quedó en pausa" },
         { tecla: "Enter · Espacio", desc: "Pausar y abrir el bar de iconos" },
-        { tecla: "← →", desc: "Reproduciendo: saltar 10s · pausado: mover foco" },
+        { tecla: "← →", desc: "Viendo: saltar 10s · en pausa: mover foco" },
         { tecla: "c · a · v", desc: "Menú de subtítulos · audio · video" },
         { tecla: "Mouse", desc: "Mover saca el bar · click activa el icono" },
         { tecla: "✕ Salir (bar)", desc: "Cerrar la reproducción del todo" },

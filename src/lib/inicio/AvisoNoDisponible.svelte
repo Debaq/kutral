@@ -28,9 +28,9 @@
     <h3>No disponible</h3>
     <p>
       {#if motivo === "404"}
-        <strong>{titulo}</strong> aún no se encuentra en playimdb.com.
+        <strong>{titulo}</strong> aún no está disponible para ver.
       {:else}
-        <strong>{titulo}</strong> no tiene IMDb ID en TMDb, así que no podemos abrirlo.
+        <strong>{titulo}</strong> no tiene los datos que hacen falta para buscarlo, así que no podemos abrirlo.
       {/if}
     </p>
     <p class="modal-sub">¿Quieres ver el trailer mientras tanto?</p>

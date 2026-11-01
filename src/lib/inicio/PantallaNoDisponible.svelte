@@ -22,11 +22,11 @@
     {#if titulo.poster_path}
       <img class="unavail-poster" src={art(titulo.poster_path, "w342", 342)} alt="" onerror={onImgError} />
     {/if}
-    <h2>Lo sentimos muchísimo</h2>
+    <h2>Todavía no se puede ver</h2>
     <p>
-      <strong>{titulo.title}</strong> aún no se encuentra en nuestra cartelera.
+      <strong>{titulo.title}</strong> aún no está disponible para ver.
     </p>
-    <p class="unavail-sub">La marcamos así no la sugerimos próximamente. Si volviera a estar disponible, puedes desmarcarla.</p>
+    <p class="unavail-sub">La marcamos como no disponible para no sugerírtela. Si vuelve a estar, puedes desmarcarla.</p>
     <div class="unavail-actions">
       <button data-nav class="unavail-back btn-secondary" onclick={onVolver}>← Volver</button>
       {#if titulo.imdb_id}

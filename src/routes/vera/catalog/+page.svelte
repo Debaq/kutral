@@ -147,7 +147,7 @@
   <section>
     <h2>Importar desde TMDb</h2>
     {#if !apiKey}
-      <p class="warn">Sin API key. Configurala en la home antes de importar.</p>
+      <p class="warn">Falta la clave de TMDb. Configúrala en Configuración → Cuenta y servicios antes de importar.</p>
     {/if}
     <div class="form">
       <label><input data-nav type="checkbox" bind:checked={movie} disabled={running} /> Películas</label>
