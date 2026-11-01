@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Primer uso (o cambio de key): pedir la API key de TMDb. Con el servidor
+  // Primer uso (o cambio de clave): pedir la clave de API de TMDb. Con el servidor
   // web arriba se ofrece un QR para escribirla desde el celular.
   import RemoteQr from "$lib/RemoteQr.svelte";
 
@@ -12,6 +12,12 @@
     urlTeclado: string | null;
     onGuardar: () => void;
   } = $props();
+
+  // Con control remoto solo se llega a lo que tiene data-nav: sin foco
+  // inicial ni data-nav, el campo quedaba inalcanzable con flechas.
+  function enfocar(el: HTMLInputElement) {
+    setTimeout(() => el.focus(), 50);
+  }
 </script>
 
 <div class="key-box">
@@ -20,12 +26,14 @@
     Consíguela en <code>themoviedb.org/settings/api</code> (gratis).
   </p>
   <input
+    data-nav
+    use:enfocar
     type="password"
     bind:value={valor}
-    placeholder="32 chars hex"
+    placeholder="Pega aquí tu clave"
     onkeydown={(e) => e.key === "Enter" && onGuardar()}
   />
-  <button onclick={onGuardar} disabled={!valor.trim()}>Guardar</button>
+  <button data-nav onclick={onGuardar} disabled={!valor.trim()}>Guardar</button>
 
   {#if urlTeclado}
     <div class="key-phone">

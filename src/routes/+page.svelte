@@ -1471,7 +1471,11 @@
       if (cur && cardEls.includes(cur as HTMLButtonElement)) {
         lastCardEl = cur;
       }
-      const info = document.querySelector<HTMLElement>('[data-section="info"] [data-nav]:not([disabled])');
+      // El botón principal (Descubrir / Continuar) primero: el primer
+      // [data-nav] era "Agregar a favoritos" e I+Enter lo marcaba sin querer.
+      const info =
+        document.querySelector<HTMLElement>('[data-section="info"] [data-primary]:not([disabled])') ??
+        document.querySelector<HTMLElement>('[data-section="info"] [data-nav]:not([disabled])');
       info?.focus();
       info?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
@@ -1589,11 +1593,17 @@
   // Enter abría esa otra). Solo el último pedido escribe; los viejos
   // devuelven null y quien los esperaba no hace nada.
   let pickSeq = 0;
+  // Error al abrir una ficha: va aparte de listError (antes un fallo de ficha
+  // parecía un fallo de la lista entera) y con su "Reintentar".
+  let detailError = $state("");
+  let ultimoPedido: ListItem | null = null;
 
   async function pick(it: ListItem): Promise<Detail | null> {
     if (!apiKey && tab !== "anime") return null;
     if (pickPromise && pickPromise.id === it.id) return pickPromise.promise;
     const mio = ++pickSeq;
+    ultimoPedido = it;
+    detailError = "";
     detailLoading = true;
     const p = (async () => {
       try {
@@ -1601,6 +1611,9 @@
           ? await invoke<Detail>("anilist_detail", { id: it.id, apiKey })
           : await invoke<Detail>("tmdb_detail", { mediaType: tabToMediaType(tab), id: it.id, apiKey });
         if (mio !== pickSeq) return null;
+        // Ficha nueva: el panel ya no se desmonta al cargar, así que el
+        // scroll quedaba donde estaba el título anterior.
+        if (selected?.id !== d.id) document.querySelector("aside.info")?.scrollTo({ top: 0 });
         selected = d;
         // Nuevo título → resetear el capítulo elegido.
         sourcesSeason = null;
@@ -1608,7 +1621,7 @@
         return d;
       } catch (e) {
         if (mio !== pickSeq) return null;
-        listError = String(e);
+        detailError = String(e);
         throw e;
       } finally {
         if (mio === pickSeq) detailLoading = false;
@@ -1617,6 +1630,25 @@
     })();
     pickPromise = { id: it.id, promise: p };
     return p;
+  }
+
+  function reintentarFicha() {
+    if (ultimoPedido) void pick(ultimoPedido).catch((e) => console.warn("[pick]", e));
+  }
+
+  // Reintentar la lista: si ya hay cards falló "cargar más" (la página se
+  // revirtió y hasMore sigue en pie); si no, la carga entera.
+  function reintentarLista() {
+    if (items.length) void loadMore();
+    else resetAndLoad();
+  }
+
+  function limpiarBusquedaYFiltros() {
+    query = "";
+    debouncedQ = "";
+    selectedGenres = new Set();
+    persistirFiltros();
+    resetAndLoad();
   }
 
   async function pickAndDiscover(it: ListItem) {
@@ -2454,7 +2486,9 @@
       return;
     }
     setTimeout(() => {
-      const info = document.querySelector<HTMLElement>('[data-section="info"] [data-nav]');
+      const info =
+        document.querySelector<HTMLElement>('[data-section="info"] [data-primary]') ??
+        document.querySelector<HTMLElement>('[data-section="info"] [data-nav]');
       // Sin panel de info (o vacío) el foco caería en body y el focus-guard
       // rebobinaría el grid: mejor volver directo a la card.
       if (info) info.focus(); else volverAlGrid();
@@ -2664,8 +2698,12 @@
         // En otros botones, Enter/Space disparan onclick por default
         break;
       }
+      case "Escape":
       case "Backspace":
-        if (sortOpen) { e.preventDefault(); sortOpen = false; }
+        if (sortOpen) { e.preventDefault(); sortOpen = false; break; }
+        // Atrás desde la ficha: a la carátula de la que se vino. Con control
+        // remoto no había otra salida que la tecla I.
+        if (t?.closest('[data-section="info"]')) { e.preventDefault(); toggleInfoFocus(); }
         break;
       case "[":
       case "PageUp":
@@ -2833,9 +2871,18 @@
     <aside class="info" data-section="info">
       {#if !apiKey || showKey}
         <ClaveTmdb bind:valor={keyInput} urlTeclado={webKeyboardUrl} onGuardar={saveKey} />
-      {:else if detailLoading}
+      {:else if detailError && !detailLoading}
+        <div class="err-box">
+          <p>No se pudo abrir la ficha.</p>
+          <small>{detailError}</small>
+          <button data-nav data-primary class="err-retry" onclick={reintentarFicha}>🔄 Reintentar</button>
+        </div>
+      {:else if detailLoading && !selected}
         <div class="empty">Cargando…</div>
       {:else if selected}
+        <!-- Mientras llega la ficha nueva queda la anterior atenuada: vaciar
+             el panel en cada movimiento de foco hacía parpadear todo. -->
+        <div class="ficha-wrap" class:cargando={detailLoading}>
         <FichaTitulo
           titulo={selected}
           clave={claveSel}
@@ -2862,6 +2909,7 @@
           onPersona={openPerson}
           onEscenas={openCarousel}
         />
+        </div>
       {:else}
         <div class="brand-empty">
           <h1 class="brand-name">Kütral</h1>
@@ -2991,7 +3039,13 @@
         </div>
       </header>
 
-      {#if listError}<p class="err">{listError}</p>{/if}
+      {#if listError}
+        <div class="err-box">
+          <p>{items.length ? "No se pudieron cargar más títulos." : "No se pudo cargar la lista."}</p>
+          <small>{listError}</small>
+          <button data-nav class="err-retry" onclick={reintentarLista}>🔄 Reintentar</button>
+        </div>
+      {/if}
 
       {#if listLoading && !items.length}
         <div class="empty">Cargando…</div>
@@ -3201,8 +3255,13 @@
                 {/each}
               </div>
             {/each}
-            {#if !items.length && apiKey}
-              <div class="empty">Sin resultados</div>
+            {#if !items.length && apiKey && !listError}
+              <div class="empty sin-res">
+                <p>{debouncedQ ? `Nada para «${debouncedQ}»` : "Sin resultados"}{selectedGenres.size ? " con estos géneros" : ""}.</p>
+                {#if debouncedQ || selectedGenres.size}
+                  <button data-nav class="err-retry" onclick={limpiarBusquedaYFiltros}>Limpiar búsqueda y filtros</button>
+                {/if}
+              </div>
             {/if}
           </div>
           <div class="sentinel" use:attachObserver></div>
@@ -3272,6 +3331,8 @@
   }
 
   /* INFO column */
+  .ficha-wrap { transition: opacity 0.15s ease; }
+  .ficha-wrap.cargando { opacity: 0.45; pointer-events: none; }
   .info {
     border-right: 1px solid #1f1f28;
     overflow-y: auto;
@@ -3432,7 +3493,21 @@
     outline: none;
     background: #f5c518; color: #0d0d12; border-color: #f5c518; font-weight: 700;
   }
-  .err { color: #ff6b6b; padding: 12px 16px; font-size: 12px; }
+  .err-box {
+    margin: 12px 16px; padding: 14px 16px; border-radius: 8px;
+    background: rgba(255, 107, 107, 0.08); border: 1px solid rgba(255, 107, 107, 0.35);
+    display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  }
+  .err-box p { margin: 0; color: #ff9b9b; font-size: 15px; font-weight: 600; }
+  .err-box small { color: #a0a0aa; font-size: 12px; word-break: break-word; }
+  .err-retry {
+    margin-top: 4px; padding: 8px 16px; border-radius: 8px; cursor: pointer;
+    background: #22222c; color: #e6e6ec; border: 1px solid #2a2a36; font-size: 14px;
+  }
+  .err-retry:hover { background: #2a2a36; }
+  .err-retry:focus-visible { outline: 3px solid #f5c518; outline-offset: 2px; }
+  .sin-res { grid-column: 1 / -1; color: #a0a0aa; font-size: 15px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .sin-res p { margin: 0; }
 
   .grid-wrap {
     flex: 1; overflow-y: auto;

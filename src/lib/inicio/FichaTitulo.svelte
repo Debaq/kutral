@@ -1,6 +1,6 @@
 <script lang="ts">
-  // Panel de detalle del título elegido en el catálogo: datos, historial,
-  // acciones (Descubrir / trailer), reparto y escenas. Las temporadas y los
+  // Panel de detalle del título elegido en el catálogo: datos, acciones
+  // (Descubrir / trailer), sinopsis, historial, reparto y escenas. Las temporadas y los
   // capítulos se eligen en la ficha de reproducción, como en una película.
   import { IMG, img, art, onImgError } from "$lib/imagenes.svelte";
   import { borrarProgreso, type FilaHistorial, type EstadoMedio } from "$lib/historial.svelte";
@@ -63,6 +63,75 @@
     {#if titulo.runtime}<span>{titulo.runtime} min</span>{/if}
     {#each titulo.genres as g}<span class="genre">{g}</span>{/each}
   </div>
+  {#if disponible}
+    {#if titulo.media_type === "tv"}
+      <!-- Series: Descubrir abre la ficha de reproducción, que ya sabe qué
+           capítulo sigue (y desde ahí se elige otro). -->
+      {#if local}
+        <div class="local-note">📁 Tienes capítulos bajados en este equipo</div>
+      {/if}
+      <div class="action-row">
+        <button data-nav data-primary class="discover-btn discover-btn-row" onclick={onDescubrir}>
+          {enCurso && enCurso.season >= 0
+            ? `▶ Continuar T${enCurso.season} E${enCurso.episode}`
+            : "▶ Descubrir"}
+        </button>
+        <button data-nav class="trailer-btn trailer-btn-row" onclick={onTrailer}>🎬 Trailer</button>
+      </div>
+    {:else}
+      {@const prog = progreso}
+      {@const pct = prog && prog.runtime_seconds && prog.runtime_seconds > 0
+        ? Math.min(100, Math.round((prog.progress_real ?? prog.watched_seconds / prog.runtime_seconds) * 100))
+        : null}
+      {@const watchedMin = prog ? Math.floor(prog.watched_seconds / 60) : 0}
+      {@const watchedSec = prog ? prog.watched_seconds % 60 : 0}
+      {#if prog && prog.completed}
+        <div class="watched-note">✓ Ya la viste</div>
+      {:else if prog && prog.watched_seconds > 5 && pct != null}
+        <div class="progress-bar"><div class="progress-fill" style:width="{pct}%"></div></div>
+      {/if}
+      {#if local}
+        <div class="local-note">📁 Ya está en tu equipo — arranca al instante, sin internet</div>
+      {:else if bajando}
+        <div class="local-note bajando">📥 Bajándola ahora — te avisamos cuando esté lista</div>
+      {:else if enCola}
+        <div class="local-note bajando">⏳ En la cola de descargas — arranca cuando haya lugar</div>
+      {/if}
+      <div class="action-row">
+        <!-- Un solo botón principal: "Empezar de nuevo" vive en la ficha
+             de reproducción, que es adonde llevan todos. -->
+        {#if prog && prog.completed}
+          <button data-nav data-primary class="discover-btn discover-btn-row" onclick={onDescubrir}>▶ Descubrir de nuevo</button>
+        {:else if prog && prog.watched_seconds > 5}
+          <button data-nav data-primary class="discover-btn discover-btn-row" onclick={onDescubrir}>
+            ▶ Continuar {pct != null ? `(${pct}%)` : `(${watchedMin}m ${watchedSec}s)`}
+          </button>
+        {:else}
+          <button data-nav data-primary class="discover-btn discover-btn-row" onclick={onDescubrir}>▶ Descubrir</button>
+        {/if}
+        <button data-nav class="trailer-btn trailer-btn-row" onclick={onTrailer}>🎬 Trailer</button>
+      </div>
+    {/if}
+  {:else}
+    <div class="unavail-note">
+      Este título no está disponible para ver.
+    </div>
+    <div class="action-row">
+      <button data-nav data-primary class="discover-btn" onclick={onTrailer}>
+        🎬 Ver trailer
+      </button>
+      {#if titulo.imdb_id}
+        <button
+          data-nav
+          class="trailer-btn"
+          onclick={onDescubrir}
+          title="Intentar abrir aunque esté marcada como no disponible"
+        >
+          ⚠ Intentar de todas formas
+        </button>
+      {/if}
+    </div>
+  {/if}
   <p class="overview">{titulo.overview || "(sin sinopsis)"}</p>
   {#if clave}
     <div class="hist-row">
@@ -101,71 +170,6 @@
         <span class="hist-info">{estado.vistos} {estado.vistos === 1 ? "capítulo visto" : "capítulos vistos"}</span>
       {/if}
       <Recomendar {titulo} />
-    </div>
-  {/if}
-  {#if disponible}
-    {#if titulo.media_type === "tv"}
-      <!-- Series: la reproducción es por capítulo (lista de Temporadas
-           abajo). No hay "Descubrir" de título; solo Trailer. -->
-      {#if local}
-        <div class="local-note">📁 Tienes capítulos bajados en este equipo</div>
-      {/if}
-      <div class="action-row">
-        <button data-nav class="trailer-btn trailer-btn-row" onclick={onTrailer}>🎬 Trailer</button>
-      </div>
-    {:else}
-      {@const prog = progreso}
-      {@const pct = prog && prog.runtime_seconds && prog.runtime_seconds > 0
-        ? Math.min(100, Math.round((prog.progress_real ?? prog.watched_seconds / prog.runtime_seconds) * 100))
-        : null}
-      {@const watchedMin = prog ? Math.floor(prog.watched_seconds / 60) : 0}
-      {@const watchedSec = prog ? prog.watched_seconds % 60 : 0}
-      {#if prog && prog.completed}
-        <div class="watched-note">✓ Ya la viste</div>
-      {:else if prog && prog.watched_seconds > 5 && pct != null}
-        <div class="progress-bar"><div class="progress-fill" style:width="{pct}%"></div></div>
-      {/if}
-      {#if local}
-        <div class="local-note">📁 Ya está en tu equipo — arranca al instante, sin internet</div>
-      {:else if bajando}
-        <div class="local-note bajando">📥 Bajándola ahora — te avisamos cuando esté lista</div>
-      {:else if enCola}
-        <div class="local-note bajando">⏳ En la cola de descargas — arranca cuando haya lugar</div>
-      {/if}
-      <div class="action-row">
-        {#if prog && prog.completed}
-          <button data-nav class="discover-btn discover-btn-row" onclick={onDescubrir}>▶ Descubrir de nuevo</button>
-        {:else if prog && prog.watched_seconds > 5}
-          <button data-nav class="discover-btn discover-btn-row" onclick={onDescubrir} title="Opciones de reproducción">
-            ↻ Desde el inicio
-          </button>
-          <button data-nav class="discover-btn discover-btn-row" onclick={onDescubrir}>
-            ▶ Continuar {pct != null ? `(${pct}%)` : `(${watchedMin}m ${watchedSec}s)`}
-          </button>
-        {:else}
-          <button data-nav class="discover-btn discover-btn-row" onclick={onDescubrir}>▶ Descubrir</button>
-        {/if}
-        <button data-nav class="trailer-btn trailer-btn-row" onclick={onTrailer}>🎬 Trailer</button>
-      </div>
-    {/if}
-  {:else}
-    <div class="unavail-note">
-      Este título no está disponible para ver.
-    </div>
-    <div class="action-row">
-      <button data-nav class="discover-btn" onclick={onTrailer}>
-        🎬 Ver trailer
-      </button>
-      {#if titulo.imdb_id}
-        <button
-          data-nav
-          class="trailer-btn"
-          onclick={onDescubrir}
-          title="Intentar abrir aunque esté marcada como no disponible"
-        >
-          ⚠ Intentar de todas formas
-        </button>
-      {/if}
     </div>
   {/if}
   {#if titulo.directors.length}
@@ -254,7 +258,7 @@
   .meta { display: flex; flex-wrap: wrap; gap: 8px; font-size: 12px; color: #aaa; margin-bottom: 12px; position: relative; z-index: 1; }
   .rating { color: #f5c518; font-weight: 700; }
   .genre { background: #1a1a22; padding: 2px 8px; border-radius: 999px; }
-  .overview { color: #c0c0c8; font-size: 14px; line-height: 1.5; position: relative; z-index: 1; }
+  .overview { color: #c0c0c8; font-size: 14px; line-height: 1.5; position: relative; z-index: 1; margin-top: 14px; }
   .discover-btn {
     position: relative; z-index: 1;
     background: #f5c518; color: #000; border: 0;
