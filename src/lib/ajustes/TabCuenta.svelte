@@ -488,6 +488,29 @@
     }
   }
 
+  // La clave de TMDb se prueba al guardarla: mal pegada dejaba el catálogo
+  // vacío sin decir por qué.
+  let tmdbPrueba = $state<"" | "probando" | "ok" | "mal">("");
+  let tmdbPruebaMsg = $state("");
+  async function probarTmdb(clave: string) {
+    if (!clave) {
+      tmdbPrueba = "";
+      return;
+    }
+    tmdbPrueba = "probando";
+    try {
+      await invoke("tmdb_search", { mediaType: "movie", query: "matrix", page: 1, apiKey: clave });
+      if (config.tmdbKey === clave) tmdbPrueba = "ok";
+    } catch (e) {
+      if (config.tmdbKey !== clave) return;
+      tmdbPrueba = "mal";
+      const m = String(e);
+      tmdbPruebaMsg = /401|invalid|inválid/i.test(m)
+        ? "TMDb dice que esa clave no es válida. Revisa que esté completa."
+        : `No se pudo comprobar (¿hay internet?): ${m.slice(0, 80)}`;
+    }
+  }
+
   // Abre el teclado por celular de /config (lo maneja la página: QR arriba).
   function pedirCelular() {
     window.dispatchEvent(new CustomEvent("kutral:teclado-celular"));
@@ -506,7 +529,10 @@
       <input data-nav
         type={showTmdb ? "text" : "password"}
         value={config.tmdbKey}
-        onchange={(e) => (config.tmdbKey = texto(e))}
+        onchange={(e) => {
+          config.tmdbKey = texto(e);
+          void probarTmdb(config.tmdbKey.trim());
+        }}
         placeholder="tmdb_xxxxxxxxxxxxxxxxxxxxxxxx"
         autocomplete="off"
         spellcheck="false"
@@ -517,6 +543,13 @@
       <button data-nav type="button" class="reveal" onclick={pedirCelular} title="Escribir desde el celular">📱</button>
     </div>
   </label>
+  {#if tmdbPrueba === "probando"}
+    <p class="hint">Comprobando la clave…</p>
+  {:else if tmdbPrueba === "ok"}
+    <p class="ok">✓ Clave válida: el catálogo ya puede cargar.</p>
+  {:else if tmdbPrueba === "mal"}
+    <p class="err">✗ {tmdbPruebaMsg}</p>
+  {/if}
   <p class="hint">Gratis en <code>themoviedb.org/settings/api</code>.</p>
 
   <label class="field">
@@ -724,6 +757,12 @@
     {#if cuenta.error}<p class="err">{cuenta.error}</p>{/if}
   {:else}
     {#if cuenta.error}<p class="err" style="margin: 0 0 10px;">{cuenta.error}</p>{/if}
+    <span class="field-label">Dirección del servidor</span>
+    <p class="hint" style="margin: 4px 0 8px;">
+      Te la da quien administra el servidor de Kütral (puede ser un amigo o
+      tú mismo). Con <em>Probar</em> se comprueba que responde antes de crear
+      la cuenta o entrar.
+    </p>
     <div class="key-row">
       <input data-nav
         bind:value={ctaServidor}

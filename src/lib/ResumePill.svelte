@@ -90,9 +90,11 @@
 </script>
 
 {#if player.suspended && !player.playing}
-  <div class="pill-wrap">
+  <!-- data-nav: con control remoto la pastilla también se alcanza con
+       flechas (antes solo con la tecla P). -->
+  <div class="pill-wrap" data-section="pill">
     <div class="pill">
-      <button class="main" onclick={volver} disabled={busy} title="Volver a la reproducción (P)">
+      <button data-nav class="main" onclick={volver} disabled={busy} title="Volver a la reproducción (P)">
         <span class="play">▶</span>
         <span class="txt">
           <span class="title">{player.title || "Reproducción en pausa"}</span>
@@ -106,7 +108,7 @@
         </span>
         <span class="key">P</span>
       </button>
-      <button class="close" onclick={cerrar} title="Cerrar la reproducción">✕</button>
+      <button data-nav class="close" onclick={cerrar} title="Cerrar la reproducción">✕</button>
     </div>
     {#if !player.live && pct > 0}
       <div class="bar"><div class="fill" style:width={`${pct}%`}></div></div>

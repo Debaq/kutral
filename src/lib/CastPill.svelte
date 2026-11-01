@@ -4,6 +4,11 @@
   // corta, en cualquier pantalla. El estado lo mantiene cast.svelte.ts.
   import { cast, control, detener, fmtTiempo } from "$lib/cast.svelte";
   import { notify } from "$lib/notifStore.svelte";
+  import { player } from "$lib/playerState.svelte";
+
+  // Con la pastilla de "volver al video" en pantalla, esta sube para no
+  // quedar encima de ella en ventanas angostas.
+  const conResume = $derived(player.suspended && !player.playing);
 
   let busy = $state(false);
 
@@ -26,7 +31,7 @@
 </script>
 
 {#if st?.activa && !cast.controlesAbiertos}
-  <div class="pill-wrap">
+  <div class="pill-wrap" class:arriba={conResume} data-section="pill">
     <div class="pill">
       <span class="tv">📺</span>
       <span class="txt">
@@ -39,12 +44,13 @@
         </span>
       </span>
       <button
+        data-nav
         class="btn"
         disabled={busy}
         onclick={() => hacer(() => control(pausada ? "seguir" : "pausa"))}
         title={pausada ? "Seguir" : "Pausa"}
       >{pausada ? "▶" : "⏸"}</button>
-      <button class="btn close" disabled={busy} onclick={() => hacer(detener)} title="Detener en la TV">⏹</button>
+      <button data-nav class="btn close" disabled={busy} onclick={() => hacer(detener)} title="Detener en la TV">⏹</button>
     </div>
     {#if pct > 0}
       <div class="bar"><div class="fill" style:width={`${pct}%`}></div></div>
@@ -66,6 +72,7 @@
     box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
     backdrop-filter: blur(8px);
   }
+  .pill-wrap.arriba { bottom: 112px; }
   .pill {
     display: flex;
     align-items: center;

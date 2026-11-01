@@ -8,7 +8,8 @@
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { afterNavigate, goto } from "$app/navigation";
   import { ayuda } from "$lib/atajos/store.svelte";
-  import { setPlaying } from "$lib/playerState.svelte";
+  import { setPlaying, player } from "$lib/playerState.svelte";
+  import { cast } from "$lib/cast.svelte";
   import { config } from "$lib/config.svelte";
   import SourcePicker from "$lib/SourcePicker.svelte";
   import { tieneDescarga, estadoDescarga, descargaDe } from "$lib/descargas.svelte";
@@ -2604,11 +2605,17 @@
       const sameSec = all.filter((el) => seccionDe(el) === curSection);
       best = mejor(cur, sameSec, dir);
     }
+    // Pastillas de abajo (volver al video, TV): ↓ desde el final de la ficha,
+    // o desde la última fila del grid cuando ya no quedan más títulos.
+    if (!best && dir === "down" && (curSection === "info" || (curSection === "gallery" && !hasMore))) {
+      const pills = all.filter((el) => seccionDe(el) === "pill");
+      if (pills.length) best = mejor(cur, pills, dir) ?? pills[0];
+    }
     // Pass 2: cross-section solo si la sección lo permite en esa dirección
     if (!best) {
       // info SOLO puede salir lateralmente; vertical queda cautivo
       const allowCross =
-        curSection !== "info" || dir === "right" || dir === "left";
+        curSection !== "menu" && (curSection !== "info" || dir === "right" || dir === "left");
       // gallery + ArrowDown: NUNCA saltar a info. Si quedan más pelis
       // por cargar, dispara loadMore y deja el foco donde está; el siguiente
       // ArrowDown ya encontrará candidatos válidos en la misma sección.
@@ -2629,6 +2636,13 @@
       const ci = cardEls.indexOf(best as HTMLButtonElement);
       if (ci >= 0) focusedIdx = ci;
     }
+  }
+
+  function cerrarMenusOrden(desde: HTMLElement | null) {
+    const trigger = desde?.closest(".dropdown")?.querySelector<HTMLElement>(".dropdown-trigger");
+    sortOpen = false;
+    seasonOpen = false;
+    trigger?.focus();
   }
 
   function onGlobalKey(e: KeyboardEvent) {
@@ -2654,7 +2668,22 @@
       unavailable.open = false;
       return;
     }
-    if (sortOpen && e.key === "Escape") { sortOpen = false; e.preventDefault(); return; }
+    // Menú de orden o de temporada abierto: ↑↓ se quedan adentro; ←→, Esc y
+    // Atrás lo cierran y devuelven el foco al botón que lo abrió. Antes las
+    // flechas salían del menú dejándolo abierto.
+    if ((sortOpen || seasonOpen) && t?.closest(".dropdown-menu")) {
+      if (["ArrowLeft", "ArrowRight", "Escape", "Backspace"].includes(e.key)) {
+        e.preventDefault();
+        cerrarMenusOrden(t);
+        return;
+      }
+    }
+    if ((sortOpen || seasonOpen) && e.key === "Escape") {
+      sortOpen = false;
+      seasonOpen = false;
+      e.preventDefault();
+      return;
+    }
 
     if (inInput) {
       // Sliders (brillo, volumen de la barra): las cuatro flechas son del
@@ -2764,9 +2793,12 @@
     onGlobalKey(e);
   }}
   onclick={(e) => {
-    if (!sortOpen) return;
+    if (!sortOpen && !seasonOpen) return;
     const t = e.target as HTMLElement | null;
-    if (t && !t.closest(".dropdown")) sortOpen = false;
+    if (t && !t.closest(".dropdown")) {
+      sortOpen = false;
+      seasonOpen = false;
+    }
   }}
 />
 
@@ -2961,7 +2993,7 @@
               <svg class="chev" viewBox="0 0 10 6" width="10" height="6"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
             </button>
             {#if sortOpen}
-              <ul class="dropdown-menu" role="menu" use:autofocusFirst>
+              <ul class="dropdown-menu" role="menu" data-section="menu" use:autofocusFirst>
                 {#each sortOptions as s}
                   <li>
                     <button
@@ -2990,7 +3022,7 @@
                 <svg class="chev" viewBox="0 0 10 6" width="10" height="6"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
               </button>
               {#if seasonOpen}
-                <ul class="dropdown-menu" role="menu" use:autofocusFirst>
+                <ul class="dropdown-menu" role="menu" data-section="menu" use:autofocusFirst>
                   <li>
                     <button
                       data-nav
@@ -3019,7 +3051,9 @@
           {/if}
         </div>
         {#if genres.length && !debouncedQ}
-          <div class="genres">
+          <!-- Con muchos géneros, la última fila se desvanece (hay más abajo) y
+               al entrar con el foco se despliegan todos. -->
+          <div class="genres" class:muchos={genres.length > 12}>
             <button
               data-nav
               class="chip"
@@ -3056,6 +3090,7 @@
         <div
           class="grid-wrap"
           class:cargando={listLoading}
+          class:con-pill={(player.suspended && !player.playing) || !!cast.estado?.activa}
           bind:this={gridWrapEl}
           onscroll={() => {
             if (!gridWrapEl) return;
@@ -3477,6 +3512,11 @@
     max-height: 78px; overflow-y: auto;
     padding: 2px 0;
   }
+  .genres.muchos:not(:focus-within) {
+    -webkit-mask-image: linear-gradient(to bottom, #000 65%, transparent);
+    mask-image: linear-gradient(to bottom, #000 65%, transparent);
+  }
+  .genres:focus-within { max-height: none; }
   .genres::-webkit-scrollbar { width: 6px; }
   .genres::-webkit-scrollbar-thumb { background: var(--borde); border-radius: 3px; }
   .chip {
@@ -3518,6 +3558,8 @@
     display: flex; flex-direction: column;
     position: relative;
   }
+  /* Con una pastilla abajo, la última fila no queda tapada. */
+  .grid-wrap.con-pill { padding-bottom: 120px; }
   /* Lista vieja mientras carga la nueva: se ve que algo está pasando sin
      perder la estructura de la pantalla. */
   .grid-wrap.cargando .grid {
@@ -3859,6 +3901,17 @@
   }
   .card { position: relative; }
   .card.status-checking { opacity: 0.85; }
+  /* Accesos de la casa (Vera, Vistos, IPTV…): el rótulo de marca no dice qué
+     hacen; al enfocarlos aparece su descripción (el title, que en la TV no se
+     ve porque no hay hover). */
+  .accesos .card:focus-visible::after {
+    content: attr(title);
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 3;
+    padding: 6px 8px;
+    background: rgba(0, 0, 0, 0.82);
+    color: #fff; font-size: 13px; font-weight: 600; text-align: center;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
   .card-titulo {
     position: absolute; left: 0; right: 0; bottom: 0; z-index: 3;
     padding: 28px 10px 10px;

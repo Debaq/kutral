@@ -35,13 +35,15 @@
   // --- Pasos ---------------------------------------------------------------
   // El de red solo aparece si al arrancar no hay internet: en un escritorio
   // normal preguntar por wifi es ruido.
-  type PasoId = "idioma" | "que-es" | "red" | "catalogo" | "reproducir" | "opcionales" | "listo";
+  type PasoId = "idioma" | "red" | "catalogo" | "reproducir" | "opcionales" | "listo";
 
   let hayRed = $state(true);
   const pasos = $derived<PasoId[]>(
     hayRed
-      ? ["idioma", "que-es", "catalogo", "reproducir", "opcionales", "listo"]
-      : ["idioma", "que-es", "red", "catalogo", "reproducir", "opcionales", "listo"],
+      // "Qué necesitas" ya no es un paso aparte: su resumen va arriba del
+      // catálogo (un paso menos para llegar a ver algo).
+      ? ["idioma", "catalogo", "reproducir", "opcionales", "listo"]
+      : ["idioma", "red", "catalogo", "reproducir", "opcionales", "listo"],
   );
   let i = $state(0);
   const paso = $derived(pasos[Math.min(i, pasos.length - 1)]);
@@ -328,25 +330,6 @@
           </label>
         </div>
 
-      {:else if paso === "que-es"}
-        <h1>Qué necesitas</h1>
-        <p class="ob-sub">Kütral no trae ninguna cuenta incluida. Esto es lo que hay.</p>
-        <table class="ob-tabla">
-          <thead>
-            <tr><th>Sección</th><th>Qué hace falta</th></tr>
-          </thead>
-          <tbody>
-            <tr><td>TV en vivo y anime con enlace directo</td><td class="ok">Nada. Funcionan ya.</td></tr>
-            <tr><td>Subtítulos</td><td class="ok">Nada.</td></tr>
-            <tr><td>Películas y series</td><td>Clave de TMDb — gratis, un formulario.</td></tr>
-            <tr>
-              <td>Descubrir</td>
-              <td>Gratis con descarga local (más lento), o Real-Debrid (de pago, rápido).</td>
-            </tr>
-          </tbody>
-        </table>
-        <p class="ob-nota">Los dos pasos que vienen cubren esas dos filas.</p>
-
       {:else if paso === "red"}
         <h1>Sin conexión</h1>
         <p class="ob-sub">Kütral necesita internet para todo salvo lo ya descargado.</p>
@@ -355,6 +338,11 @@
 
       {:else if paso === "catalogo"}
         <h1>Catálogo de películas y series</h1>
+        <p class="ob-resumen">
+          TV en vivo, anime con enlace directo y subtítulos funcionan sin nada.
+          Para películas y series hacen falta dos cosas: esta clave (gratis) y
+          una forma de verlas, que es el paso siguiente.
+        </p>
         <p class="ob-sub">
           Kütral usa TMDb para el catálogo. La clave es gratis y se pide en
           <code>themoviedb.org/settings/api</code>. Sin ella, Pelis y Series
@@ -537,6 +525,16 @@
 <WifiManager bind:open={wifiOpen} />
 
 <style>
+  .ob-resumen {
+    margin: 0 0 12px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: rgba(243, 169, 81, 0.08);
+    border: 1px solid rgba(243, 169, 81, 0.3);
+    color: var(--texto-suave);
+    font-size: 14px;
+    line-height: 1.45;
+  }
   .ob-root {
     height: 100%;
     overflow: auto;
@@ -662,14 +660,6 @@
     text-decoration: underline;
   }
 
-  .ob-tabla { border-collapse: collapse; width: 100%; font-size: 14px; }
-  .ob-tabla th, .ob-tabla td {
-    text-align: left;
-    padding: 9px 10px;
-    border-bottom: 1px solid var(--superficie-3);
-  }
-  .ob-tabla th { color: #b9b9c6; font-weight: 600; font-size: 12px; }
-  .ob-tabla td.ok { color: #8fd18f; }
 
   .ob-op {
     background: var(--superficie-1);

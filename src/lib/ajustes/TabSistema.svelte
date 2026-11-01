@@ -10,6 +10,42 @@
 
   // Updater
   let currentVer = $state("");
+
+  // Pasar a kiosko quita los botones de la ventana al instante. Si no era lo
+  // que se quería, vuelve solo al modo anterior en unos segundos (como al
+  // cambiar la resolución de pantalla).
+  const KIOSKO_SEG = 15;
+  let kioskoPrevio = $state<typeof config.modeOverride | null>(null);
+  let kioskoSeg = $state(0);
+  let kioskoTimer: ReturnType<typeof setInterval> | null = null;
+  let modoAntes = config.modeOverride;
+  function alCambiarModo() {
+    if (config.modeOverride === "kiosk" && modoAntes !== "kiosk") {
+      kioskoPrevio = modoAntes;
+      kioskoSeg = KIOSKO_SEG;
+      if (kioskoTimer) clearInterval(kioskoTimer);
+      kioskoTimer = setInterval(() => {
+        kioskoSeg--;
+        if (kioskoSeg <= 0) revertirKiosko();
+      }, 1000);
+    }
+    modoAntes = config.modeOverride;
+  }
+  function mantenerKiosko() {
+    if (kioskoTimer) clearInterval(kioskoTimer);
+    kioskoTimer = null;
+    kioskoPrevio = null;
+  }
+  function revertirKiosko() {
+    if (kioskoTimer) clearInterval(kioskoTimer);
+    kioskoTimer = null;
+    if (kioskoPrevio) config.modeOverride = kioskoPrevio;
+    modoAntes = config.modeOverride;
+    kioskoPrevio = null;
+  }
+  $effect(() => () => {
+    if (kioskoTimer) clearInterval(kioskoTimer);
+  });
   type UpdStage = "idle" | "checking" | "uptodate" | "available" | "installing" | "ready" | "error";
   let updStage = $state<UpdStage>("idle");
   let updPending: Update | null = null;
@@ -110,18 +146,27 @@
   </p>
   <div class="mode-group">
     <label class="mode-card" class:sel={config.modeOverride === "auto"}>
-      <input data-nav type="radio" name="mode" value="auto" bind:group={config.modeOverride} />
+      <input data-nav type="radio" name="mode" value="auto" bind:group={config.modeOverride} onchange={alCambiarModo} />
       <div><strong>Auto</strong><span>Detecta y aplica el modo correcto.</span></div>
     </label>
     <label class="mode-card" class:sel={config.modeOverride === "desktop"}>
-      <input data-nav type="radio" name="mode" value="desktop" bind:group={config.modeOverride} />
+      <input data-nav type="radio" name="mode" value="desktop" bind:group={config.modeOverride} onchange={alCambiarModo} />
       <div><strong>Escritorio</strong><span>Ventana con minimizar / maximizar / cerrar.</span></div>
     </label>
     <label class="mode-card" class:sel={config.modeOverride === "kiosk"}>
-      <input data-nav type="radio" name="mode" value="kiosk" bind:group={config.modeOverride} />
+      <input data-nav type="radio" name="mode" value="kiosk" bind:group={config.modeOverride} onchange={alCambiarModo} />
       <div><strong>Kiosko / embebido</strong><span>Pantalla completa. Solo "Salir" + gestor WiFi.</span></div>
     </label>
   </div>
+  {#if kioskoPrevio}
+    <div class="warn-box kiosko-confirma" role="alert">
+      <strong>Modo kiosko activado.</strong> Si no lo confirmas, vuelve al modo anterior en {kioskoSeg} s.
+      <div class="kiosko-btns">
+        <button data-nav class="btn-sec" onclick={mantenerKiosko}>Mantener kiosko</button>
+        <button data-nav class="btn-sec" onclick={revertirKiosko}>Volver al modo anterior</button>
+      </div>
+    </div>
+  {/if}
   {#if config.modeOverride !== "kiosk"}
     <label class="toggle-row">
       <input data-nav type="checkbox" bind:checked={config.pantallaCompleta} />

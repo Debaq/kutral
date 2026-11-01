@@ -644,4 +644,28 @@
     outline: 2px solid var(--marca);
     outline-offset: 2px;
   }
+  /* Con control remoto no hay hover: los íconos sin texto dicen qué son al
+     enfocarlos (sale su aria-label debajo). */
+  .ic-btn, .cfg-btn, .ctrl { position: relative; }
+  .ic-btn { min-width: 40px; min-height: 34px; }
+  :is(.ic-btn, .cfg-btn):focus-visible::after,
+  .ctrl:focus-visible::after {
+    content: attr(aria-label);
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    background: var(--superficie-3);
+    border: 1px solid var(--amarillo);
+    color: var(--texto);
+    font-size: 13px;
+    font-weight: 500;
+    padding: 4px 10px;
+    border-radius: 6px;
+    z-index: 50;
+    pointer-events: none;
+  }
+  /* Los de la ventana están al borde derecho: la etiqueta se apoya ahí. */
+  .ctrl:focus-visible::after { left: auto; right: 0; transform: none; }
 </style>

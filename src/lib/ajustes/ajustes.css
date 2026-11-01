@@ -460,12 +460,27 @@
 
 /* --- Pestañas laterales --- */
 .cfg-root .cfg-head .espacio { flex: 1; }
+/* Abajo al centro: arriba a la derecha no se veía al editar al fondo de un
+   panel largo. */
 .cfg-root .guardado {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: var(--z-toast);
+  padding: 8px 18px;
+  border-radius: 999px;
+  background: var(--superficie-2);
+  border: 1px solid #9be38a;
   color: #9be38a;
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 600;
   opacity: 0;
+  pointer-events: none;
   transition: opacity 0.2s ease;
 }
+.cfg-root .kiosko-confirma { margin-top: 12px; }
+.cfg-root .kiosko-btns { display: flex; gap: 8px; margin-top: 10px; }
 .cfg-root .guardado.visible { opacity: 1; }
 .cfg-root .cfg-body {
   display: grid;

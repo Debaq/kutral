@@ -23,6 +23,51 @@
 
   const CAP = 400;
 
+  // ---- Favoritos y recientes (por URL del canal, en este equipo) ----------
+  // Con miles de canales, volver al de siempre era buscarlo con el teclado
+  // cada vez. Aparecen como categorías propias arriba del desplegable.
+  const K_FAVS = "kutral.iptv.favoritos";
+  const K_RECIENTES = "kutral.iptv.recientes";
+  const MAX_RECIENTES = 12;
+  const G_FAVS = "__favoritos";
+  const G_RECIENTES = "__recientes";
+  function leerLista(k: string): string[] {
+    try {
+      const v = JSON.parse(localStorage.getItem(k) || "[]");
+      return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  }
+  function guardarLista(k: string, v: string[]) {
+    try {
+      localStorage.setItem(k, JSON.stringify(v));
+    } catch {
+      /* sin almacenamiento: dura lo que la sesión */
+    }
+  }
+  let favs = $state<string[]>(leerLista(K_FAVS));
+  let recientes = $state<string[]>(leerLista(K_RECIENTES));
+  function esFav(c: Canal): boolean {
+    return favs.includes(c.url);
+  }
+  function alternarFav(c: Canal) {
+    favs = esFav(c) ? favs.filter((u) => u !== c.url) : [c.url, ...favs];
+    guardarLista(K_FAVS, favs);
+  }
+  function anotarReciente(c: Canal) {
+    recientes = [c.url, ...recientes.filter((u) => u !== c.url)].slice(0, MAX_RECIENTES);
+    guardarLista(K_RECIENTES, recientes);
+  }
+  // Último canal enfocado: el botón ☆ de la cabecera actúa sobre él (el
+  // control remoto no tiene una tecla libre para marcar).
+  let canalFoco = $state<Canal | null>(null);
+  function nombreGrupo(g: string): string {
+    if (g === G_FAVS) return `⭐ Favoritos (${favs.length})`;
+    if (g === G_RECIENTES) return `🕘 Recientes (${recientes.length})`;
+    return g;
+  }
+
   let cargando = $state(true);
   let errorMsg = $state("");
   // Listas que no cargaron cuando otras sí: antes solo quedaba en la consola y
@@ -132,7 +177,12 @@
     const q = query.trim().toLowerCase();
     let base = canales;
     if (fuenteSel !== "Todas") base = base.filter((c) => c.source === fuenteSel);
-    if (grupoSel !== "Todos") base = base.filter((c) => c.groups.includes(grupoSel));
+    if (grupoSel === G_FAVS || grupoSel === G_RECIENTES) {
+      // En el orden de la lista guardada: lo último marcado o visto, primero.
+      const orden = grupoSel === G_FAVS ? favs : recientes;
+      const porUrl = new Map(base.map((c) => [c.url, c]));
+      base = orden.map((u) => porUrl.get(u)).filter((c): c is Canal => !!c);
+    } else if (grupoSel !== "Todos") base = base.filter((c) => c.groups.includes(grupoSel));
     if (q) base = base.filter((c) => c.name.toLowerCase().includes(q));
     return base;
   });
@@ -204,6 +254,7 @@
   // motor para IPTV y películas) con TODA la grilla como playlist → zapping
   // con ←/→. Si mpv no está (dev), cae al player in-app <video>+hls.js.
   async function reproducir(c: Canal, idx = -1) {
+    anotarReciente(c);
     const start = idx >= 0 ? idx : visibles.indexOf(c);
     const items = visibles.map((ch) => ({ url: ch.url, title: ch.name }));
     try {
@@ -350,6 +401,13 @@
       case "ArrowLeft": e.preventDefault(); spatialNav("left"); break;
       case "ArrowDown": e.preventDefault(); spatialNav("down"); break;
       case "ArrowUp": e.preventDefault(); spatialNav("up"); break;
+      case "f":
+      case "F": {
+        const el = document.activeElement as HTMLElement | null;
+        const c = el?.dataset?.url ? canales.find((x) => x.url === el.dataset.url) : null;
+        if (c) { e.preventDefault(); alternarFav(c); }
+        break;
+      }
       case "Enter":
       case " ": {
         // Activa el elemento enfocado (card, volver, filtro, opción). preventDefault
@@ -365,6 +423,7 @@
     ayuda.set("iptv", [
       { tecla: "← → ↑ ↓", desc: "Navegar canales" },
       { tecla: "Enter · A", desc: "Ver canal" },
+      { tecla: "F", desc: "Marcar o quitar de favoritos" },
       { tecla: "Esc · Backspace", desc: "Volver / detener" },
     ]);
     if (!config.loaded) loadConfig();
@@ -410,22 +469,34 @@
         {/if}
       </div>
     {/if}
-    {#if grupos.length}
+    {#if grupos.length || favs.length || recientes.length}
       <div class="dropdown">
         <span class="dd-label">Categoría</span>
         <button data-nav class="dd-trigger" onclick={toggleCat} title="Elegir categoría">
-          <span>{grupoSel === "Todos" ? `Todas (${canales.length})` : grupoSel}</span>
+          <span>{grupoSel === "Todos" ? `Todas (${canales.length})` : nombreGrupo(grupoSel)}</span>
           <svg class="chev" viewBox="0 0 10 6" width="10" height="6"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         </button>
         {#if catOpen}
           <ul class="ddmenu ddmenu-scroll" role="menu" use:autofocusFirst>
             <li><button data-nav class:active={grupoSel === "Todos"} onclick={() => elegirGrupo("Todos")}>Todas ({canales.length})</button></li>
+            {#if favs.length}
+              <li><button data-nav class:active={grupoSel === G_FAVS} onclick={() => elegirGrupo(G_FAVS)}>{nombreGrupo(G_FAVS)}</button></li>
+            {/if}
+            {#if recientes.length}
+              <li><button data-nav class:active={grupoSel === G_RECIENTES} onclick={() => elegirGrupo(G_RECIENTES)}>{nombreGrupo(G_RECIENTES)}</button></li>
+            {/if}
             {#each grupos as g}
               <li><button data-nav class:active={grupoSel === g.name} onclick={() => elegirGrupo(g.name)}>{g.name} ({g.count})</button></li>
             {/each}
           </ul>
         {/if}
       </div>
+    {/if}
+    {#if canalFoco}
+      {@const cf = canalFoco}
+      <button data-nav class="back fav-btn" onclick={() => alternarFav(cf)} title="Tecla F sobre un canal hace lo mismo">
+        {esFav(cf) ? `★ Quitar «${cf.name}»` : `☆ Favorito «${cf.name}»`}
+      </button>
     {/if}
     <button data-nav class="back" onclick={() => goto("/config?tab=transmitir")} title="Agregar o quitar listas de canales">
       ⚙ Administrar listas
@@ -468,9 +539,12 @@
         <button
           class="canal"
           data-nav
+          data-url={c.url}
           onclick={() => reproducir(c, i)}
+          onfocus={() => (canalFoco = c)}
           title={c.name}
         >
+          {#if esFav(c)}<span class="canal-fav" title="Favorito">★</span>{/if}
           <div class="logo-wrap">
             {#if c.logo}
               <img src={c.logo} alt="" loading="lazy" onerror={(e) => ((e.currentTarget as HTMLImageElement).style.visibility = "hidden")} />
@@ -707,7 +781,13 @@
     grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
     gap: 16px;
   }
+  .canal-fav {
+    position: absolute; top: 6px; right: 8px;
+    color: var(--amarillo); font-size: 16px; text-shadow: 0 0 6px rgba(0, 0, 0, 0.8);
+  }
+  .fav-btn { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .canal {
+    position: relative;
     background: #121218;
     border: 1px solid #20202a;
     border-radius: 12px;
