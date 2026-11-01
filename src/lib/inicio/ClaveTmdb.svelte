@@ -56,9 +56,9 @@
   .key-box { padding: 20px; }
   .key-box h3 { margin: 0 0 8px; }
   .key-box .hint { font-size: 12px; color: #888; margin: 0 0 12px; }
-  .key-box code { background: #1a1a22; padding: 2px 5px; border-radius: 3px; font-size: 11px; }
-  .key-box input { width: 100%; padding: 8px; background: #1a1a22; border: 1px solid #2a2a35; color: #eee; border-radius: 4px; margin-bottom: 8px; box-sizing: border-box; }
-  .key-box button { width: 100%; padding: 8px; background: #f5c518; color: #000; border: 0; border-radius: 4px; font-weight: 700; cursor: pointer; }
+  .key-box code { background: var(--superficie-2); padding: 2px 5px; border-radius: 3px; font-size: 11px; }
+  .key-box input { width: 100%; padding: 8px; background: var(--superficie-2); border: 1px solid var(--borde); color: #eee; border-radius: 4px; margin-bottom: 8px; box-sizing: border-box; }
+  .key-box button { width: 100%; padding: 8px; background: var(--amarillo); color: #000; border: 0; border-radius: 4px; font-weight: 700; cursor: pointer; }
   .key-box button:disabled { opacity: 0.4; cursor: not-allowed; }
   .key-phone {
     display: flex;
@@ -69,7 +69,7 @@
     border-top: 1px solid #23232c;
   }
   .key-phone-txt { display: flex; flex-direction: column; gap: 4px; }
-  .key-phone-txt strong { font-size: 13px; color: #f5c518; }
-  .key-phone-txt span { font-size: 12px; color: #9a9aa4; line-height: 1.45; }
-  .key-phone-wait { margin: 16px 0 0; font-size: 11.5px; color: #6e6e78; }
+  .key-phone-txt strong { font-size: 13px; color: var(--amarillo); }
+  .key-phone-txt span { font-size: 12px; color: var(--texto-4); line-height: 1.45; }
+  .key-phone-wait { margin: 16px 0 0; font-size: 11.5px; color: var(--texto-4); }
 </style>

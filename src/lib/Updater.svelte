@@ -288,14 +288,14 @@
     backdrop-filter: blur(6px);
   }
   .up-card {
-    background: #15151c;
-    border: 1px solid #2a2a36;
+    background: var(--superficie-1);
+    border: 1px solid var(--borde);
     border-radius: 12px;
     padding: 32px 36px;
     min-width: 380px;
     max-width: 520px;
     box-shadow: 0 24px 70px rgba(0, 0, 0, 0.7);
-    color: #e6e6ec;
+    color: var(--texto);
     text-align: center;
   }
   .up-card h2 {
@@ -305,20 +305,20 @@
   }
   .ver {
     margin: 0 0 16px;
-    color: #a0a0aa;
+    color: var(--texto-3);
     font-size: 14px;
   }
-  .ver strong { color: #f3a951; }
+  .ver strong { color: var(--marca); }
   .notes {
     text-align: left;
-    background: #0d0d12;
-    border: 1px solid #1f1f28;
+    background: var(--fondo);
+    border: 1px solid var(--superficie-3);
     border-radius: 8px;
     padding: 12px 14px;
     max-height: 220px;
     overflow: auto;
     font-size: 12px;
-    color: #c8c8d0;
+    color: var(--texto-2);
     margin: 0 0 20px;
     white-space: pre-wrap;
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
@@ -337,35 +337,35 @@
     font-weight: 500;
   }
   .btn-later {
-    background: #2a2a36;
-    color: #d8d8e0;
+    background: var(--borde);
+    color: var(--texto-suave);
   }
   .btn-later:hover { background: #34343f; }
   .btn-now {
-    background: #f3a951;
+    background: var(--marca);
     color: #1a1208;
   }
   .btn-now:hover { background: #ffb86b; }
   .btn-now:focus, .btn-later:focus {
-    outline: 2px solid #f3a951;
+    outline: 2px solid var(--marca);
     outline-offset: 2px;
   }
   .bar {
     width: 100%;
     height: 8px;
-    background: #1f1f28;
+    background: var(--superficie-3);
     border-radius: 4px;
     overflow: hidden;
     margin: 18px 0 10px;
   }
   .bar-fill {
     height: 100%;
-    background: linear-gradient(90deg, #f3a951, #ffb86b);
+    background: linear-gradient(90deg, var(--marca), #ffb86b);
     transition: width 0.2s ease;
   }
   .mb {
     margin: 6px 0 0;
-    color: #a0a0aa;
+    color: var(--texto-3);
     font-size: 13px;
     font-variant-numeric: tabular-nums;
   }

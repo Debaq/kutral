@@ -559,7 +559,7 @@
     inset: 0;
     z-index: 1500;
     overflow: hidden;
-    background: #0d0d12;
+    background: var(--fondo);
     color: #ffe6c8;
     font-family: "Inter", system-ui, sans-serif;
   }
@@ -642,7 +642,7 @@
   }
   .pm-tagline {
     margin: 14px 0 0;
-    color: #f5c518;
+    color: var(--amarillo);
     font-size: 17px;
     font-style: italic;
     line-height: 1.4;
@@ -658,7 +658,7 @@
     align-items: center;
   }
   .pm-year {
-    color: #f5c518;
+    color: var(--amarillo);
     font-weight: 600;
     font-size: 16px;
   }
@@ -680,7 +680,7 @@
   .genre-chip {
     background: rgba(245, 197, 24, 0.15);
     border: 1px solid rgba(245, 197, 24, 0.45);
-    color: #f5c518;
+    color: var(--amarillo);
     padding: 3px 11px;
     border-radius: 999px;
     font-size: 12px;
@@ -710,7 +710,7 @@
   }
   .pm-trailer-card:hover, .pm-trailer-card:focus-visible, .pm-trailer-card.focused {
     transform: translateY(-2px);
-    border-color: #f5c518;
+    border-color: var(--amarillo);
     box-shadow:
       0 12px 32px rgba(0, 0, 0, 0.65),
       0 0 32px rgba(245, 197, 24, 0.4);
@@ -736,7 +736,7 @@
     width: 54px;
     height: 54px;
     border-radius: 50%;
-    background: #f5c518;
+    background: var(--amarillo);
     color: #1a0e06;
     font-size: 22px;
     font-weight: 700;
@@ -761,7 +761,7 @@
   }
   .pm-h3 {
     margin: 0 0 10px;
-    color: #f5c518;
+    color: var(--amarillo);
     font-size: 13px;
     font-weight: 700;
     text-transform: uppercase;
@@ -800,7 +800,7 @@
     letter-spacing: 0.08em;
   }
   .rating-value {
-    color: #f5c518;
+    color: var(--amarillo);
     font-size: 19px;
     font-weight: 700;
   }
@@ -887,7 +887,7 @@
   }
   .pm-btn:hover { border-color: rgba(245, 197, 24, 0.5); }
   .pm-btn.focused {
-    border-color: #f5c518;
+    border-color: var(--amarillo);
     background: rgba(245, 197, 24, 0.18);
     color: #fff;
     transform: translateX(4px);
@@ -896,12 +896,12 @@
   .pm-btn.primary {
     background: rgba(245, 197, 24, 0.9);
     color: #1a0e06;
-    border-color: #f5c518;
+    border-color: var(--amarillo);
     font-weight: 700;
   }
   .pm-btn.primary.focused {
-    background: #f5c518;
-    color: #0d0d12;
+    background: var(--amarillo);
+    color: var(--fondo);
     box-shadow: 0 0 24px rgba(245, 197, 24, 0.55);
   }
   .pm-btn:focus-visible { outline: none; }

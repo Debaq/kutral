@@ -69,9 +69,9 @@
   .modal-close {
     position: absolute; top: 12px; right: 12px;
     width: 32px; height: 32px; border-radius: 50%;
-    background: #1a1a22; border: 1px solid #2a2a35;
+    background: var(--superficie-2); border: 1px solid var(--borde);
     color: #aaa; font-size: 14px; cursor: pointer;
     transition: all 0.12s;
   }
-  .modal-close:hover { background: #f5c518; color: #000; border-color: #f5c518; }
+  .modal-close:hover { background: var(--amarillo); color: #000; border-color: var(--amarillo); }
 </style>

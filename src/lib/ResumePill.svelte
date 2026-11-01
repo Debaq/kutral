@@ -120,7 +120,7 @@
     left: 50%;
     bottom: 22px;
     transform: translateX(-50%);
-    z-index: 900;
+    z-index: var(--z-pill);
     width: min(560px, calc(100vw - 48px));
     border-radius: 16px;
     overflow: hidden;
@@ -147,10 +147,14 @@
     cursor: pointer;
     min-width: 0;
   }
-  .main:hover,
+  .main:hover {
+    background: rgba(249, 115, 22, 0.14);
+  }
+  /* El tinte solo no se ve desde el sofá: también el borde de foco. */
   .main:focus-visible {
     background: rgba(249, 115, 22, 0.14);
-    outline: none;
+    outline: var(--foco-ancho) solid var(--amarillo);
+    outline-offset: 2px;
   }
   .main:disabled {
     opacity: 0.6;
@@ -158,7 +162,7 @@
   }
   .play {
     font-size: 20px;
-    color: #f97316;
+    color: var(--marca-viva);
     line-height: 1;
   }
   .txt {
@@ -210,7 +214,8 @@
   .close:focus-visible {
     background: rgba(239, 68, 68, 0.18);
     color: #fff;
-    outline: none;
+    outline: var(--foco-ancho) solid var(--amarillo);
+    outline-offset: 2px;
   }
   .bar {
     height: 3px;
@@ -218,6 +223,6 @@
   }
   .fill {
     height: 100%;
-    background: #f97316;
+    background: var(--marca-viva);
   }
 </style>

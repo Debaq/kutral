@@ -13,7 +13,7 @@
     --border: #2a2a36;
     --text: #e6e6ec;
     --muted: #a0a0aa;
-    --accent: #e23b3b;
+    --accent: #f3a951; /* naranja de Kütral, igual que la app */
     --shadow-dark: rgba(0, 0, 0, 0.6);
   }
   html[data-skin="rojo"] {
@@ -124,7 +124,7 @@
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     gap: 2px; font-size: 26px; cursor: pointer; border-radius: 16px;
   }
-  .pad button small { font-size: 10px; color: var(--muted); letter-spacing: 0.04em; }
+  .pad button small { font-size: 12px; color: var(--muted); letter-spacing: 0.04em; }
   .pad button.press { background: rgba(255,255,255,0.09); }
   .pad .up    { grid-area: 1 / 2; }
   .pad .left  { grid-area: 2 / 1; }
@@ -152,12 +152,12 @@
     background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
     color: var(--text); font-size: 20px; cursor: pointer;
   }
-  .row button span, .row a.btn span { font-size: 11px; color: var(--muted); letter-spacing: 0.03em; }
+  .row button span, .row a.btn span { font-size: 12.5px; color: var(--muted); letter-spacing: 0.03em; }
   .row button span.ico { font-size: 20px; color: var(--text); letter-spacing: 0; }
   .row button.press { background: var(--panel-2); transform: scale(0.97); }
 
   .sec-title {
-    font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em;
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.12em;
     color: var(--muted); margin: 6px 0 0 4px;
   }
   .play-only { display: none; }
@@ -209,8 +209,8 @@
     background: var(--panel-2); object-fit: cover;
   }
   .card .meta { padding: 6px 7px 8px; }
-  .card .t { font-size: 11px; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-  .card .y { font-size: 10px; color: var(--muted); margin-top: 2px; }
+  .card .t { font-size: 12.5px; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .card .y { font-size: 12px; color: var(--muted); margin-top: 2px; }
   .aviso { font-size: 12px; color: var(--muted); text-align: center; padding: 14px 6px; }
 
   .status {
@@ -218,6 +218,17 @@
     min-height: 16px; letter-spacing: 0.02em;
   }
   .status.err { color: #ff5252; }
+  /* Teclado externo o lector de pantalla: que se vea dónde está el foco. */
+  button:focus-visible, a:focus-visible, input:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
 </style>
 </head>
 <body data-mode="nav">
@@ -310,7 +321,7 @@
   const SKIN_KEY = "kutral.remote.skin";
 
   function applySkin(skin) {
-    if (!SKINS.includes(skin)) skin = "rojo";
+    if (!SKINS.includes(skin)) skin = "naranja";
     document.documentElement.setAttribute("data-skin", skin);
     document.querySelectorAll(".skin-dot").forEach((d) => {
       d.classList.toggle("active", d.dataset.skin === skin);
@@ -323,8 +334,8 @@
     }
   }
   (function initSkin() {
-    let saved = "rojo";
-    try { saved = localStorage.getItem(SKIN_KEY) || "rojo"; } catch {}
+    let saved = "naranja";
+    try { saved = localStorage.getItem(SKIN_KEY) || "naranja"; } catch {}
     applySkin(saved);
   })();
 

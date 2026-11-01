@@ -304,8 +304,8 @@
     position: fixed;
     inset: 0;
     z-index: 2000;
-    background: radial-gradient(ellipse at 50% 30%, #1a1a24 0%, #0d0d12 70%);
-    color: #e6e6ec;
+    background: radial-gradient(ellipse at 50% 30%, #1a1a24 0%, var(--fondo) 70%);
+    color: var(--texto);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -329,7 +329,7 @@
   .perfil {
     background: transparent;
     border: 0;
-    color: #9a9aa4;
+    color: var(--texto-4);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -347,7 +347,7 @@
     place-items: center;
     font-size: 52px;
     font-weight: 800;
-    color: #0d0d12;
+    color: var(--fondo);
     transition: transform 0.12s;
     outline: 4px solid transparent;
     outline-offset: 4px;
@@ -389,7 +389,7 @@
     height: 22px;
     padding: 0;
     margin-top: 2px;
-    accent-color: #f5c518;
+    accent-color: var(--amarillo);
   }
   .nino-fila span {
     display: flex;
@@ -402,8 +402,8 @@
     line-height: 1.4;
   }
   .avatar.nuevo {
-    background: #1c1c26;
-    color: #9a9aa4;
+    background: var(--superficie-2);
+    color: var(--texto-4);
     border: 2px dashed #3a3a46;
   }
   .avatar.grande {
@@ -433,7 +433,7 @@
   .perfil:focus .avatar,
   .perfil:focus-visible .avatar,
   .perfil:hover .avatar {
-    outline-color: #f5c518;
+    outline-color: var(--amarillo);
     transform: scale(1.06);
   }
   .nombre {
@@ -449,7 +449,7 @@
   .btn {
     background: transparent;
     border: 1px solid #3a3a46;
-    color: #c8c8d0;
+    color: var(--texto-2);
     border-radius: 8px;
     padding: 10px 22px;
     font-size: 14px;
@@ -458,9 +458,9 @@
     cursor: pointer;
   }
   .btn.principal {
-    background: #f5c518;
-    border-color: #f5c518;
-    color: #0d0d12;
+    background: var(--amarillo);
+    border-color: var(--amarillo);
+    color: var(--fondo);
   }
   .btn.peligro {
     background: rgba(220, 38, 38, 0.22);
@@ -471,7 +471,7 @@
   .btn:focus-visible,
   input:focus {
     outline: none;
-    border-color: #f5c518;
+    border-color: var(--amarillo);
     box-shadow: 0 0 0 3px rgba(245, 197, 24, 0.3);
   }
   .editor {
@@ -482,7 +482,7 @@
   }
   input {
     width: 320px;
-    background: #15151c;
+    background: var(--superficie-1);
     border: 1px solid #3a3a46;
     color: #fff;
     border-radius: 10px;
@@ -506,7 +506,7 @@
   }
   .color:focus,
   .color:focus-visible {
-    outline: 3px solid #f5c518;
+    outline: 3px solid var(--amarillo);
     outline-offset: 3px;
   }
   .nota {
@@ -514,12 +514,12 @@
     max-width: 520px;
     text-align: center;
     font-size: 13px;
-    color: #6a6a74;
+    color: var(--texto-4);
     line-height: 1.5;
   }
   .error {
     margin: 0;
-    color: #ff7373;
+    color: var(--error);
     font-size: 13px;
   }
 </style>

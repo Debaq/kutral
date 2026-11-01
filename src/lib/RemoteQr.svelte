@@ -48,10 +48,10 @@
     border-radius: 3px;
   }
   .qr-label {
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: #0b0b0f;
+    color: var(--fondo-hondo);
   }
 </style>

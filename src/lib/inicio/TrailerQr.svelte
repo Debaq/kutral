@@ -53,10 +53,10 @@
     width: 300px; height: 300px;
     background: #fff; padding: 12px; border-radius: 12px;
   }
-  .trailer-qr code { color: #f5c518; font-size: 14px; letter-spacing: 0.5px; }
+  .trailer-qr code { color: var(--amarillo); font-size: 14px; letter-spacing: 0.5px; }
   .trailer-open {
-    background: #f5c518;
-    color: #0d0d12;
+    background: var(--amarillo);
+    color: var(--fondo);
     border: 2px solid transparent;
     padding: 12px 26px;
     border-radius: 999px;
@@ -73,7 +73,7 @@
   }
   .trailer-badge-inline {
     padding: 5px 12px;
-    background: #f5c518; color: #0d0d12;
+    background: var(--amarillo); color: var(--fondo);
     font-weight: 900; font-size: 11px; letter-spacing: 2px;
     border-radius: 4px;
   }
@@ -88,5 +88,5 @@
     backdrop-filter: blur(6px);
     transition: background 0.12s, color 0.12s, border-color 0.12s;
   }
-  .bar-btn:hover { background: #f5c518; color: #0d0d12; border-color: #f5c518; }
+  .bar-btn:hover { background: var(--amarillo); color: var(--fondo); border-color: var(--amarillo); }
 </style>

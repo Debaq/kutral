@@ -418,7 +418,7 @@
     inset: 0;
     z-index: 50;
     overflow: hidden;
-    background: #0d0d12;
+    background: var(--fondo);
   }
   .ep-bg {
     position: absolute;
@@ -460,7 +460,7 @@
   .ep-web {
     background: rgba(20, 20, 28, 0.6);
     border: 1px solid rgba(255, 255, 255, 0.14);
-    color: #d8d8e0;
+    color: var(--texto-suave);
     border-radius: 8px;
     padding: 8px 14px;
     cursor: pointer;
@@ -498,11 +498,11 @@
     border-radius: 10px;
     padding: 11px 14px;
     cursor: pointer;
-    color: #e6e6ec;
+    color: var(--texto);
     text-align: left;
   }
   .ep-season.focused {
-    border-color: #f3a951;
+    border-color: var(--marca);
     background: rgba(243, 169, 81, 0.16);
     color: #fff;
   }
@@ -512,7 +512,7 @@
   }
   .ep-season-count {
     font-size: 11.5px;
-    color: #9a9aa4;
+    color: var(--texto-4);
   }
 
   .ep-item {
@@ -529,7 +529,7 @@
     color: inherit;
   }
   .ep-item.focused {
-    border-color: #f3a951;
+    border-color: var(--marca);
     background: rgba(243, 169, 81, 0.14);
   }
   .ep-still-wrap {
@@ -556,7 +556,7 @@
   }
   .ep-dl.lista { color: #8fe3a8; }
   .ep-dl.bajando { color: #f3c489; }
-  .ep-dl.cola { color: #9a9aa6; }
+  .ep-dl.cola { color: var(--texto-4); }
 
   .ep-bajar {
     margin-left: auto;
@@ -599,7 +599,7 @@
   .ep-barra-fill {
     display: block;
     height: 100%;
-    background: #f3a951;
+    background: var(--marca);
   }
   .ep-still {
     flex: none;
@@ -607,7 +607,7 @@
     height: 63px;
     object-fit: cover;
     border-radius: 6px;
-    background: #1a1a22;
+    background: var(--superficie-2);
   }
   .ep-still-fallback { object-position: center 30%; filter: brightness(0.55); }
   .ep-still-num {
@@ -643,7 +643,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #6e6e78;
+    color: var(--texto-4);
     font-weight: 700;
     font-size: 18px;
   }
@@ -661,7 +661,7 @@
   }
   .ep-ov {
     font-size: 12px;
-    color: #a0a0aa;
+    color: var(--texto-3);
     line-height: 1.4;
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -677,13 +677,13 @@
     justify-content: center;
     gap: 12px;
     height: 100%;
-    color: #c8c8d0;
+    color: var(--texto-2);
   }
   .ep-spinner {
     width: 30px;
     height: 30px;
-    border: 3px solid #2a2a36;
-    border-top-color: #f3a951;
+    border: 3px solid var(--borde);
+    border-top-color: var(--marca);
     border-radius: 50%;
     animation: ep-spin 1s linear infinite;
   }
@@ -708,17 +708,17 @@
     background: rgba(255, 107, 107, 0.08);
     border: 1px solid rgba(255, 107, 107, 0.35);
   }
-  .ep-error-box small { color: #a0a0aa; font-size: 12px; word-break: break-word; }
+  .ep-error-box small { color: var(--texto-3); font-size: 12px; word-break: break-word; }
   .ep-retry {
     margin-top: 4px;
     padding: 8px 16px;
     border-radius: 8px;
     cursor: pointer;
-    background: #22222c;
-    color: #e6e6ec;
-    border: 1px solid #f5c518;
+    background: var(--superficie-3);
+    color: var(--texto);
+    border: 1px solid var(--amarillo);
     font-size: 14px;
   }
-  .ep-atajos { margin: 12px 0 0; color: #9a9aa4; font-size: 13px; }
-  .ep-atajos b { color: #d8d8e0; font-weight: 600; }
+  .ep-atajos { margin: 12px 0 0; color: var(--texto-4); font-size: 13px; }
+  .ep-atajos b { color: var(--texto-suave); font-weight: 600; }
 </style>

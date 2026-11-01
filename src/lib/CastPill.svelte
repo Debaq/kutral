@@ -57,7 +57,7 @@
     position: fixed;
     right: 22px;
     bottom: 22px;
-    z-index: 900;
+    z-index: var(--z-pill);
     width: min(420px, calc(100vw - 32px));
     border-radius: 16px;
     overflow: hidden;
@@ -128,6 +128,6 @@
   }
   .fill {
     height: 100%;
-    background: #f97316;
+    background: var(--marca-viva);
   }
 </style>

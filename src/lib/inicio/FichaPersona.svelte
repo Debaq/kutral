@@ -87,11 +87,11 @@
 </div>
 
 <style>
-  .empty { color: #555; padding: 40px 20px; text-align: center; }
+  .empty { color: var(--texto-4); padding: 40px 20px; text-align: center; }
   .person-modal {
     position: relative;
-    background: #15151c;
-    border: 1px solid #2a2a35;
+    background: var(--superficie-1);
+    border: 1px solid var(--borde);
     border-radius: 12px;
     width: 90%; max-width: 720px; max-height: 85vh;
     overflow-y: auto;
@@ -101,11 +101,11 @@
   .modal-close {
     position: absolute; top: 12px; right: 12px;
     width: 32px; height: 32px; border-radius: 50%;
-    background: #1a1a22; border: 1px solid #2a2a35;
+    background: var(--superficie-2); border: 1px solid var(--borde);
     color: #aaa; font-size: 14px; cursor: pointer;
     transition: all 0.12s;
   }
-  .modal-close:hover { background: #f5c518; color: #000; border-color: #f5c518; }
+  .modal-close:hover { background: var(--amarillo); color: #000; border-color: var(--amarillo); }
   .person-head { display: flex; gap: 18px; align-items: flex-start; margin-bottom: 16px; }
   .person-photo {
     width: 120px; height: 180px; object-fit: cover;
@@ -113,26 +113,26 @@
     box-shadow: 0 8px 20px rgba(0,0,0,0.5);
   }
   .person-photo-empty {
-    background: #2a2a35;
+    background: var(--borde);
     display: flex; align-items: center; justify-content: center;
-    font-size: 50px; color: #555; font-weight: 700;
+    font-size: 50px; color: var(--texto-4); font-weight: 700;
   }
   .person-info { flex: 1; min-width: 0; }
-  .person-info h2 { margin: 0 0 6px; color: #f5c518; font-size: 24px; }
+  .person-info h2 { margin: 0 0 6px; color: var(--amarillo); font-size: 24px; }
   .person-dept { margin: 0 0 8px; color: #aaa; font-size: 13px; }
   .person-meta { margin: 2px 0; color: #ccc; font-size: 13px; }
   .person-bio {
     color: #ccc; font-size: 14px; line-height: 1.6;
     white-space: pre-wrap; margin: 0 0 16px;
   }
-  .person-section { margin: 16px 0 12px; color: #f5c518; font-size: 14px; text-transform: uppercase; letter-spacing: 1.5px; }
+  .person-section { margin: 16px 0 12px; color: var(--amarillo); font-size: 14px; text-transform: uppercase; letter-spacing: 1.5px; }
   .filmography-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
     gap: 12px;
   }
   .film-card {
-    background: #1a1a22; border: 0; border-radius: 6px; overflow: hidden;
+    background: var(--superficie-2); border: 0; border-radius: 6px; overflow: hidden;
     color: inherit; text-align: left;
     padding: 0; cursor: pointer;
     display: flex; flex-direction: column;
@@ -140,7 +140,7 @@
   }
   .film-card:hover { transform: translateY(-2px); box-shadow: 0 6px 14px rgba(0,0,0,0.5); }
   .film-card:focus, .film-card:focus-visible {
-    outline: 3px solid #f5c518; outline-offset: 2px;
+    outline: 3px solid var(--amarillo); outline-offset: 2px;
     transform: translateY(-2px);
   }
   .film-poster-wrap { position: relative; }
@@ -150,7 +150,7 @@
   }
   .film-noposter {
     display: flex; align-items: center; justify-content: center;
-    color: #555; font-size: 11px;
+    color: var(--texto-4); font-size: 11px;
   }
   .film-pills {
     position: absolute; left: 4px; right: 4px; bottom: 4px;
@@ -159,10 +159,10 @@
   }
   .film-pill {
     background: rgba(245, 197, 24, 0.92);
-    color: #0d0d12;
+    color: var(--fondo);
     padding: 2px 7px;
     border-radius: 999px;
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     line-height: 1.3;
     max-width: 100%;
@@ -172,8 +172,8 @@
   .film-meta { padding: 6px 8px; }
   .film-title { display: block; font-size: 12px; font-weight: 600; line-height: 1.2;
     overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
-  .film-sub { display: block; font-size: 10px; color: #888; margin-top: 2px; }
-  .person-foot { margin: 18px 0 0; color: #666; font-size: 11px; text-align: center; }
+  .film-sub { display: block; font-size: 11px; color: #888; margin-top: 2px; }
+  .person-foot { margin: 18px 0 0; color: var(--texto-4); font-size: 11px; text-align: center; }
   .modal-bg {
     position: fixed; inset: 0; z-index: 800;
     background: rgba(0,0,0,0.7);

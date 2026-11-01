@@ -4,8 +4,8 @@
 .cfg-root {
   height: 100%;
   overflow: auto;
-  background: #0d0d12;
-  color: #e6e6ec;
+  background: var(--fondo);
+  color: var(--texto);
   padding: 28px 24px 80px;
 }
 .cfg-root .cfg-wrap {
@@ -27,18 +27,18 @@
 }
 .cfg-root .back {
   background: transparent;
-  border: 1px solid #2a2a36;
-  color: #d8d8e0;
+  border: 1px solid var(--borde);
+  color: var(--texto-suave);
   border-radius: 8px;
   padding: 7px 14px;
   cursor: pointer;
   font-size: 13px;
 }
-.cfg-root .back:hover { background: #1c1c26; color: #fff; }
+.cfg-root .back:hover { background: var(--superficie-2); color: #fff; }
 
 .cfg-root .block {
-  background: #15151c;
-  border: 1px solid #22222c;
+  background: var(--superficie-1);
+  border: 1px solid var(--superficie-3);
   border-radius: 12px;
   padding: 18px 20px;
 }
@@ -46,7 +46,7 @@
   margin: 0 0 4px;
   font-size: 14px;
   font-weight: 600;
-  color: #f3a951;
+  color: var(--marca);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -60,7 +60,7 @@
 }
 .cfg-root .hint {
   margin: 0 0 12px;
-  color: #a0a0aa;
+  color: var(--texto-3);
   font-size: 13.5px;
   line-height: 1.5;
 }
@@ -68,73 +68,73 @@
   margin: 0 0 12px;
   padding: 10px 12px;
   border: 1px solid #4a3a1c;
-  border-left: 3px solid #f3a951;
+  border-left: 3px solid var(--marca);
   border-radius: 6px;
   background: #1b160c;
   color: #cbb489;
   font-size: 12.5px;
   line-height: 1.5;
 }
-.cfg-root .warn-box strong { color: #f3a951; }
+.cfg-root .warn-box strong { color: var(--marca); }
 .cfg-root .cast-tv {
   display: flex; align-items: center; gap: 12px;
   margin: 0 0 10px;
 }
-.cfg-root .cast-nombre { flex: 1; color: #e6e6ec; font-size: 13.5px; }
+.cfg-root .cast-nombre { flex: 1; color: var(--texto); font-size: 13.5px; }
 .cfg-root .cast-proto { color: #888892; font-size: 12px; margin-left: 6px; }
 .cfg-root .cast-lista { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
 .cfg-root .cast-ip { display: flex; gap: 8px; margin-top: 10px; }
 .cfg-root .cast-ip input {
   flex: 1; max-width: 260px;
-  padding: 6px 8px; background: #0b0b0f; color: #e6e6ec;
-  border: 1px solid #2a2a36; border-radius: 6px; font-size: 13px;
+  padding: 6px 8px; background: var(--fondo-hondo); color: var(--texto);
+  border: 1px solid var(--borde); border-radius: 6px; font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
-.cfg-root .cast-ip input:focus { border-color: #f3a951; outline: none; }
+.cfg-root .cast-ip input:focus { border-color: var(--marca); outline: none; }
 .cfg-root .cast-opcion {
   display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
-  background: #1c1c25; color: #d8d8e0;
-  border: 1px solid #2a2a36; border-radius: 8px;
+  background: #1c1c25; color: var(--texto-suave);
+  border: 1px solid var(--borde); border-radius: 8px;
   padding: 9px 12px; font-size: 13px; cursor: pointer; text-align: left;
 }
 .cfg-root .cast-opcion .cast-proto { margin-left: 0; }
 .cfg-root .cast-opcion:hover,
-.cfg-root .cast-opcion:focus-visible { border-color: #f3a951; outline: none; }
-.cfg-root .cast-opcion.elegida { border-color: #f3a951; background: #241c10; }
+.cfg-root .cast-opcion:focus-visible { border-color: var(--marca); outline: none; }
+.cfg-root .cast-opcion.elegida { border-color: var(--marca); background: #241c10; }
 .cfg-root .cast-lecciones {
   list-style: none; margin: 0 0 10px; padding: 0;
   display: flex; flex-direction: column; gap: 4px;
-  font-size: 13px; color: #c8c8d0;
+  font-size: 13px; color: var(--texto-2);
 }
 .cfg-root .cast-lecciones li.no { color: #ff9a9a; }
 .cfg-root .cast-fw { margin-top: 14px; }
 .cfg-root .cast-fw code {
   display: block; margin-top: 6px;
-  background: #0d0d12; color: #e6e6ec;
+  background: var(--fondo); color: var(--texto);
   padding: 6px 8px; border-radius: 4px;
   font-size: 11.5px; overflow-wrap: anywhere;
 }
 .cfg-root .dir-row { display: flex; gap: 12px; margin: 0 0 8px; }
-.cfg-root .dir-ok { color: #6cd37a; }
+.cfg-root .dir-ok { color: var(--ok); }
 .cfg-root .hint code {
-  background: #0d0d12;
+  background: var(--fondo);
   padding: 2px 5px;
   border-radius: 4px;
   font-size: 11.5px;
-  color: #d8d8e0;
+  color: var(--texto-suave);
 }
-.cfg-root .hint em { font-style: normal; color: #f3a951; }
+.cfg-root .hint em { font-style: normal; color: var(--marca); }
 .cfg-root .badge-opt {
   display: inline-block;
   margin-left: 8px;
   padding: 2px 8px;
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: #888892;
-  background: #1c1c26;
-  border: 1px solid #2a2a36;
+  background: var(--superficie-2);
+  border: 1px solid var(--borde);
   border-radius: 999px;
   vertical-align: middle;
 }
@@ -147,50 +147,50 @@
   padding: 8px 12px;
   border-radius: 8px;
   cursor: pointer;
-  background: #0d0d12;
-  border: 1px solid #1f1f28;
+  background: var(--fondo);
+  border: 1px solid var(--superficie-3);
   font-size: 13.5px;
 }
-.cfg-root .radio:hover { border-color: #2a2a36; }
-.cfg-root .radio input { accent-color: #f3a951; }
+.cfg-root .radio:hover { border-color: var(--borde); }
+.cfg-root .radio input { accent-color: var(--marca); }
 
 .cfg-root .phone-block { border-color: #3a2c12; background: #15130d; }
 .cfg-root .phone-qr { display: flex; gap: 16px; align-items: flex-start; margin-top: 6px; }
 .cfg-root .phone-steps { flex: 1; min-width: 0; }
-.cfg-root .phone-steps .hint em { color: #f3a951; }
+.cfg-root .phone-steps .hint em { color: var(--marca); }
 .cfg-root .phone-url {
   display: inline-block;
-  background: #0d0d12;
-  border: 1px solid #2a2a36;
+  background: var(--fondo);
+  border: 1px solid var(--borde);
   padding: 4px 8px;
   border-radius: 6px;
   font-size: 11.5px;
-  color: #d8d8e0;
+  color: var(--texto-suave);
   word-break: break-all;
 }
 
 .cfg-root .key-row { display: flex; gap: 8px; }
 .cfg-root .key-row input {
   flex: 1;
-  background: #0d0d12;
-  border: 1px solid #2a2a36;
+  background: var(--fondo);
+  border: 1px solid var(--borde);
   color: #fff;
   padding: 9px 12px;
   border-radius: 8px;
   font-size: 13px;
   font-family: ui-monospace, monospace;
 }
-.cfg-root .key-row input:focus { border-color: #f3a951; outline: none; }
+.cfg-root .key-row input:focus { border-color: var(--marca); outline: none; }
 .cfg-root .reveal {
-  background: #1c1c26;
-  border: 1px solid #2a2a36;
-  color: #d8d8e0;
+  background: var(--superficie-2);
+  border: 1px solid var(--borde);
+  color: var(--texto-suave);
   border-radius: 8px;
   padding: 0 12px;
   cursor: pointer;
   font-size: 14px;
 }
-.cfg-root .reveal:hover { background: #22222c; }
+.cfg-root .reveal:hover { background: var(--superficie-3); }
 
 .cfg-root .mode-group { display: flex; flex-direction: column; gap: 8px; }
 .cfg-root .mode-card {
@@ -198,32 +198,32 @@
   gap: 10px;
   align-items: flex-start;
   padding: 11px 14px;
-  background: #0d0d12;
-  border: 1px solid #1f1f28;
+  background: var(--fondo);
+  border: 1px solid var(--superficie-3);
   border-radius: 10px;
   cursor: pointer;
 }
-.cfg-root .mode-card:hover { border-color: #2a2a36; }
-.cfg-root .mode-card.sel { border-color: #f3a951; background: #1a1410; }
-.cfg-root .mode-card input { margin-top: 3px; accent-color: #f3a951; }
+.cfg-root .mode-card:hover { border-color: var(--borde); }
+.cfg-root .mode-card.sel { border-color: var(--marca); background: #1a1410; }
+.cfg-root .mode-card input { margin-top: 3px; accent-color: var(--marca); }
 .cfg-root .mode-card div { display: flex; flex-direction: column; gap: 2px; }
 .cfg-root .mode-card strong { font-size: 13px; color: #fff; }
-.cfg-root .mode-card span { font-size: 12px; color: #a0a0aa; }
+.cfg-root .mode-card span { font-size: 12px; color: var(--texto-3); }
 
 .cfg-root .rd-linked {
   display: flex; align-items: center; gap: 10px;
   padding: 12px 14px;
-  background: #0d0d12;
-  border: 1px solid #1f1f28;
+  background: var(--fondo);
+  border: 1px solid var(--superficie-3);
   border-radius: 8px;
   font-size: 13.5px;
 }
 .cfg-root .dot { width: 8px; height: 8px; border-radius: 50%; }
-.cfg-root .dot.ok { background: #6cd37a; }
+.cfg-root .dot.ok { background: var(--ok); }
 .cfg-root .rd-linked .btn-sec { margin-left: auto; }
 
 .cfg-root .btn-link {
-  background: #f3a951;
+  background: var(--marca);
   color: #1a1208;
   border: 0;
   border-radius: 8px;
@@ -247,26 +247,26 @@
   text-decoration: underline;
   padding: 0;
 }
-.cfg-root .link-tiny:hover { color: #d8d8e0; }
+.cfg-root .link-tiny:hover { color: var(--texto-suave); }
 
 .cfg-root .rd-flow {
   display: flex; flex-direction: column; gap: 10px;
   padding: 14px;
-  background: #0d0d12;
-  border: 1px solid #2a2a36;
+  background: var(--fondo);
+  border: 1px solid var(--borde);
   border-radius: 10px;
 }
-.cfg-root .rd-step { margin: 0; font-size: 13px; color: #c8c8d0; }
+.cfg-root .rd-step { margin: 0; font-size: 13px; color: var(--texto-2); }
 .cfg-root .rd-link {
   background: transparent; border: 0;
-  color: #f3a951; text-decoration: underline;
+  color: var(--marca); text-decoration: underline;
   cursor: pointer; font-size: 13px; padding: 0;
 }
 .cfg-root .rd-link:hover { color: #ffb86b; }
 .cfg-root .rd-code {
   text-align: center;
   background: #1a1410;
-  border: 1px solid #f3a951;
+  border: 1px solid var(--marca);
   border-radius: 10px;
   padding: 18px 12px;
   font-family: ui-monospace, "SF Mono", monospace;
@@ -279,23 +279,23 @@
 .cfg-root .rd-wait {
   margin: 0;
   display: flex; align-items: center; gap: 8px;
-  color: #a0a0aa; font-size: 12.5px;
+  color: var(--texto-3); font-size: 12.5px;
 }
 .cfg-root .rd-wait em {
-  font-style: normal; color: #d8d8e0;
+  font-style: normal; color: var(--texto-suave);
   font-variant-numeric: tabular-nums;
 }
 .cfg-root .spinner {
   width: 12px; height: 12px;
-  border: 2px solid #2a2a36;
-  border-top-color: #f3a951;
+  border: 2px solid var(--borde);
+  border-top-color: var(--marca);
   border-radius: 50%;
   animation: cfg-spin 1s linear infinite;
 }
 @keyframes cfg-spin { to { transform: rotate(360deg); } }
 
 .cfg-root .btn-sec {
-  background: #2a2a36; color: #d8d8e0;
+  background: var(--borde); color: var(--texto-suave);
   border: 0; border-radius: 8px;
   padding: 8px 14px; font-size: 12.5px; cursor: pointer;
 }
@@ -305,15 +305,15 @@
 .cfg-root .ok {
   margin: 10px 0 0; font-size: 12.5px;
 }
-.cfg-root .err { color: #ff7373; }
+.cfg-root .err { color: var(--error); }
 
 .cfg-root .amigos-sub { margin-top: 16px; }
 .cfg-root .amigo {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 12px;
   margin-top: 6px;
-  background: #0d0d12;
-  border: 1px solid #1f1f28;
+  background: var(--fondo);
+  border: 1px solid var(--superficie-3);
   border-radius: 8px;
   font-size: 13.5px;
 }
@@ -326,20 +326,20 @@
 .cfg-root .upd-line {
   margin: 0 0 8px;
   font-size: 13px;
-  color: #c8c8d0;
+  color: var(--texto-2);
   display: flex; align-items: center; gap: 8px;
 }
-.cfg-root .upd-line strong { color: #f3a951; }
+.cfg-root .upd-line strong { color: var(--marca); }
 .cfg-root .upd-ok { color: #9be38a; }
 .cfg-root .upd-notes {
-  background: #0d0d12;
-  border: 1px solid #1f1f28;
+  background: var(--fondo);
+  border: 1px solid var(--superficie-3);
   border-radius: 8px;
   padding: 10px 12px;
   max-height: 140px;
   overflow: auto;
   font-size: 11.5px;
-  color: #c8c8d0;
+  color: var(--texto-2);
   margin: 0 0 10px;
   white-space: pre-wrap;
   font-family: ui-monospace, monospace;
@@ -347,14 +347,14 @@
 .cfg-root .bar {
   width: 100%;
   height: 6px;
-  background: #1f1f28;
+  background: var(--superficie-3);
   border-radius: 3px;
   overflow: hidden;
   margin: 4px 0 6px;
 }
 .cfg-root .bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, #f3a951, #ffb86b);
+  background: linear-gradient(90deg, var(--marca), #ffb86b);
   transition: width 0.2s ease;
 }
 .cfg-root .upd-mb {
@@ -372,22 +372,22 @@
 .cfg-root .test-btns .btn-sec { flex: 1; }
 
 .cfg-root .field { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
-.cfg-root .field-label { font-size: 12px; color: #a0a0aa; }
+.cfg-root .field-label { font-size: 12px; color: var(--texto-3); }
 .cfg-root .field input[type="number"],
 .cfg-root .field input[type="text"],
 .cfg-root .field input[type="password"],
 .cfg-root .field select {
-  background: #0b0b0f;
-  border: 1px solid #2a2a36;
+  background: var(--fondo-hondo);
+  border: 1px solid var(--borde);
   border-radius: 6px;
   padding: 6px 8px;
-  color: #e6e6ec;
+  color: var(--texto);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
-.cfg-root .field input[type="range"] { accent-color: #f3a951; }
+.cfg-root .field input[type="range"] { accent-color: var(--marca); }
 .cfg-root .field input:focus,
-.cfg-root .field select:focus { border-color: #f3a951; outline: none; }
+.cfg-root .field select:focus { border-color: var(--marca); outline: none; }
 
 /* --- Gestor de listas IPTV --- */
 .cfg-root .iptv-listas { list-style: none; margin: 10px 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
@@ -396,17 +396,17 @@
 .cfg-root .iptv-add { margin-top: 12px; }
 .cfg-root .iptv-nombre,
 .cfg-root .iptv-url {
-  background: #0b0b0f;
-  border: 1px solid #2a2a36;
+  background: var(--fondo-hondo);
+  border: 1px solid var(--borde);
   border-radius: 6px;
   padding: 7px 9px;
-  color: #e6e6ec;
+  color: var(--texto);
   font-size: 13px;
 }
 .cfg-root .iptv-nombre { flex: 0 0 150px; }
 .cfg-root .iptv-url { flex: 1 1 auto; min-width: 0; }
 .cfg-root .iptv-nombre:focus,
-.cfg-root .iptv-url:focus { border-color: #f3a951; outline: none; }
+.cfg-root .iptv-url:focus { border-color: var(--marca); outline: none; }
 .cfg-root .iptv-del {
   flex: 0 0 auto;
   background: #2a1518;
@@ -419,7 +419,7 @@
 .cfg-root .iptv-del:hover { background: #3a1d22; }
 .cfg-root .iptv-add-btn {
   flex: 0 0 auto;
-  background: #f3a951;
+  background: var(--marca);
   border: 0;
   color: #1a1206;
   font-weight: 700;
@@ -437,13 +437,13 @@
   margin-top: 6px;
   cursor: pointer;
   font-size: 13px;
-  color: #e6e6ec;
+  color: var(--texto);
 }
-.cfg-root .toggle-row input { accent-color: #f3a951; width: 16px; height: 16px; }
+.cfg-root .toggle-row input { accent-color: var(--marca); width: 16px; height: 16px; }
 
 .cfg-root .test-log {
-  background: #0d0d12;
-  border: 1px solid #1f1f28;
+  background: var(--fondo);
+  border: 1px solid var(--superficie-3);
   border-radius: 8px;
   padding: 10px 12px;
   margin: 10px 0 0;
@@ -451,7 +451,7 @@
   overflow: auto;
   font-size: 11.5px;
   line-height: 1.55;
-  color: #c8c8d0;
+  color: var(--texto-2);
   white-space: pre-wrap;
   word-break: break-all;
   font-family: ui-monospace, monospace;
@@ -487,18 +487,18 @@
   background: transparent;
   border: 1px solid transparent;
   border-radius: 10px;
-  color: #a0a0aa;
+  color: var(--texto-3);
   padding: 11px 14px;
   font-size: 14px;
   text-align: left;
   cursor: pointer;
 }
-.cfg-root .cfg-tab:hover { background: #15151c; color: #e6e6ec; }
-.cfg-root .cfg-tab:focus-visible { border-color: #f3a951; outline: none; }
+.cfg-root .cfg-tab:hover { background: var(--superficie-1); color: var(--texto); }
+.cfg-root .cfg-tab:focus-visible { border-color: var(--marca); outline: none; }
 .cfg-root .cfg-tab.activa {
   background: #1a1410;
   border-color: #3a2c12;
-  color: #f3a951;
+  color: var(--marca);
   font-weight: 600;
 }
 .cfg-root .cfg-tab-icono { width: 20px; text-align: center; }
@@ -528,7 +528,7 @@
 .cfg-root [data-nav]:focus-visible,
 .cfg-root button:focus-visible,
 .cfg-root a:focus-visible {
-  outline: 3px solid #f5c518;
+  outline: 3px solid var(--amarillo);
   outline-offset: 2px;
 }
 /* Radios y casillas: se marca la fila o tarjeta entera, no el circulito. */
@@ -541,7 +541,7 @@
 .cfg-root .toggle-row:has(input:focus-visible),
 .cfg-root label:has(> input[type="radio"]:focus-visible),
 .cfg-root label:has(> input[type="checkbox"]:focus-visible) {
-  outline: 3px solid #f5c518;
+  outline: 3px solid var(--amarillo);
   outline-offset: 2px;
   border-radius: 8px;
 }

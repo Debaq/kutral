@@ -256,12 +256,12 @@
   }
   .detail h2 { position: relative; margin: 14px 0 8px; font-size: 22px; z-index: 1; }
   .meta { display: flex; flex-wrap: wrap; gap: 8px; font-size: 12px; color: #aaa; margin-bottom: 12px; position: relative; z-index: 1; }
-  .rating { color: #f5c518; font-weight: 700; }
-  .genre { background: #1a1a22; padding: 2px 8px; border-radius: 999px; }
+  .rating { color: var(--amarillo); font-weight: 700; }
+  .genre { background: var(--superficie-2); padding: 2px 8px; border-radius: 999px; }
   .overview { color: #c0c0c8; font-size: 14px; line-height: 1.5; position: relative; z-index: 1; margin-top: 14px; }
   .discover-btn {
     position: relative; z-index: 1;
-    background: #f5c518; color: #000; border: 0;
+    background: var(--amarillo); color: #000; border: 0;
     padding: 12px 24px; font-weight: 800; font-size: 16px;
     border-radius: 6px; cursor: pointer; width: 100%;
     margin-top: 12px;
@@ -271,14 +271,14 @@
   .discover-btn:disabled { opacity: 0.6; cursor: wait; }
   .trailer-btn {
     position: relative; z-index: 1;
-    background: transparent; color: #f5c518;
-    border: 1.5px solid #f5c518;
+    background: transparent; color: var(--amarillo);
+    border: 1.5px solid var(--amarillo);
     padding: 10px 20px; font-weight: 700; font-size: 14px;
     border-radius: 6px; cursor: pointer; width: 100%;
     margin-top: 8px;
     transition: background 0.12s, color 0.12s;
   }
-  .trailer-btn:hover { background: #f5c518; color: #0d0d12; }
+  .trailer-btn:hover { background: var(--amarillo); color: var(--fondo); }
   .unavail-note {
     position: relative; z-index: 1;
     margin: 12px 0;
@@ -315,7 +315,7 @@
     border: 2px solid transparent;
     padding: 0;
     background-size: cover; background-position: center;
-    background-color: #2a2a35;
+    background-color: var(--borde);
     box-shadow: 0 4px 10px rgba(0,0,0,0.4);
     cursor: pointer;
     transition: transform 0.15s, border-color 0.15s;
@@ -323,7 +323,7 @@
   .scene-shot:hover { transform: translateY(-2px); }
   .scene-shot:focus {
     outline: none;
-    border-color: #f5c518;
+    border-color: var(--amarillo);
     transform: translateY(-2px) scale(1.03);
     box-shadow: 0 6px 18px rgba(0,0,0,0.55), 0 0 0 2px rgba(245,197,24,0.4);
   }
@@ -336,11 +336,11 @@
     transition: transform 0.15s;
   }
   .person-chip:hover { transform: translateY(-2px); }
-  .person-chip:focus { outline: 3px solid #f5c518; outline-offset: 2px; border-radius: 6px; }
+  .person-chip:focus { outline: 3px solid var(--amarillo); outline-offset: 2px; border-radius: 6px; }
   .person-chip img, .person-noimg {
     width: 64px; height: 64px;
     border-radius: 50%; object-fit: cover;
-    background: #2a2a35;
+    background: var(--borde);
     box-shadow: 0 4px 10px rgba(0,0,0,0.4);
   }
   .person-noimg {
@@ -357,17 +357,17 @@
     max-width: 80px;
   }
   .person-character {
-    font-size: 10px; color: #777; line-height: 1.1;
+    font-size: 11px; color: var(--texto-4); line-height: 1.1;
     text-align: center;
     overflow: hidden; text-overflow: ellipsis;
     max-width: 80px; white-space: nowrap;
   }
   .progress-bar {
     position: relative; z-index: 1;
-    height: 6px; background: #1f1f28; border-radius: 3px;
+    height: 6px; background: var(--superficie-3); border-radius: 3px;
     overflow: hidden; margin: 4px 0 8px;
   }
-  .progress-fill { height: 100%; background: linear-gradient(90deg, #f5c518, #ff9b00); transition: width 0.3s; }
+  .progress-fill { height: 100%; background: linear-gradient(90deg, var(--amarillo), #ff9b00); transition: width 0.3s; }
   .local-note {
     position: relative; z-index: 1;
     background: rgba(64, 160, 120, 0.15);
@@ -401,7 +401,7 @@
   .hist-btn {
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.16);
-    color: #d8d8e0;
+    color: var(--texto-suave);
     border-radius: 8px;
     padding: 6px 12px;
     font-size: 12px;
@@ -410,7 +410,7 @@
   }
   .hist-btn:hover,
   .hist-btn:focus-visible {
-    border-color: #f3a951;
+    border-color: var(--marca);
     color: #fff;
     outline: none;
   }
@@ -421,6 +421,6 @@
   }
   .hist-info {
     font-size: 12px;
-    color: #9a9aa4;
+    color: var(--texto-4);
   }
 </style>

@@ -206,7 +206,7 @@
   .tab {
     background: transparent;
     border: 1px solid #3a3a46;
-    color: #c8c8d0;
+    color: var(--texto-2);
     border-radius: 8px;
     padding: 10px 18px;
     font-size: 14px;
@@ -214,13 +214,13 @@
     cursor: pointer;
   }
   .tab.sel {
-    background: #f5c518;
-    border-color: #f5c518;
-    color: #0d0d12;
+    background: var(--amarillo);
+    border-color: var(--amarillo);
+    color: var(--fondo);
   }
   input {
     width: 300px;
-    background: #15151c;
+    background: var(--superficie-1);
     border: 1px solid #3a3a46;
     color: #fff;
     border-radius: 10px;
@@ -232,7 +232,7 @@
   input:focus,
   .link:focus {
     outline: none;
-    border-color: #f5c518;
+    border-color: var(--amarillo);
     box-shadow: 0 0 0 3px rgba(245, 197, 24, 0.3);
   }
   .grilla {
@@ -247,7 +247,7 @@
   .op {
     background: transparent;
     border: 0;
-    color: #c8c8d0;
+    color: var(--texto-2);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -263,7 +263,7 @@
     object-fit: cover;
     object-position: top;
     border-radius: 18px;
-    background: #1c1c26;
+    background: var(--superficie-2);
     outline: 3px solid transparent;
     outline-offset: 3px;
   }
@@ -278,7 +278,7 @@
   }
   .op:focus img,
   .op:hover img {
-    outline-color: #f5c518;
+    outline-color: var(--amarillo);
   }
   .nom,
   .de {
@@ -292,7 +292,7 @@
     font-weight: 700;
   }
   .de {
-    color: #6a6a74;
+    color: var(--texto-4);
     font-size: 11px;
   }
   .ayuda {
@@ -305,19 +305,19 @@
     background: none;
     border: 1px solid transparent;
     border-radius: 6px;
-    color: #f5c518;
+    color: var(--amarillo);
     font-weight: 700;
     cursor: pointer;
     margin-left: 8px;
   }
   .ir-config {
     margin-top: 6px; padding: 8px 16px; border-radius: 8px; cursor: pointer;
-    background: #22222c; color: #e6e6ec; border: 1px solid #f3a951; font-size: 14px;
+    background: var(--superficie-3); color: var(--texto); border: 1px solid var(--marca); font-size: 14px;
   }
-  .ir-config:focus-visible { outline: 3px solid #f5c518; outline-offset: 2px; }
+  .ir-config:focus-visible { outline: 3px solid var(--amarillo); outline-offset: 2px; }
   .error {
     margin: 0;
-    color: #ff7373;
+    color: var(--error);
     font-size: 13px;
   }
 </style>

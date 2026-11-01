@@ -76,8 +76,8 @@
     position: absolute;
     top: 38px;
     right: 0;
-    background: #15151c;
-    border: 1px solid #2a2a36;
+    background: var(--superficie-1);
+    border: 1px solid var(--borde);
     border-radius: 10px;
     box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
     z-index: 1100;
@@ -90,7 +90,7 @@
   .nt-head {
     display: flex; justify-content: space-between; align-items: center;
     padding: 12px 14px;
-    border-bottom: 1px solid #22222c;
+    border-bottom: 1px solid var(--superficie-3);
     font-size: 13px;
   }
   .nt-clear {
@@ -98,10 +98,10 @@
     color: #888892; font-size: 11.5px; cursor: pointer;
     text-decoration: underline; padding: 0;
   }
-  .nt-clear:hover { color: #d8d8e0; }
+  .nt-clear:hover { color: var(--texto-suave); }
   .nt-empty {
     margin: 0; padding: 24px;
-    text-align: center; color: #6e6e78; font-size: 13px;
+    text-align: center; color: var(--texto-4); font-size: 13px;
   }
   .nt-list { list-style: none; margin: 0; padding: 4px; overflow: auto; }
   .nt-item {
@@ -110,14 +110,14 @@
     border-radius: 8px;
     font-size: 12.5px;
   }
-  .nt-item:hover { background: #1c1c26; }
+  .nt-item:hover { background: var(--superficie-2); }
   .dot {
     width: 8px; height: 8px; border-radius: 50%;
     margin-top: 6px; flex-shrink: 0;
   }
   .kind-info .dot { background: #6cb1d3; }
-  .kind-success .dot { background: #6cd37a; }
-  .kind-warn .dot { background: #f3a951; }
+  .kind-success .dot { background: var(--ok); }
+  .kind-warn .dot { background: var(--marca); }
   .kind-error .dot { background: #c44; }
   .nt-body {
     display: flex; flex-direction: column; gap: 2px;
@@ -125,10 +125,10 @@
   }
   .nt-body strong { font-size: 13px; color: #fff; font-weight: 600; }
   .nt-body span {
-    color: #a0a0aa; font-size: 12px;
+    color: var(--texto-3); font-size: 12px;
     overflow-wrap: anywhere;
   }
   .nt-body em {
-    font-style: normal; color: #6e6e78; font-size: 11px; margin-top: 2px;
+    font-style: normal; color: var(--texto-4); font-size: 11px; margin-top: 2px;
   }
 </style>

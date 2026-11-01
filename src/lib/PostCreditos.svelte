@@ -218,8 +218,8 @@
     inset: 0;
     z-index: 50;
     overflow: hidden;
-    background: #0d0d12;
-    color: #e6e6ec;
+    background: var(--fondo);
+    color: var(--texto);
   }
   .pc-bg {
     position: absolute;
@@ -279,7 +279,7 @@
     transition: border-color 0.12s, background 0.12s, transform 0.12s;
   }
   .pc-next.pc-focused {
-    border-color: #f3a951;
+    border-color: var(--marca);
     background: rgba(243, 169, 81, 0.16);
     transform: translateY(-2px);
   }
@@ -296,7 +296,7 @@
     align-items: center;
     justify-content: center;
     font-size: 30px;
-    color: #f3a951;
+    color: var(--marca);
   }
   .pc-next-txt {
     display: flex;
@@ -305,7 +305,7 @@
     min-width: 0;
   }
   .pc-next-label {
-    color: #f5c518;
+    color: var(--amarillo);
     font-size: 13px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -318,7 +318,7 @@
 
   .pc-cargando {
     margin: 0;
-    color: #9a9aa4;
+    color: var(--texto-4);
     font-size: 14px;
   }
   .pc-sec {
@@ -355,7 +355,7 @@
     transition: border-color 0.12s, background 0.12s, transform 0.12s;
   }
   .pc-card.pc-focused {
-    border-color: #f3a951;
+    border-color: var(--marca);
     background: rgba(243, 169, 81, 0.14);
     transform: translateY(-3px);
   }
@@ -375,7 +375,7 @@
   }
   .pc-card-t {
     font-size: 13px;
-    color: #e6e6ec;
+    color: var(--texto);
     line-height: 1.25;
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -395,12 +395,12 @@
     border: 2px solid rgba(255, 255, 255, 0.16);
     border-radius: 10px;
     background: rgba(20, 20, 28, 0.7);
-    color: #e6e6ec;
+    color: var(--texto);
     font-size: 14px;
     cursor: pointer;
   }
   .pc-salir.pc-focused {
-    border-color: #f3a951;
+    border-color: var(--marca);
     background: rgba(243, 169, 81, 0.16);
   }
   .pc-hint {

@@ -1,0 +1,76 @@
+/* Tokens de diseño de Kütral. Un solo lugar para colores, radios, capas y
+   tiempos: antes había ~250 colores sueltos (6 naranjas de marca, 17 grises).
+   Los componentes los usan con var(--x). Importado una vez en +layout.svelte.
+
+   Contraste: todo texto sobre --fondo debe dar al menos 4.5:1 (se ve desde el
+   sofá). --texto-4 es el gris más apagado permitido para texto (~6.9:1). */
+
+:root {
+  /* Marca y acento */
+  --amarillo: #f5c518; /* foco, acción principal, estrellas */
+  --marca: #f3a951; /* naranja de Kütral */
+  --marca-viva: #f97316;
+
+  /* Fondos y superficies, de más hondo a más alto */
+  --fondo-hondo: #0b0b0f;
+  --fondo: #0d0d12;
+  --superficie-1: #15151c;
+  --superficie-2: #1c1c26;
+  --superficie-3: #22222c;
+  --borde: #2a2a36;
+
+  /* Texto, de más a menos fuerte (todos AA sobre --fondo) */
+  --texto: #e6e6ec;
+  --texto-suave: #d8d8e0;
+  --texto-2: #c8c8d0;
+  --texto-3: #a0a0aa;
+  --texto-4: #9a9aa4;
+
+  /* Estados */
+  --ok: #6cd37a;
+  --error: #ff7373;
+  --scrim: rgba(0, 0, 0, 0.7);
+
+  /* Radios */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
+  --r-pill: 999px;
+
+  /* Capas (z-index). Lo de más arriba gana. */
+  --z-base: 10;
+  --z-dropdown: 100;
+  --z-pill: 900;
+  --z-toast: 950;
+  --z-modal: 1100;
+  --z-pantalla: 1500;
+  --z-splash: 2000;
+
+  /* Movimiento */
+  --t-rapido: 120ms;
+  --t-medio: 200ms;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* Foco: lo único que dice "dónde estoy" con un control remoto. */
+  --foco-ancho: 3px;
+}
+
+/* Foco visible por defecto para todo lo navegable con flechas. :where() deja
+   la especificidad en cero: un componente con su propio realce lo pisa. */
+:where([data-nav]):focus-visible {
+  outline: var(--foco-ancho) solid var(--amarillo);
+  outline-offset: 2px;
+}
+
+/* Quien pidió menos movimiento en el sistema no ve animaciones ni
+   transiciones largas (spinners, chispas, fades). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

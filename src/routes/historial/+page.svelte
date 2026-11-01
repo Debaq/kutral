@@ -970,7 +970,7 @@
     height: 100%;
     display: flex;
     flex-direction: column;
-    color: #e6e6ec;
+    color: var(--texto);
     overflow: hidden;
   }
 
@@ -982,14 +982,14 @@
     flex-wrap: wrap;
     padding: 14px 20px;
     border-bottom: 1px solid #1e1e28;
-    background: #0d0d12;
+    background: var(--fondo);
   }
   h1 {
     margin: 0;
     font-size: 15px;
     letter-spacing: 2px;
     text-transform: uppercase;
-    color: #f5c518;
+    color: var(--amarillo);
     font-weight: 800;
   }
   .chips {
@@ -998,8 +998,8 @@
   }
   .chip {
     background: transparent;
-    border: 1px solid #2a2a35;
-    color: #9a9aa4;
+    border: 1px solid var(--borde);
+    color: var(--texto-4);
     border-radius: 999px;
     padding: 7px 16px;
     font-size: 12px;
@@ -1010,20 +1010,20 @@
   }
   .chip:hover {
     color: #fff;
-    border-color: #f5c518;
+    border-color: var(--amarillo);
   }
   .chip:focus,
   .chip:focus-visible {
     outline: none;
-    border-color: #f5c518;
+    border-color: var(--amarillo);
     color: #fff;
     box-shadow: 0 0 0 3px rgba(245, 197, 24, 0.25);
   }
   .chip.active,
   .chip.active:focus {
-    background: #f5c518;
-    border-color: #f5c518;
-    color: #0d0d12;
+    background: var(--amarillo);
+    border-color: var(--amarillo);
+    color: var(--fondo);
     font-weight: 800;
   }
   .cuenta {
@@ -1042,11 +1042,11 @@
   .ayuda-teclas {
     margin-left: auto;
     font-size: 13px;
-    color: #9a9aa4;
+    color: var(--texto-4);
     letter-spacing: 0.3px;
   }
   .ayuda-teclas b {
-    color: #9a9aa4;
+    color: var(--texto-4);
     font-weight: 700;
   }
 
@@ -1061,7 +1061,7 @@
     font-size: 11px;
     letter-spacing: 2px;
     text-transform: uppercase;
-    color: #6a6a74;
+    color: var(--texto-4);
     font-weight: 700;
     border-bottom: 1px solid #1e1e28;
     padding-bottom: 8px;
@@ -1077,7 +1077,7 @@
   }
   .card {
     position: relative;
-    background: #15151c;
+    background: var(--superficie-1);
     border: 0;
     border-radius: 6px;
     overflow: hidden;
@@ -1095,7 +1095,7 @@
   }
   .card:focus,
   .card:focus-visible {
-    outline: 4px solid #f5c518;
+    outline: 4px solid var(--amarillo);
     outline-offset: 3px;
     transform: translateY(-3px) scale(1.03);
     box-shadow: 0 14px 36px rgba(0, 0, 0, 0.7), 0 0 0 6px rgba(245, 197, 24, 0.18);
@@ -1133,7 +1133,7 @@
     color: #fff;
     border-radius: 4px;
     padding: 3px 8px;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 800;
     letter-spacing: 0.8px;
     backdrop-filter: blur(2px);
@@ -1157,7 +1157,7 @@
     position: absolute;
     right: 8px;
     bottom: 8px;
-    color: #f5c518;
+    color: var(--amarillo);
     font-size: 18px;
     text-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
   }
@@ -1166,7 +1166,7 @@
     right: 8px;
     bottom: 12px;
     background: rgba(13, 13, 18, 0.85);
-    color: #f3a951;
+    color: var(--marca);
     border-radius: 4px;
     padding: 2px 7px;
     font-size: 11px;
@@ -1184,7 +1184,7 @@
   .progreso-fill {
     display: block;
     height: 100%;
-    background: #f3a951;
+    background: var(--marca);
   }
   .pie {
     display: flex;
@@ -1226,8 +1226,8 @@
   }
   .btn-lista {
     background: transparent;
-    border: 1px solid #2a2a35;
-    color: #d8d8e0;
+    border: 1px solid var(--borde);
+    color: var(--texto-suave);
     border-radius: 8px;
     padding: 8px 14px;
     font-size: 12.5px;
@@ -1235,9 +1235,9 @@
     cursor: pointer;
   }
   .btn-lista.principal {
-    background: #f5c518;
-    border-color: #f5c518;
-    color: #0d0d12;
+    background: var(--amarillo);
+    border-color: var(--amarillo);
+    color: var(--fondo);
   }
   .btn-lista:disabled {
     opacity: 0.5;
@@ -1248,13 +1248,13 @@
   .renombrar:focus,
   .nueva-lista input:focus {
     outline: none;
-    border-color: #f5c518;
+    border-color: var(--amarillo);
     box-shadow: 0 0 0 3px rgba(245, 197, 24, 0.3);
   }
   .renombrar,
   .nueva-lista input {
-    background: #0d0d12;
-    border: 1px solid #2a2a35;
+    background: var(--fondo);
+    border: 1px solid var(--borde);
     color: #fff;
     border-radius: 8px;
     padding: 8px 12px;
@@ -1262,17 +1262,17 @@
   }
   .aviso-lista {
     font-size: 12.5px;
-    color: #9a9aa4;
+    color: var(--texto-4);
   }
   .btn-lista.activo {
-    border-color: #f5c518;
+    border-color: var(--amarillo);
     color: #fff;
   }
   .panel-compartir {
     margin: 14px 20px 0;
     padding: 14px 16px;
-    background: #15151c;
-    border: 1px solid #2a2a35;
+    background: var(--superficie-1);
+    border: 1px solid var(--borde);
     border-radius: 10px;
     display: flex;
     flex-direction: column;
@@ -1282,7 +1282,7 @@
   .sub-panel {
     margin: 0;
     font-size: 12.5px;
-    color: #9a9aa4;
+    color: var(--texto-4);
     line-height: 1.5;
   }
   .fila-codigo {
@@ -1296,14 +1296,14 @@
     font-size: 22px;
     font-weight: 800;
     letter-spacing: 2px;
-    color: #f5c518;
+    color: var(--amarillo);
     margin-right: 6px;
   }
   .ok-lista {
     color: #7ee094;
   }
   .err-lista {
-    color: #ff7373;
+    color: var(--error);
     white-space: normal;
   }
   .badge-lista {
@@ -1311,7 +1311,7 @@
     right: 8px;
     bottom: 8px;
     background: rgba(13, 13, 18, 0.85);
-    color: #f5c518;
+    color: var(--amarillo);
     border-radius: 4px;
     padding: 3px 8px;
     font-size: 11px;
@@ -1330,7 +1330,7 @@
     gap: 10px;
     padding: 16px;
     justify-content: center;
-    border: 1px dashed #2a2a35;
+    border: 1px dashed var(--borde);
   }
   .nueva-lista:hover {
     transform: none;
@@ -1339,13 +1339,13 @@
   .nueva-tit {
     font-size: 14px;
     font-weight: 800;
-    color: #f5c518;
+    color: var(--amarillo);
   }
   .nueva-lista .sub {
     white-space: normal;
   }
   .vacio {
-    color: #6a6a74;
+    color: var(--texto-4);
     font-size: 14px;
     padding: 40px 22px;
   }
@@ -1359,8 +1359,8 @@
     z-index: 1000;
   }
   .modal {
-    background: #15151c;
-    border: 1px solid #2a2a35;
+    background: var(--superficie-1);
+    border: 1px solid var(--borde);
     border-radius: 14px;
     padding: 24px 28px;
     max-width: 430px;
@@ -1394,14 +1394,14 @@
     font-size: 13px;
     font-weight: 700;
     cursor: pointer;
-    border: 1px solid #2a2a35;
+    border: 1px solid var(--borde);
     background: transparent;
-    color: #d8d8e0;
+    color: var(--texto-suave);
   }
   .modal-btns button:focus,
   .modal-btns button:focus-visible {
     outline: none;
-    border-color: #f5c518;
+    border-color: var(--amarillo);
     box-shadow: 0 0 0 3px rgba(245, 197, 24, 0.25);
   }
   .btn-borrar {

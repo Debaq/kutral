@@ -96,8 +96,8 @@
     position: absolute;
     top: 38px;
     right: 0;
-    background: #15151c;
-    border: 1px solid #2a2a36;
+    background: var(--superficie-1);
+    border: 1px solid var(--borde);
     border-radius: 10px;
     padding: 12px 14px;
     box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
@@ -111,13 +111,13 @@
   }
   input[type="range"] {
     flex: 1;
-    accent-color: #f3a951;
+    accent-color: var(--marca);
     cursor: pointer;
   }
   .pct {
     width: 36px; text-align: right;
     font-variant-numeric: tabular-nums;
-    font-size: 12px; color: #a0a0aa;
+    font-size: 12px; color: var(--texto-3);
   }
-  .hint { margin: 8px 0 0; color: #6e6e78; font-size: 11.5px; }
+  .hint { margin: 8px 0 0; color: var(--texto-4); font-size: 11.5px; }
 </style>

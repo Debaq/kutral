@@ -211,14 +211,14 @@
     position: absolute;
     top: 38px;
     right: 0;
-    background: #15151c;
-    border: 1px solid #2a2a36;
+    background: var(--superficie-1);
+    border: 1px solid var(--borde);
     border-radius: 10px;
     padding: 12px 14px;
     box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
     z-index: 1100;
     min-width: 280px;
-    color: #e6e6ec;
+    color: var(--texto);
   }
   .head {
     display: flex; align-items: center; gap: 8px;
@@ -228,38 +228,38 @@
     width: 8px; height: 8px; border-radius: 50%;
     background: #c44; display: inline-block;
   }
-  .dot.on { background: #6cd37a; box-shadow: 0 0 6px #6cd37a; }
+  .dot.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
   .title { font-size: 13px; font-weight: 600; flex: 1; }
 
   .url-row {
     display: flex; align-items: center; gap: 6px;
-    background: #0b0b0f; border: 1px solid #2a2a36;
+    background: var(--fondo-hondo); border: 1px solid var(--borde);
     border-radius: 6px; padding: 6px 8px;
   }
   .url {
-    flex: 1; font-size: 12px; color: #f3a951;
+    flex: 1; font-size: 12px; color: var(--marca);
     font-family: ui-monospace, monospace;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .copy {
-    background: transparent; border: 0; color: #c8c8d0;
+    background: transparent; border: 0; color: var(--texto-2);
     cursor: pointer; font-size: 13px; padding: 2px 6px;
     border-radius: 4px;
   }
-  .copy:hover { background: #1c1c26; color: #fff; }
+  .copy:hover { background: var(--superficie-2); color: #fff; }
 
   .port-row {
     display: flex; align-items: center; gap: 8px;
     margin-bottom: 10px;
   }
-  .port-row label { font-size: 12px; color: #a0a0aa; }
+  .port-row label { font-size: 12px; color: var(--texto-3); }
   .port-row input {
-    flex: 1; background: #0b0b0f; border: 1px solid #2a2a36;
+    flex: 1; background: var(--fondo-hondo); border: 1px solid var(--borde);
     border-radius: 6px; padding: 5px 8px;
-    color: #e6e6ec; font-size: 13px;
+    color: var(--texto); font-size: 13px;
     font-variant-numeric: tabular-nums;
   }
-  .port-row input:focus { outline: 1px solid #f3a951; }
+  .port-row input:focus { outline: 1px solid var(--marca); }
 
   .actions { display: flex; justify-content: flex-end; }
   .btn-start, .btn-stop {

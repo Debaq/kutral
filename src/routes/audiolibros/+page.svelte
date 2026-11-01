@@ -579,8 +579,8 @@
     white-space: nowrap;
   }
   .back {
-    background: #1a1a22;
-    border: 1px solid #2a2a35;
+    background: var(--superficie-2);
+    border: 1px solid var(--borde);
     color: #ccc;
     border-radius: 8px;
     padding: 8px 14px;
@@ -594,8 +594,8 @@
   }
   .idiomas { display: flex; gap: 6px; }
   .chip {
-    background: #15151c;
-    border: 1px solid #2a2a35;
+    background: var(--superficie-1);
+    border: 1px solid var(--borde);
     color: #ccc;
     border-radius: 999px;
     padding: 7px 14px;
@@ -623,8 +623,8 @@
     align-items: center;
   }
   .search {
-    background: #15151c;
-    border: 1px solid #2a2a35;
+    background: var(--superficie-1);
+    border: 1px solid var(--borde);
     color: #eee;
     border-radius: 8px;
     padding: 9px 32px 9px 14px;
@@ -751,7 +751,7 @@
   }
   .autor {
     font-size: 12px;
-    color: #9a9aa6;
+    color: var(--texto-4);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -759,8 +759,8 @@
   .mas {
     display: block;
     margin: 22px auto 0;
-    background: #1a1a22;
-    border: 1px solid #2a2a35;
+    background: var(--superficie-2);
+    border: 1px solid var(--borde);
     color: #eee;
     border-radius: 10px;
     padding: 11px 22px;
@@ -816,7 +816,7 @@
   .ficha {
     width: min(820px, 100%);
     background: #121218;
-    border: 1px solid #2a2a35;
+    border: 1px solid var(--borde);
     border-radius: 16px;
     padding: 22px;
     box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7);
@@ -853,7 +853,7 @@
   }
   .ficha-meta {
     margin: 2px 0 0;
-    color: #9a9aa6;
+    color: var(--texto-4);
     font-size: 13px;
     display: flex;
     align-items: center;
@@ -881,7 +881,7 @@
     outline-offset: 2px;
   }
   .cerrar {
-    background: #1f1f28;
+    background: var(--superficie-3);
     border: 1px solid #33333f;
     color: #ddd;
     border-radius: 10px;
@@ -897,7 +897,7 @@
   }
   .ficha-estado {
     margin: 16px 0 0;
-    color: #9a9aa6;
+    color: var(--texto-4);
     font-size: 14px;
   }
   .ficha-desc {
@@ -935,7 +935,7 @@
   .cap:hover,
   .cap:focus-visible {
     outline: none;
-    background: #1f1f28;
+    background: var(--superficie-3);
     border-color: #f59e0b;
     color: #fff;
   }
@@ -1023,7 +1023,7 @@
   }
   .tiempos {
     font-size: 12px;
-    color: #9a9aa6;
+    color: var(--texto-4);
     font-variant-numeric: tabular-nums;
   }
   .barra-ctrls {

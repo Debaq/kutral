@@ -1,4 +1,5 @@
 <script lang="ts">
+  import "$lib/tokens.css";
   import { onMount, onDestroy } from "svelte";
   import { goto } from "$app/navigation";
   import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -340,15 +341,15 @@
     margin: 0;
     padding: 0;
     height: 100%;
-    background: #0b0b0f;
+    background: var(--fondo-hondo);
     /* Controles nativos (desplegables de <select>, scrollbars) en oscuro:
        evita el item blanco sobre fondo blanco. */
     color-scheme: dark;
   }
   /* Refuerzo para los <option> del desplegable nativo. */
   :global(option) {
-    background: #15151c;
-    color: #e6e6ec;
+    background: var(--superficie-1);
+    color: var(--texto);
   }
   .app-shell {
     display: flex;

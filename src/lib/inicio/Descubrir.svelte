@@ -47,7 +47,7 @@
     transition: background 0.15s, color 0.15s, transform 0.1s;
   }
   .back-btn .arrow { font-size: 18px; line-height: 1; }
-  .back-btn:hover { background: #f5c518; color: #000; border-color: #f5c518; }
+  .back-btn:hover { background: var(--amarillo); color: #000; border-color: var(--amarillo); }
   .back-btn:active { transform: scale(0.97); }
   .report-btn {
     position: absolute; top: 14px; left: 14px; z-index: 1100;

@@ -579,8 +579,8 @@
     white-space: nowrap;
   }
   .back {
-    background: #1a1a22;
-    border: 1px solid #2a2a35;
+    background: var(--superficie-2);
+    border: 1px solid var(--borde);
     color: #ccc;
     border-radius: 8px;
     padding: 8px 14px;
@@ -599,8 +599,8 @@
     align-items: center;
   }
   .search {
-    background: #15151c;
-    border: 1px solid #2a2a35;
+    background: var(--superficie-1);
+    border: 1px solid var(--borde);
     color: #eee;
     border-radius: 8px;
     padding: 9px 32px 9px 14px;
@@ -609,7 +609,7 @@
   }
   .search:focus {
     outline: none;
-    border-color: #f97316;
+    border-color: var(--marca-viva);
   }
   .search-clear {
     position: absolute;
@@ -634,8 +634,8 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    background: #15151c;
-    border: 1px solid #2a2a35;
+    background: var(--superficie-1);
+    border: 1px solid var(--borde);
     color: #eee;
     border-radius: 8px;
     padding: 9px 12px;
@@ -654,7 +654,7 @@
   .dd-trigger:focus,
   .dd-trigger:focus-visible {
     outline: none;
-    border-color: #f97316;
+    border-color: var(--marca-viva);
     color: #fff;
   }
   .ddmenu {
@@ -666,8 +666,8 @@
     margin: 0;
     padding: 6px;
     min-width: 100%;
-    background: #15151c;
-    border: 1px solid #2a2a35;
+    background: var(--superficie-1);
+    border: 1px solid var(--borde);
     border-radius: 10px;
     box-shadow: 0 14px 34px rgba(0, 0, 0, 0.6);
     display: flex;
@@ -695,10 +695,10 @@
   .ddmenu button:focus,
   .ddmenu button:focus-visible {
     outline: none;
-    background: #f97316;
+    background: var(--marca-viva);
     color: #1a0a02;
   }
-  .ddmenu button.active { color: #f97316; font-weight: 700; }
+  .ddmenu button.active { color: var(--marca-viva); font-weight: 700; }
   .ddmenu button.active:hover,
   .ddmenu button.active:focus { color: #1a0a02; }
 
@@ -726,7 +726,7 @@
   }
   .canal:focus,
   .canal:focus-visible {
-    outline: 3px solid #f97316;
+    outline: 3px solid var(--marca-viva);
     outline-offset: 2px;
     transform: translateY(-3px) scale(1.03);
     box-shadow: 0 12px 28px rgba(0, 0, 0, 0.6);
@@ -784,7 +784,7 @@
   .reintentar {
     display: block;
     margin: 14px auto 0;
-    background: #f97316;
+    background: var(--marca-viva);
     border: 0;
     color: #1a0a02;
     font-weight: 700;
@@ -859,7 +859,7 @@
     letter-spacing: 1px;
   }
   .pstate {
-    color: #f97316;
+    color: var(--marca-viva);
     font-size: 13px;
   }
 
@@ -896,8 +896,8 @@
     width: 60px;
     height: 60px;
     font-size: 26px;
-    background: #f97316;
-    border-color: #f97316;
+    background: var(--marca-viva);
+    border-color: var(--marca-viva);
     color: #1a0a02;
   }
   .cbtn:hover:not(:disabled),
@@ -916,7 +916,7 @@
   }
   .vol-fill {
     height: 100%;
-    background: #f97316;
+    background: var(--marca-viva);
     transition: width 0.15s;
   }
   .vol-num {
@@ -941,7 +941,7 @@
     gap: 12px;
   }
   .err-actions button {
-    background: #f97316;
+    background: var(--marca-viva);
     border: 0;
     color: #1a0a02;
     font-weight: 700;
@@ -950,7 +950,7 @@
     cursor: pointer;
   }
   .err-actions button:last-child {
-    background: #2a2a35;
+    background: var(--borde);
     color: #eee;
   }
 </style>

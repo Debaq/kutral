@@ -90,7 +90,7 @@
   .hist-btn {
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.16);
-    color: #d8d8e0;
+    color: var(--texto-suave);
     border-radius: 8px;
     padding: 6px 12px;
     font-size: 12px;
@@ -100,7 +100,7 @@
   .hist-btn:hover,
   .hist-btn:focus-visible,
   .hist-btn.on {
-    border-color: #f3a951;
+    border-color: var(--marca);
     color: #fff;
     outline: none;
   }
@@ -126,7 +126,7 @@
   .chip {
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid rgba(255, 255, 255, 0.16);
-    color: #d8d8e0;
+    color: var(--texto-suave);
     border-radius: 999px;
     padding: 5px 12px;
     font-size: 12px;
@@ -134,18 +134,18 @@
   }
   .chip.on {
     background: rgba(243, 169, 81, 0.18);
-    border-color: #f3a951;
+    border-color: var(--marca);
     color: #fff;
   }
   .chip:focus-visible,
   input:focus-visible,
   .enviar:focus-visible {
-    outline: 2px solid #f3a951;
+    outline: 2px solid var(--marca);
     outline-offset: 1px;
   }
   input {
-    background: #0d0d12;
-    border: 1px solid #2a2a36;
+    background: var(--fondo);
+    border: 1px solid var(--borde);
     color: #fff;
     padding: 7px 10px;
     border-radius: 8px;
@@ -153,7 +153,7 @@
   }
   .enviar {
     align-self: flex-start;
-    background: #f3a951;
+    background: var(--marca);
     color: #1a1208;
     border: 0;
     border-radius: 8px;
@@ -169,6 +169,6 @@
   .err {
     margin: 0;
     font-size: 12px;
-    color: #ff7373;
+    color: var(--error);
   }
 </style>

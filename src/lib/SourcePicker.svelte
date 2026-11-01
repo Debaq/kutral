@@ -2995,8 +2995,8 @@
     inset: 0;
     z-index: 50;
     overflow: hidden;
-    background: #0d0d12;
-    color: #e6e6ec;
+    background: var(--fondo);
+    color: var(--texto);
   }
   .sp-bg {
     position: absolute;
@@ -3024,7 +3024,7 @@
     position: absolute;
     top: 18px;
     right: 24px;
-    color: #9a9aa4;
+    color: var(--texto-4);
     font-size: 12px;
     z-index: 2;
   }
@@ -3062,21 +3062,21 @@
     align-items: center;
     justify-content: center;
     gap: 14px;
-    color: #c8c8d0;
+    color: var(--texto-2);
   }
-  .sp-hint { color: #9a9aa4; font-size: 13px; }
+  .sp-hint { color: var(--texto-4); font-size: 13px; }
   .sp-detalle { margin: -4px 0 0; color: #b9b9c6; font-size: 14px; }
-  .sp-atajos { margin: 10px 0 0; color: #9a9aa4; font-size: 13px; }
-  .sp-atajos b { color: #d8d8e0; font-weight: 600; }
+  .sp-atajos { margin: 10px 0 0; color: var(--texto-4); font-size: 13px; }
+  .sp-atajos b { color: var(--texto-suave); font-weight: 600; }
   /* Plan B: descarga local del torrent (debrid bloqueado por DMCA). */
-  .sp-tor-head { margin: 0; font-size: 20px; font-weight: 700; color: #f3a951; }
+  .sp-tor-head { margin: 0; font-size: 20px; font-weight: 700; color: var(--marca); }
   .sp-tor-why {
     margin: 0; max-width: 520px; text-align: center;
     color: #b9b9c6; font-size: 15px; line-height: 1.45;
   }
   .sp-tor-que {
     margin: -2px 0 0; max-width: 520px; text-align: center;
-    color: #e6e6ec; font-size: 15px; line-height: 1.45;
+    color: var(--texto); font-size: 15px; line-height: 1.45;
   }
   /* Cuenta regresiva como barra que se vacía dentro del botón. */
   .sp-oferta-ver { position: relative; overflow: hidden; }
@@ -3087,14 +3087,14 @@
   }
   .sp-oferta-txt { position: relative; }
   .sp-tor-line { margin: 0; color: #e6e6ea; font-size: 14px; }
-  .sp-tor-meta { margin: 0; color: #9a9aa6; font-size: 12px; }
-  .sp-tor-slow { margin: 6px 0 0; color: #f3a951; font-size: 13px; }
+  .sp-tor-meta { margin: 0; color: var(--texto-4); font-size: 12px; }
+  .sp-tor-slow { margin: 6px 0 0; color: var(--marca); font-size: 13px; }
   .sp-desde-local {
     margin: 0; max-width: 460px; text-align: center;
     color: #cbb489; font-size: 12.5px; line-height: 1.45;
   }
   .sp-baja-hint {
-    margin: 0 0 8px; color: #9a9aa6; font-size: 12px;
+    margin: 0 0 8px; color: var(--texto-4); font-size: 12px;
   }
   .sp-desde-disco {
     margin: 0; max-width: 460px; text-align: center;
@@ -3102,20 +3102,20 @@
   }
   .sp-bar {
     width: min(420px, 70vw); height: 6px;
-    background: #2a2a36; border-radius: 3px; overflow: hidden;
+    background: var(--borde); border-radius: 3px; overflow: hidden;
   }
-  .sp-bar-fill { height: 100%; background: #f3a951; transition: width .3s ease; }
-  .sp-playing { margin: 0; font-size: 22px; font-weight: 700; color: #f3a951; }
-  .sp-playing-title { margin: 0; color: #c8c8d0; font-size: 14px; max-width: 70%; text-align: center; }
+  .sp-bar-fill { height: 100%; background: var(--marca); transition: width .3s ease; }
+  .sp-playing { margin: 0; font-size: 22px; font-weight: 700; color: var(--marca); }
+  .sp-playing-title { margin: 0; color: var(--texto-2); font-size: 14px; max-width: 70%; text-align: center; }
   .sp-spinner {
     width: 34px; height: 34px;
-    border: 3px solid #2a2a36;
-    border-top-color: #f3a951;
+    border: 3px solid var(--borde);
+    border-top-color: var(--marca);
     border-radius: 50%;
     animation: sp-spin 1s linear infinite;
   }
   @keyframes sp-spin { to { transform: rotate(360deg); } }
-  .sp-error { color: #ff7373; font-size: 14px; margin: 0 0 12px; }
+  .sp-error { color: var(--error); font-size: 14px; margin: 0 0 12px; }
 
   .sp-list {
     flex: 1;
@@ -3143,7 +3143,7 @@
     transition: border-color 0.12s, background 0.12s, transform 0.12s;
   }
   .sp-row.focused {
-    border-color: #f3a951;
+    border-color: var(--marca);
     background: rgba(243, 169, 81, 0.16);
     transform: translateX(4px);
   }
@@ -3156,7 +3156,7 @@
     opacity: 1;
   }
   .sp-probada {
-    font-size: 10.5px;
+    font-size: 11px;
     font-weight: 700;
     color: #e0c08a;
     background: #33291c;
@@ -3172,8 +3172,8 @@
     font-size: 12px;
     padding: 5px 8px;
     border-radius: 6px;
-    background: #2a2a36;
-    color: #d8d8e0;
+    background: var(--borde);
+    color: var(--texto-suave);
   }
   .sp-q-p2160 { background: #3a2a4a; color: #d9b8ff; }
   .sp-q-p1080 { background: #1f3a2a; color: #9be38a; }
@@ -3194,7 +3194,7 @@
   }
   .sp-chips { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
   .sp-chip {
-    font-size: 10.5px;
+    font-size: 11px;
     font-weight: 600;
     color: #c0c0c8;
     background: rgba(255, 255, 255, 0.08);
@@ -3204,7 +3204,7 @@
   }
   /* Copia ya bajada: verde, el único chip que promete cero espera. */
   .sp-en-disco {
-    font-size: 10.5px;
+    font-size: 11px;
     font-weight: 700;
     color: #8fe3a8;
     background: #102417;
@@ -3213,7 +3213,7 @@
     border-radius: 5px;
   }
   .sp-cached {
-    font-size: 10.5px;
+    font-size: 11px;
     font-weight: 700;
     color: #ffd76b;
     background: #2e2410;
@@ -3254,7 +3254,7 @@
     margin-left: auto;
   }
   .sp-hardsub {
-    font-size: 10.5px;
+    font-size: 11px;
     font-weight: 700;
     color: #b6f0c2;
     background: #12301b;
@@ -3264,7 +3264,7 @@
   }
   /* Veredicto de la inspección real de pistas (ffprobe). */
   .sp-es-ok {
-    font-size: 10.5px;
+    font-size: 11px;
     font-weight: 700;
     color: #8ad1ff;
     background: #102230;
@@ -3273,7 +3273,7 @@
     border-radius: 5px;
   }
   .sp-es-no {
-    font-size: 10.5px;
+    font-size: 11px;
     font-weight: 700;
     color: #ff9a9a;
     background: #2b1414;
@@ -3282,7 +3282,7 @@
     border-radius: 5px;
   }
   .sp-pref {
-    font-size: 10.5px;
+    font-size: 11px;
     font-weight: 700;
     color: #9be38a;
     background: #14271a;
@@ -3291,8 +3291,8 @@
     border-radius: 5px;
   }
   .sp-prov {
-    font-size: 10.5px;
-    color: #7a7a86;
+    font-size: 11px;
+    color: var(--texto-4);
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
@@ -3302,12 +3302,12 @@
     flex-direction: column;
     align-items: flex-end;
     gap: 3px;
-    color: #a0a0aa;
+    color: var(--texto-3);
     font-size: 12.5px;
     font-variant-numeric: tabular-nums;
   }
   .sp-dupe {
-    background: #f3a951;
+    background: var(--marca);
     color: #1a1208;
     border-radius: 5px;
     padding: 1px 6px;
@@ -3323,20 +3323,20 @@
     gap: 8px;
     background: rgba(20, 20, 28, 0.62);
     border: 1px solid rgba(255, 255, 255, 0.14);
-    color: #c8c8d0;
+    color: var(--texto-2);
     border-radius: 999px;
     padding: 6px 12px;
     font-size: 12.5px;
     cursor: pointer;
   }
   .sp-dest.tv {
-    border-color: #f3a951;
+    border-color: var(--marca);
     color: #fff;
     background: rgba(243, 169, 81, 0.16);
   }
   .sp-dest kbd {
     font: inherit;
-    font-size: 10.5px;
+    font-size: 11px;
     color: #8a8a96;
     border: 1px solid #3a3a46;
     border-radius: 4px;
@@ -3348,7 +3348,7 @@
   }
   .sp-tv-avisos {
     margin: 2px 0 6px; max-width: 520px; padding-left: 1.2em;
-    text-align: left; color: #9a9aa6; font-size: 13px; line-height: 1.5;
+    text-align: left; color: var(--texto-4); font-size: 13px; line-height: 1.5;
   }
   .sp-cast-btns {
     display: flex;
@@ -3379,14 +3379,14 @@
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
     border: 2px solid rgba(255, 255, 255, 0.12);
-    color: #d8d8e0;
+    color: var(--texto-suave);
     border-radius: 10px;
     padding: 11px 18px;
     cursor: pointer;
     font-size: 13.5px;
   }
   .sp-foot-btn.focused {
-    border-color: #f3a951;
+    border-color: var(--marca);
     background: rgba(243, 169, 81, 0.16);
     color: #fff;
   }

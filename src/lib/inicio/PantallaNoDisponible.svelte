@@ -42,14 +42,14 @@
 <style>
   .unavail-screen {
     position: fixed; inset: 0; z-index: 1500;
-    background: #0d0d12;
+    background: var(--fondo);
     display: flex; align-items: center; justify-content: center;
     padding: 40px;
   }
   .unavail-card {
     max-width: 480px; text-align: center;
-    background: #15151c;
-    border: 1px solid #2a2a35;
+    background: var(--superficie-1);
+    border: 1px solid var(--borde);
     border-radius: 12px;
     padding: 36px 32px;
     box-shadow: 0 20px 60px rgba(0,0,0,0.6);
@@ -62,7 +62,7 @@
   }
   .unavail-card h2 {
     margin: 0 0 12px;
-    color: #f5c518; font-size: 24px;
+    color: var(--amarillo); font-size: 24px;
   }
   .unavail-card p { color: #ddd; font-size: 15px; line-height: 1.5; margin: 0 0 10px; }
   .unavail-sub { color: #888 !important; font-size: 13px !important; margin-bottom: 22px !important; }
@@ -75,11 +75,11 @@
     font-size: 14px; font-weight: 600; cursor: pointer;
   }
   .btn-secondary {
-    background: transparent; color: #aaa; border-color: #2a2a35;
+    background: transparent; color: #aaa; border-color: var(--borde);
   }
   .btn-secondary:hover { color: #fff; border-color: #444; }
   .btn-primary {
-    background: #f5c518; color: #0d0d12; border: 0;
+    background: var(--amarillo); color: var(--fondo); border: 0;
   }
   .btn-primary:hover { transform: scale(1.03); }
 </style>

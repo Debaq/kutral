@@ -541,9 +541,9 @@
 <style>
   .ir-config {
     margin-top: 6px; padding: 8px 16px; border-radius: 8px; cursor: pointer;
-    background: #22222c; color: #e6e6ec; border: 1px solid #f3a951; font-size: 14px;
+    background: var(--superficie-3); color: var(--texto); border: 1px solid var(--marca); font-size: 14px;
   }
-  .ir-config:focus-visible { outline: 3px solid #f5c518; outline-offset: 2px; }
+  .ir-config:focus-visible { outline: 3px solid var(--amarillo); outline-offset: 2px; }
   .vera {
     position: relative;
     min-height: 100vh;

@@ -200,15 +200,15 @@
     backdrop-filter: blur(4px);
   }
   .wifi-card {
-    background: #15151c;
-    border: 1px solid #2a2a36;
+    background: var(--superficie-1);
+    border: 1px solid var(--borde);
     border-radius: 12px;
     width: 420px;
     max-height: 80vh;
     display: flex;
     flex-direction: column;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
-    color: #e6e6ec;
+    color: var(--texto);
     overflow: hidden;
   }
   .wifi-head {
@@ -216,14 +216,14 @@
     align-items: center;
     justify-content: space-between;
     padding: 16px 18px;
-    border-bottom: 1px solid #22222c;
+    border-bottom: 1px solid var(--superficie-3);
   }
   .wifi-head h2 { margin: 0; font-size: 16px; font-weight: 600; }
   .wifi-close {
-    background: transparent; border: 0; color: #a0a0aa; font-size: 18px;
+    background: transparent; border: 0; color: var(--texto-3); font-size: 18px;
     cursor: pointer; padding: 4px 8px; border-radius: 6px;
   }
-  .wifi-close:hover { background: #22222c; color: #fff; }
+  .wifi-close:hover { background: var(--superficie-3); color: #fff; }
   .wifi-toolbar { padding: 12px 18px 0; }
   .wifi-list {
     list-style: none; margin: 0; padding: 8px 8px 12px;
@@ -232,14 +232,14 @@
   .net-row {
     width: 100%;
     display: flex; justify-content: space-between; align-items: center;
-    background: transparent; border: 0; color: #e6e6ec;
+    background: transparent; border: 0; color: var(--texto);
     padding: 12px 14px; border-radius: 8px; cursor: pointer;
     font-size: 14px; text-align: left;
   }
   .net-row:hover, .net-row:focus {
-    background: #1f1f28; outline: none;
+    background: var(--superficie-3); outline: none;
   }
-  .net-row:focus { outline: 2px solid #f3a951; outline-offset: -2px; }
+  .net-row:focus { outline: 2px solid var(--marca); outline-offset: -2px; }
   .net-row:disabled { opacity: 0.5; cursor: default; }
   .net-ssid { display: flex; align-items: center; gap: 8px; }
   .tag-current {
@@ -249,11 +249,11 @@
   }
   .net-meta {
     display: flex; align-items: center; gap: 10px;
-    color: #a0a0aa; font-size: 13px;
+    color: var(--texto-3); font-size: 13px;
   }
-  .bars { font-family: ui-monospace, monospace; letter-spacing: -1px; color: #f3a951; }
+  .bars { font-family: ui-monospace, monospace; letter-spacing: -1px; color: var(--marca); }
   .empty {
-    padding: 24px; text-align: center; color: #6e6e78;
+    padding: 24px; text-align: center; color: var(--texto-4);
     font-size: 14px;
   }
   .wifi-auth {
@@ -261,33 +261,33 @@
     display: flex; flex-direction: column; gap: 14px;
   }
   .net-name {
-    margin: 0; font-size: 15px; font-weight: 600; color: #f3a951;
+    margin: 0; font-size: 15px; font-weight: 600; color: var(--marca);
   }
   .wifi-auth label {
     display: flex; flex-direction: column; gap: 6px;
-    font-size: 13px; color: #a0a0aa;
+    font-size: 13px; color: var(--texto-3);
   }
   .wifi-auth input {
-    background: #0d0d12; border: 1px solid #2a2a36;
+    background: var(--fondo); border: 1px solid var(--borde);
     color: #fff; padding: 10px 12px; border-radius: 8px;
     font-size: 14px;
   }
-  .wifi-auth input:focus { border-color: #f3a951; outline: none; }
+  .wifi-auth input:focus { border-color: var(--marca); outline: none; }
   .wifi-actions { display: flex; gap: 10px; justify-content: flex-end; }
   .btn-pri, .btn-sec {
     border: 0; border-radius: 8px; padding: 9px 18px;
     font-size: 13px; cursor: pointer; font-weight: 500;
   }
-  .btn-pri { background: #f3a951; color: #1a1208; }
+  .btn-pri { background: var(--marca); color: #1a1208; }
   .btn-pri:hover:not(:disabled) { background: #ffb86b; }
   .btn-pri:disabled { opacity: 0.5; cursor: default; }
-  .btn-sec { background: #2a2a36; color: #d8d8e0; }
+  .btn-sec { background: var(--borde); color: var(--texto-suave); }
   .btn-sec:hover:not(:disabled) { background: #34343f; }
   .err, .ok {
     margin: 0; padding: 10px 18px;
-    border-top: 1px solid #22222c;
+    border-top: 1px solid var(--superficie-3);
     font-size: 13px;
   }
-  .err { color: #ff7373; }
+  .err { color: var(--error); }
   .ok { color: #9be38a; }
 </style>

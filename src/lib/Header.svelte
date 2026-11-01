@@ -387,11 +387,11 @@
     flex: 0 0 36px;
     display: flex;
     align-items: stretch;
-    background: #0b0b0f;
-    border-bottom: 1px solid #1a1a22;
+    background: var(--fondo-hondo);
+    border-bottom: 1px solid var(--superficie-2);
     user-select: none;
     -webkit-user-select: none;
-    color: #e6e6ec;
+    color: var(--texto);
     font-family: ui-sans-serif, system-ui, sans-serif;
     position: relative;
     z-index: 1000;
@@ -423,7 +423,7 @@
     align-items: center;
     gap: 6px;
     padding: 0 12px;
-    color: #d8d8e0;
+    color: var(--texto-suave);
     font-size: 13px;
     margin-left: auto;
     flex-shrink: 0;
@@ -439,7 +439,7 @@
   .clock {
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.04em;
-    color: #d8d8e0;
+    color: var(--texto-suave);
     min-width: 42px;
     text-align: center;
   }
@@ -449,15 +449,15 @@
   .net-btn {
     display: flex; align-items: center; gap: 6px;
     background: transparent; border: 0;
-    color: #d8d8e0; cursor: pointer;
+    color: var(--texto-suave); cursor: pointer;
     padding: 4px 10px; border-radius: 6px;
     font-size: 12px;
   }
-  .net-btn:hover { background: #1c1c26; color: #fff; }
-  .net-btn:focus { outline: 2px solid #f3a951; outline-offset: 1px; }
+  .net-btn:hover { background: var(--superficie-2); color: #fff; }
+  .net-btn:focus { outline: 2px solid var(--marca); outline-offset: 1px; }
   .net-icon {
-    color: #6cd37a;
-    font-size: 10px;
+    color: var(--ok);
+    font-size: 11px;
     line-height: 1;
     display: inline-block;
     width: 12px;
@@ -471,20 +471,20 @@
   .cfg-btn {
     background: transparent;
     border: 0;
-    color: #c8c8d0;
+    color: var(--texto-2);
     cursor: pointer;
     font-size: 15px;
     padding: 4px 10px;
     border-radius: 6px;
     line-height: 1;
   }
-  .cfg-btn:hover { background: #1c1c26; color: #fff; }
+  .cfg-btn:hover { background: var(--superficie-2); color: #fff; }
   .perfil-btn {
     width: 26px;
     height: 26px;
     border-radius: 7px;
     border: 0;
-    color: #0d0d12;
+    color: var(--fondo);
     font-size: 13px;
     font-weight: 800;
     cursor: pointer;
@@ -500,8 +500,8 @@
     object-position: top;
   }
   .perfil-btn:focus,
-  .perfil-btn:hover { outline: 2px solid #f3a951; outline-offset: 2px; }
-  .cfg-btn:focus { outline: 2px solid #f3a951; outline-offset: 1px; }
+  .perfil-btn:hover { outline: 2px solid var(--marca); outline-offset: 2px; }
+  .cfg-btn:focus { outline: 2px solid var(--marca); outline-offset: 1px; }
 
   .pop-host {
     position: relative;
@@ -511,7 +511,7 @@
   .ic-btn {
     background: transparent;
     border: 0;
-    color: #c8c8d0;
+    color: var(--texto-2);
     cursor: pointer;
     font-size: 14px;
     padding: 4px 8px;
@@ -524,9 +524,9 @@
     align-items: center;
     justify-content: center;
   }
-  .ic-btn:hover { background: #1c1c26; color: #fff; }
-  .ic-btn:focus { outline: 2px solid #f3a951; outline-offset: 1px; }
-  .ic-btn.active { color: #6cd37a; }
+  .ic-btn:hover { background: var(--superficie-2); color: #fff; }
+  .ic-btn:focus { outline: 2px solid var(--marca); outline-offset: 1px; }
+  .ic-btn.active { color: var(--ok); }
   .web-host { display: flex; align-items: center; gap: 4px; }
   .web-btn { position: relative; }
   .web-dot {
@@ -534,15 +534,15 @@
     top: 4px; right: 4px;
     width: 6px; height: 6px;
     border-radius: 50%;
-    background: #6cd37a;
-    box-shadow: 0 0 6px #6cd37a;
+    background: var(--ok);
+    box-shadow: 0 0 6px var(--ok);
   }
   .nt-badge {
     position: absolute;
     top: 0; right: 0;
     background: #c42b1c;
     color: #fff;
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     border-radius: 8px;
     padding: 1px 4px;
@@ -559,14 +559,14 @@
     width: 46px;
     border: 0;
     background: transparent;
-    color: #c8c8d0;
+    color: var(--texto-2);
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 0;
   }
-  .ctrl:hover { background: #1c1c26; color: #fff; }
+  .ctrl:hover { background: var(--superficie-2); color: #fff; }
   .ctrl-close:hover { background: #c42b1c; color: #fff; }
   .ctrl svg rect[fill="none"] { stroke: currentColor; }
   .ctrl svg rect:not([fill="none"]) { fill: currentColor; }
@@ -578,7 +578,7 @@
     padding: 0 18px;
     background: transparent;
     border: 0;
-    color: #f3a951;
+    color: var(--marca);
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
@@ -598,13 +598,13 @@
     backdrop-filter: blur(4px);
   }
   .exit-card {
-    background: #15151c;
-    border: 1px solid #2a2a36;
+    background: var(--superficie-1);
+    border: 1px solid var(--borde);
     border-radius: 12px;
     padding: 28px 32px;
     min-width: 320px;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
-    color: #e6e6ec;
+    color: var(--texto);
     text-align: center;
   }
   .exit-card h2 {
@@ -615,7 +615,7 @@
   .exit-card p {
     margin: 0 0 20px;
     font-size: 14px;
-    color: #a0a0aa;
+    color: var(--texto-3);
   }
   .exit-actions {
     display: flex;
@@ -631,8 +631,8 @@
     font-weight: 500;
   }
   .btn-cancel {
-    background: #2a2a36;
-    color: #d8d8e0;
+    background: var(--borde);
+    color: var(--texto-suave);
   }
   .btn-cancel:hover { background: #34343f; }
   .btn-confirm {
@@ -641,7 +641,7 @@
   }
   .btn-confirm:hover { background: #d8392b; }
   .btn-confirm:focus, .btn-cancel:focus {
-    outline: 2px solid #f3a951;
+    outline: 2px solid var(--marca);
     outline-offset: 2px;
   }
 </style>

@@ -201,7 +201,7 @@
     color: #1a1a1a;
   }
   header { margin-bottom: 2rem; }
-  .back { color: #666; text-decoration: none; font-size: 0.9rem; }
+  .back { color: var(--texto-4); text-decoration: none; font-size: 0.9rem; }
   .back:hover { color: #111; }
   h1 {
     margin: 0.5rem 0 0.25rem;
@@ -209,7 +209,7 @@
     font-weight: 600;
     letter-spacing: -0.02em;
   }
-  .tagline { margin: 0; color: #666; }
+  .tagline { margin: 0; color: var(--texto-4); }
   h2 { font-size: 1.3rem; font-weight: 500; margin: 1.5rem 0 1rem; }
   .stats {
     display: flex;
@@ -225,7 +225,7 @@
     text-align: center;
   }
   .stats strong { display: block; font-size: 1.8rem; font-weight: 600; }
-  .stats span { color: #777; font-size: 0.85rem; }
+  .stats span { color: var(--texto-4); font-size: 0.85rem; }
   .warn { color: #c93; }
   .form {
     display: flex;
@@ -269,7 +269,7 @@
     background: #ff5722;
     transition: width 0.2s;
   }
-  .progress-box p { margin: 0.5rem 0 0; font-size: 0.9rem; color: #555; }
+  .progress-box p { margin: 0.5rem 0 0; font-size: 0.9rem; color: var(--texto-4); }
   .current { color: #999 !important; font-style: italic; }
   .log {
     margin-top: 1.5rem;
