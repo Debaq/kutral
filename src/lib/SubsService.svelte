@@ -12,7 +12,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { player } from "$lib/playerState.svelte";
-  import { config } from "$lib/config.svelte";
+  import { config, nombreIdioma } from "$lib/config.svelte";
   import { buscarSubtitulos, claveSub, enlaceSub, type OpcionSub } from "$lib/subtitulos";
 
   let subOptions: OpcionSub[] = [];
@@ -30,12 +30,15 @@
     await mpv(["show-text", "Buscando subtítulos…", "5000"]);
     const opts = await buscarSubtitulos(imdbId, { season, episode }, { release, videoUrl });
     if (opts.length === 0) {
+      // Que diga qué se puede hacer, no solo que no hay.
+      const idioma = config.subsLang && config.subsLang !== "off" ? ` en ${nombreIdioma(config.subsLang)}` : "";
       await mpv([
         "show-text",
-        config.wyzieKey
-          ? "No se encontraron subtítulos"
-          : "No se encontraron subtítulos (sin clave de Wyzie)",
-        "3000",
+        `No hay subtítulos${idioma} para este video.\n` +
+          (config.wyzieKey
+            ? "Puedes cambiar el idioma en Configuración → Reproducción."
+            : "Con una clave de Wyzie (Configuración → Cuenta) se busca en más lugares."),
+        "5000",
       ]);
       return;
     }
@@ -60,11 +63,12 @@
     try {
       url = await enlaceSub(o);
     } catch (err) {
-      await mpv(["show-text", `No se pudo bajar: ${String(err).slice(0, 50)}`, "3000"]);
+      console.warn("[subs] enlace fail:", err);
+      await mpv(["show-text", "No se pudo bajar ese subtítulo. Prueba con otro de la lista.", "4000"]);
       return;
     }
     if (!url) {
-      await mpv(["show-text", "Subtítulo sin enlace", "2500"]);
+      await mpv(["show-text", "Ese subtítulo no tiene descarga. Prueba con otro de la lista.", "4000"]);
       return;
     }
     let toLoad = url;
@@ -81,7 +85,11 @@
     if (key) await invoke("mpv_sub_key", { path: toLoad, key }).catch(() => {});
     await mpv(["sub-add", toLoad, "select"]);
     await mpv(["set", "sub-visibility", "yes"]);
-    await mpv(["show-text", "✓ Subtítulo cargado", "2000"]);
+    await mpv([
+      "show-text",
+      "✓ Subtítulo cargado\nSi va desfasado: Subtítulos → Sincronizar y mover…",
+      "4000",
+    ]);
   }
 
   onMount(() => {

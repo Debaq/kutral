@@ -109,6 +109,12 @@
     }
   }
 
+  // La caché guarda solo lo que cargó bien: reintentar vuelve a pedirla.
+  function reintentarTemporada() {
+    const s = seasons[seasonIdx];
+    if (s) void loadEpisodes(s.season_number);
+  }
+
   function setSeason(i: number) {
     if (i < 0) i = 0;
     if (i > seasons.length - 1) i = seasons.length - 1;
@@ -255,7 +261,8 @@
       case "Enter":
       case " ":
         e.preventDefault();
-        if (pane === "seasons") gotoEpisodes();
+        if (epError) reintentarTemporada();
+        else if (pane === "seasons") gotoEpisodes();
         else chooseEpisode();
         break;
       case "d":
@@ -345,7 +352,11 @@
         {#if loadingEps}
           <div class="ep-center"><span class="ep-spinner"></span><p>Cargando episodios…</p></div>
         {:else if epError}
-          <p class="ep-error">{epError}</p>
+          <div class="ep-error-box">
+            <p class="ep-error">No se pudieron cargar los capítulos de esta temporada.</p>
+            <small>{epError}</small>
+            <button class="ep-retry" onclick={reintentarTemporada}>🔄 Reintentar (Enter)</button>
+          </div>
         {:else}
           {#each episodes as ep, i (ep.episode_number)}
             {@const m = marca(ep.episode_number)}
@@ -395,6 +406,9 @@
         {/if}
       </div>
     </div>
+    <p class="ep-atajos">
+      <b>Enter</b> {pane === "seasons" ? "ver capítulos" : "descubrir"} · <b>↑↓</b> {pane === "seasons" ? "temporada" : "capítulo"} · <b>←→</b> temporadas / capítulos{#if config.torrentLocal && clave} · <b>D</b> bajar {pane === "seasons" ? "temporada" : "capítulo"}{/if} · <b>Esc</b> volver
+    </p>
   </div>
 </div>
 
@@ -679,7 +693,32 @@
     }
   }
   .ep-error {
-    color: #ff7373;
+    margin: 0;
+    color: #ff9b9b;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .ep-error-box {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 14px 16px;
+    border-radius: 8px;
+    background: rgba(255, 107, 107, 0.08);
+    border: 1px solid rgba(255, 107, 107, 0.35);
+  }
+  .ep-error-box small { color: #a0a0aa; font-size: 12px; word-break: break-word; }
+  .ep-retry {
+    margin-top: 4px;
+    padding: 8px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    background: #22222c;
+    color: #e6e6ec;
+    border: 1px solid #f5c518;
     font-size: 14px;
   }
+  .ep-atajos { margin: 12px 0 0; color: #9a9aa4; font-size: 13px; }
+  .ep-atajos b { color: #d8d8e0; font-weight: 600; }
 </style>

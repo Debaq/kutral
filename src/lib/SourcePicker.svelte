@@ -177,6 +177,9 @@
   let focusIdx = $state(0);
   let resolving = $state(false);
   let resolvingMsg = $state("");
+  // Debajo del mensaje de espera: qué fuente se está probando (calidad ·
+  // proveedor). Sin esto "Probando fuente 3 de 12" no decía cuál.
+  let resolvingDetalle = $state("");
   let playing = $state(false);
   // Cuándo arrancó el video (ms). Enter recién abierto suele ser el mismo
   // Enter (o su repetición) que eligió la fuente: no debe cortarlo.
@@ -285,6 +288,14 @@
   let ofertaSeg = $state(0);
   let ofertaFoco = $state(0);
   let ofertaTimer: ReturnType<typeof setInterval> | null = null;
+  // Tocar las flechas (o pasar el mouse por "las otras") detiene la cuenta:
+  // quien está decidiendo no debe ver que arranca sola a mitad de leer.
+  let ofertaPausada = $state(false);
+  function pausarOferta() {
+    if (ofertaTimer) clearInterval(ofertaTimer);
+    ofertaTimer = null;
+    ofertaPausada = true;
+  }
   // Aviso sobre la lista (no es un error): "ninguna abrió en RD, elige una".
   let avisoLista = $state("");
   // Lo que estaba sonando cuando la red se rindió, para poder retomarlo.
@@ -368,9 +379,11 @@
     : sources.filter((s) => !s.hardsub),
   );
 
-  const total = $derived(view.length + (WEB_PLAYER_ENABLED ? 2 : 1));
+  // Pie: [Ver en web] · Rebuscar fuentes · Volver.
+  const total = $derived(view.length + (WEB_PLAYER_ENABLED ? 3 : 2));
   const webIdx = $derived(WEB_PLAYER_ENABLED ? view.length : -1);
-  const backIdx = $derived(view.length + (WEB_PLAYER_ENABLED ? 1 : 0));
+  const rebuscarIdx = $derived(view.length + (WEB_PLAYER_ENABLED ? 1 : 0));
+  const backIdx = $derived(rebuscarIdx + 1);
 
   function setFam(f: Fam) {
     if (famFilter === f) return;
@@ -482,7 +495,7 @@
       // El botón del menú ya avisó que es la versión del equipo: se abre aunque
       // la selección de fuentes esté en manual. Para elegir otra está
       // "Buscar otras fuentes" (sin autoplay).
-      if (local && autoplay) {
+      if (local && autoplay && !cancelado) {
         sources = [local];
         loading = false;
         await playFrom(0);
@@ -603,7 +616,9 @@
       // Modo manual: aunque se haya pedido autoplay, mostramos el selector con
       // la mejor fuente ya enfocada (focusIdx=0) para elegir con un Enter.
     } catch (e) {
-      error = String(e);
+      // Casi siempre es la red o un buscador caído: frase humana, el detalle
+      // al final, y "Rebuscar fuentes" queda a mano en el pie.
+      error = `No se pudo buscar fuentes. Revisa la conexión y prueba "🔄 Rebuscar fuentes". (${String(e).slice(0, 120)})`;
     } finally {
       loading = false;
     }
@@ -692,6 +707,7 @@
   async function launch(url: string, s: Src, desdeSegundos?: number) {
     if (!vivo) return;
     resolvingMsg = "Abriendo reproductor…";
+    resolvingDetalle = "";
     desdeLocal = !!s.local;
     // Contexto para el buscador de subtítulos global (SubsService).
     setNowPlaying(imdbId, title, season ?? null, episode ?? null, s.title || "", url);
@@ -1447,6 +1463,7 @@
     const mio = ++intento;
     const vigente = () => vivo && mio === intento;
     resolving = true;
+    resolvingDetalle = "";
     error = "";
     avisoLista = "";
     desdeTorrent = false;
@@ -1457,6 +1474,8 @@
     // Saltadas porque RD ya no pudo con ellas antes (rdFallas).
     let marcadas = 0;
     let lastErr = "";
+    // Cuántas se van a intentar de verdad (playFrom se rinde a las MAX_TRIES).
+    const tope = Math.max(1, Math.min(MAX_TRIES, view.length - startIdx));
     // TV: versiones que ya se sabe que no le sirven, y las que rechazó ahora.
     // Mejor fuente que resolvió pero NO trae español: respaldo si ninguna trae.
     let fallback: { url: string; s: Src; archivos: ArchivoPack[] } | null = null;
@@ -1506,8 +1525,9 @@
       dbg(`#${i} intento url=${!!s.url} magnet=${!!s.magnet} ${(s.title || "").slice(0, 40)}`);
       tried++;
       focusIdx = i;
+      resolvingDetalle = [QLABEL[s.quality], s.source].filter(Boolean).join(" · ");
       resolvingMsg =
-        `Probando fuente ${i + 1}/${view.length}${s.rd_cached ? " ⚡" : ""}…` +
+        `Probando fuente ${tried} de ${tope}${s.rd_cached ? " ⚡" : ""}…` +
         (blocked ? ` (${blocked} bloqueada${blocked > 1 ? "s" : ""})` : "") +
         (sinEs ? ` (${sinEs} sin español)` : "");
       try {
@@ -1763,6 +1783,7 @@
     oferta = { url, s, n, sinIdioma, revisadas: Math.max(revisadas, 1) };
     ofertaFoco = 0;
     ofertaSeg = OFERTA_SEG;
+    ofertaPausada = false;
     if (ofertaTimer) clearInterval(ofertaTimer);
     ofertaTimer = setInterval(() => {
       ofertaSeg--;
@@ -2371,9 +2392,24 @@
     dbg(`activate focusIdx=${focusIdx} back=${backIdx} web=${webIdx}`);
     if (focusIdx === backIdx) return onClose();
     if (focusIdx === webIdx) return onWeb();
+    if (focusIdx === rebuscarIdx) return rebuscar();
     if (!view[focusIdx]) return;
     if (descargarSolo) return void encolar(view[focusIdx]);
     void playFrom(focusIdx, true);
+  }
+
+  // Buscar de nuevo sin salir del selector (los errores mandaban a un
+  // "Rebuscar fuentes" que estaba en otra pantalla). La precarga ya se usó,
+  // así que load() pregunta a los scrapers otra vez. La lista nueva se elige
+  // a mano: nada arranca solo.
+  function rebuscar() {
+    intento++;
+    cancelado = true;
+    error = "";
+    avisoLista = "";
+    sources = [];
+    focusIdx = 0;
+    void load();
   }
 
   function scrollFocused() {
@@ -2468,7 +2504,10 @@
     if (oferta) {
       e.preventDefault();
       if (teclaTv) toggleDestino();
-      else if (["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(e.key)) ofertaFoco = 1 - ofertaFoco;
+      else if (["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(e.key)) {
+        pausarOferta();
+        ofertaFoco = 1 - ofertaFoco;
+      }
       else if (e.key === "Enter" || e.key === " ") void accionOferta(ofertaFoco === 0 ? "ver" : "otras");
       else if (e.key === "Escape" || e.key === "Backspace") void accionOferta("otras");
       return;
@@ -2685,6 +2724,7 @@
       <div class="sp-center">
         <span class="sp-spinner"></span>
         <p>Buscando fuentes…</p>
+        <span class="sp-hint">Esc para volver</span>
       </div>
     {:else if avisoRd}
       {@const a = avisoRd}
@@ -2716,35 +2756,48 @@
       <div class="sp-center">
         <p class="sp-tor-head">{o.sinIdioma ? `🔎 Sin ${idioma} en esta versión` : "⚡ Lista en Real-Debrid"}</p>
         <p class="sp-playing-title">{o.s.title}</p>
+        <!-- Qué pasa (arriba) y qué se puede hacer (abajo), por separado. -->
         {#if o.sinIdioma}
           <p class="sp-tor-why">
-            {o.revisadas > 1 ? `Ninguna de las ${o.revisadas} versiones revisadas trae` : "No trae"}
-            audio ni subtítulos en {idioma} dentro del archivo. Si la ves igual, se buscan
-            subtítulos aparte.
+            {o.revisadas > 1 ? `Ninguna de las ${o.revisadas} versiones revisadas trae` : "Esta versión no trae"}
+            audio ni subtítulos en {idioma}.
           </p>
+          <p class="sp-tor-que">Si la ves, se buscan subtítulos en {idioma} aparte.</p>
         {/if}
         {#if o.n}
           <p class="sp-tor-why">
-            {o.n === 1 ? "Otra versión quedó bloqueada" : `Otras ${o.n} versiones quedaron bloqueadas`}
-            por DMCA en Real-Debrid. Por torrent sí se pueden ver, por si alguna trae
-            mejor audio o subtítulos.
+            {o.n === 1 ? "Otra versión no abre" : `Otras ${o.n} versiones no abren`} en Real-Debrid
+            (bloqueo por derechos de autor).
           </p>
+          <p class="sp-tor-que">Se pueden ver por torrent, por si alguna trae mejor audio o subtítulos.</p>
         {/if}
         <div class="sp-cast-btns">
           <button
-            class="sp-foot-btn"
+            class="sp-foot-btn sp-oferta-ver"
             class:focused={ofertaFoco === 0}
             onclick={() => void accionOferta("ver")}
             onmouseenter={() => (ofertaFoco = 0)}
-          >▶ Ver esta ({ofertaSeg})</button>
+          >
+            {#if !ofertaPausada}
+              <span class="sp-oferta-cuenta" style:width="{(ofertaSeg / OFERTA_SEG) * 100}%"></span>
+            {/if}
+            <span class="sp-oferta-txt">▶ Ver esta{ofertaPausada ? "" : ` (${ofertaSeg})`}</span>
+          </button>
           <button
             class="sp-foot-btn"
             class:focused={ofertaFoco === 1}
             onclick={() => void accionOferta("otras")}
-            onmouseenter={() => (ofertaFoco = 1)}
+            onmouseenter={() => {
+              ofertaFoco = 1;
+              pausarOferta();
+            }}
           >{o.n ? "🧲 Ver las bloqueadas" : "📋 Ver las otras opciones"}</button>
         </div>
-        <span class="sp-hint">Arranca sola en {ofertaSeg} s · Esc para ver la lista</span>
+        <span class="sp-hint">
+          {ofertaPausada
+            ? "Enter para elegir · Esc para ver la lista"
+            : `Arranca sola en ${ofertaSeg} s · las flechas detienen la cuenta · Esc para ver la lista`}
+        </span>
       </div>
     {:else if rendicion}
       {@const m = rendicion}
@@ -2821,6 +2874,7 @@
       <div class="sp-center">
         <span class="sp-spinner"></span>
         <p>{resolvingMsg}</p>
+        {#if resolvingDetalle}<p class="sp-detalle">{resolvingDetalle}</p>{/if}
         <span class="sp-hint">Esc para cancelar</span>
       </div>
     {:else}
@@ -2911,6 +2965,15 @@
         <button
           data-nav
           class="sp-foot-btn"
+          class:focused={focusIdx === rebuscarIdx}
+          onclick={rebuscar}
+          onmouseenter={() => (focusIdx = rebuscarIdx)}
+        >
+          🔄 Rebuscar fuentes
+        </button>
+        <button
+          data-nav
+          class="sp-foot-btn"
           class:focused={focusIdx === backIdx}
           onclick={onClose}
           onmouseenter={() => (focusIdx = backIdx)}
@@ -2918,6 +2981,9 @@
           ← Volver
         </button>
       </footer>
+      <p class="sp-atajos">
+        <b>Enter</b> {descargarSolo ? "bajar" : "descubrir"} · <b>↑↓</b> elegir{#if showTabs} · <b>←→</b> tipo de fuente{/if}{#if cast.tv && !descargarSolo} · <b>T</b> TV o aquí{/if} · <b>Esc</b> volver
+      </p>
     {/if}
   </div>
 </div>
@@ -2998,13 +3064,28 @@
     gap: 14px;
     color: #c8c8d0;
   }
-  .sp-hint { color: #6e6e78; font-size: 12px; }
+  .sp-hint { color: #9a9aa4; font-size: 13px; }
+  .sp-detalle { margin: -4px 0 0; color: #b9b9c6; font-size: 14px; }
+  .sp-atajos { margin: 10px 0 0; color: #9a9aa4; font-size: 13px; }
+  .sp-atajos b { color: #d8d8e0; font-weight: 600; }
   /* Plan B: descarga local del torrent (debrid bloqueado por DMCA). */
   .sp-tor-head { margin: 0; font-size: 20px; font-weight: 700; color: #f3a951; }
   .sp-tor-why {
-    margin: 0; max-width: 460px; text-align: center;
-    color: #9a9aa6; font-size: 13px; line-height: 1.45;
+    margin: 0; max-width: 520px; text-align: center;
+    color: #b9b9c6; font-size: 15px; line-height: 1.45;
   }
+  .sp-tor-que {
+    margin: -2px 0 0; max-width: 520px; text-align: center;
+    color: #e6e6ec; font-size: 15px; line-height: 1.45;
+  }
+  /* Cuenta regresiva como barra que se vacía dentro del botón. */
+  .sp-oferta-ver { position: relative; overflow: hidden; }
+  .sp-oferta-cuenta {
+    position: absolute; left: 0; top: 0; bottom: 0;
+    background: rgba(243, 169, 81, 0.22);
+    transition: width 1s linear;
+  }
+  .sp-oferta-txt { position: relative; }
   .sp-tor-line { margin: 0; color: #e6e6ea; font-size: 14px; }
   .sp-tor-meta { margin: 0; color: #9a9aa6; font-size: 12px; }
   .sp-tor-slow { margin: 6px 0 0; color: #f3a951; font-size: 13px; }
