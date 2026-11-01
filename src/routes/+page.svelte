@@ -862,8 +862,9 @@
     volverDesde = "";
     // Limpiar de entrada: si algo de abajo falla, no queremos mostrar
     // la peli que estaba seleccionada antes (de un click previo) como si
-    // fuera la del handoff.
+    // fuera la del handoff. Tampoco que una ficha del grid en vuelo la pise.
     selected = null;
+    pickSeq++;
     mode = "browse";
 
     if (!apiKey) {
@@ -1489,9 +1490,11 @@
     if (!apiKey) return;
     if (mediaType !== "movie" && mediaType !== "tv") return;
     personOpen = null;
+    // Invalida una ficha del grid que siga en vuelo: no debe pisar esta.
+    const mio = ++pickSeq;
     try {
       const d = await invoke<Detail>("tmdb_detail", { mediaType, id, apiKey });
-      selected = d;
+      if (mio === pickSeq) selected = d;
     } catch (e) {
       console.warn("[tmdb_detail filmography] error", e);
     }
@@ -1580,27 +1583,35 @@
     };
   }
 
-  let pickPromise: { id: number; promise: Promise<Detail> } | null = null;
+  let pickPromise: { id: number; promise: Promise<Detail | null> } | null = null;
+  // Último pedido de ficha. Pasando rápido por las cards, la respuesta de una
+  // card anterior podía llegar después y pisar la ficha de la enfocada (y
+  // Enter abría esa otra). Solo el último pedido escribe; los viejos
+  // devuelven null y quien los esperaba no hace nada.
+  let pickSeq = 0;
 
   async function pick(it: ListItem): Promise<Detail | null> {
     if (!apiKey && tab !== "anime") return null;
     if (pickPromise && pickPromise.id === it.id) return pickPromise.promise;
+    const mio = ++pickSeq;
     detailLoading = true;
     const p = (async () => {
       try {
         const d = tab === "anime"
           ? await invoke<Detail>("anilist_detail", { id: it.id, apiKey })
           : await invoke<Detail>("tmdb_detail", { mediaType: tabToMediaType(tab), id: it.id, apiKey });
+        if (mio !== pickSeq) return null;
         selected = d;
         // Nuevo título → resetear el capítulo elegido.
         sourcesSeason = null;
         sourcesEpisode = null;
         return d;
       } catch (e) {
+        if (mio !== pickSeq) return null;
         listError = String(e);
         throw e;
       } finally {
-        detailLoading = false;
+        if (mio === pickSeq) detailLoading = false;
         if (pickPromise?.id === it.id) pickPromise = null;
       }
     })();
