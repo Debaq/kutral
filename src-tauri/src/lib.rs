@@ -39,6 +39,8 @@ mod vera;
 mod torrent;
 mod trailers;
 mod webserver;
+#[cfg(target_os = "linux")]
+mod webkit_scroll;
 mod wyzie;
 mod winproc;
 mod ytdlp;
@@ -611,6 +613,10 @@ pub fn run() {
                             settings.set_enable_mediasource(true);
                             settings.set_media_playback_requires_user_gesture(false);
                             settings.set_enable_webaudio(true);
+                            // Deadlock de WebKitGTK 2.54 al bajar con la rueda
+                            // por el grid (ver webkit_scroll.rs).
+                            use webkit2gtk::glib::object::ObjectType;
+                            unsafe { webkit_scroll::apagar_scroll_asincrono(settings.as_ptr() as *mut _) };
                         }
                         // El pellizco del touchpad ampliaba toda la interfaz
                         // (hasta ~200 %), como en un navegador. Llega por GDK
