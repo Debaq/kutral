@@ -171,6 +171,10 @@
   let resolving = $state(false);
   let resolvingMsg = $state("");
   let playing = $state(false);
+  // Cuándo arrancó el video (ms). Enter recién abierto suele ser el mismo
+  // Enter (o su repetición) que eligió la fuente: no debe cortarlo.
+  let playingDesde = 0;
+  const GRACIA_ENTER_MS = 1500;
   let playingTitle = $state("");
   // El botón "Cambiar fuente" del reproductor cierra mpv igual que salir, pero
   // no significa lo mismo: hay que quedarse en la lista para elegir otra, no
@@ -693,6 +697,7 @@
     }
     resolving = false;
     playing = true;
+    playingDesde = Date.now();
     playingTitle = s.title;
     startMpvPoll();
     // Hardsub: el subtítulo está QUEMADO en la imagen. No hay pista que
@@ -2393,9 +2398,15 @@
       return;
     }
     if (playing) {
-      if (e.key === "Escape" || e.key === "Backspace" || e.key === "Enter") {
+      if (e.key === "Escape" || e.key === "Backspace") {
         e.preventDefault();
         void stopMpv();
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        // Doble Enter del control (o la tecla mantenida) cortaba el video
+        // apenas abría. Enter detiene solo si es deliberado: sin repetición
+        // y pasado el arranque.
+        if (!e.repeat && Date.now() - playingDesde > GRACIA_ENTER_MS) void stopMpv();
       }
       return;
     }
