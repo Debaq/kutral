@@ -6,6 +6,8 @@
 </script>
 
 <script lang="ts">
+  import FondoDifuminado from "$lib/ui/FondoDifuminado.svelte";
+  import Spinner from "$lib/ui/Spinner.svelte";
   // Lista de fuentes torrent (estilo Stremio) para reproducir vía RealDebrid+mpv.
   // Autocontenido: hace la búsqueda, marca cacheadas (⚡), resuelve y lanza mpv.
   // Maneja su propio teclado (flechas/Enter/Esc) porque en este modo el page
@@ -2647,10 +2649,8 @@
 <svelte:window onkeydown={onKey} />
 
 <div class="sp-root">
-  {#if backdrop}
-    <div class="sp-bg" style:background-image="url({backdrop})"></div>
-  {/if}
-  <div class="sp-scrim"></div>
+  <FondoDifuminado src={backdrop} blur={10} escala={1.06}
+    velo="linear-gradient(90deg, rgba(8, 8, 12, 0.95) 0%, rgba(8, 8, 12, 0.72) 55%, rgba(8, 8, 12, 0.88) 100%), linear-gradient(0deg, rgba(8, 8, 12, 0.9) 0%, rgba(8, 8, 12, 0.25) 60%)" />
   <div class="sp-hint-back">Esc o Backspace para volver</div>
 
   <div class="sp-content">
@@ -2791,7 +2791,7 @@
       </div>
     {:else if loading}
       <div class="sp-center">
-        <span class="sp-spinner"></span>
+        <Spinner tam={34} />
         <p>{cargaMsg}</p>
         {#if cargaSeg >= 12}
           <p class="sp-detalle">Algunos buscadores tardan más de la cuenta ({cargaSeg} s). Sigue buscando…</p>
@@ -2903,7 +2903,7 @@
       </div>
     {:else if encolando}
       <div class="sp-center">
-        <span class="sp-spinner"></span>
+        <Spinner tam={34} />
         <p class="sp-tor-head">📥 Preparando la descarga</p>
         <p class="sp-tor-why">
           Buscando peers del torrent. Cuando termine te avisamos y queda lista
@@ -2912,7 +2912,7 @@
       </div>
     {:else if torrenting}
       <div class="sp-center">
-        <span class="sp-spinner"></span>
+        <Spinner tam={34} />
         <p class="sp-tor-head">📥 Bajándola a tu equipo</p>
         <p class="sp-tor-why">
           {rdLinked
@@ -2946,7 +2946,7 @@
       </div>
     {:else if resolving}
       <div class="sp-center">
-        <span class="sp-spinner"></span>
+        <Spinner tam={34} />
         <p>{resolvingMsg}</p>
         {#if resolvingDetalle}<p class="sp-detalle">{resolvingDetalle}</p>{/if}
         <span class="sp-hint">Esc para cancelar</span>
@@ -3071,21 +3071,6 @@
     background: var(--fondo);
     color: var(--texto);
   }
-  .sp-bg {
-    position: absolute;
-    inset: -40px;
-    background-size: cover;
-    background-position: center;
-    filter: blur(10px) saturate(1.1);
-    transform: scale(1.06);
-  }
-  .sp-scrim {
-    position: absolute;
-    inset: 0;
-    background:
-      linear-gradient(90deg, rgba(8, 8, 12, 0.95) 0%, rgba(8, 8, 12, 0.72) 55%, rgba(8, 8, 12, 0.88) 100%),
-      linear-gradient(0deg, rgba(8, 8, 12, 0.9) 0%, rgba(8, 8, 12, 0.25) 60%);
-  }
   .sp-grupo {
     margin: 10px 4px 4px;
     color: #b59770;
@@ -3180,14 +3165,6 @@
   .sp-bar-fill { height: 100%; background: var(--marca); transition: width .3s ease; }
   .sp-playing { margin: 0; font-size: 22px; font-weight: 700; color: var(--marca); }
   .sp-playing-title { margin: 0; color: var(--texto-2); font-size: 14px; max-width: 70%; text-align: center; }
-  .sp-spinner {
-    width: 34px; height: 34px;
-    border: 3px solid var(--borde);
-    border-top-color: var(--marca);
-    border-radius: 50%;
-    animation: sp-spin 1s linear infinite;
-  }
-  @keyframes sp-spin { to { transform: rotate(360deg); } }
   .sp-error { color: var(--error); font-size: 14px; margin: 0 0 12px; }
 
   .sp-list {

@@ -285,14 +285,6 @@
   font-style: normal; color: var(--texto-suave);
   font-variant-numeric: tabular-nums;
 }
-.cfg-root .spinner {
-  width: 12px; height: 12px;
-  border: 2px solid var(--borde);
-  border-top-color: var(--marca);
-  border-radius: 50%;
-  animation: cfg-spin 1s linear infinite;
-}
-@keyframes cfg-spin { to { transform: rotate(360deg); } }
 
 .cfg-root .btn-sec {
   background: var(--borde); color: var(--texto-suave);

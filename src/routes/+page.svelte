@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Spinner from "$lib/ui/Spinner.svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
@@ -3305,7 +3306,7 @@
           <div class="sentinel" use:attachObserver></div>
           {#if loadingMore}
             <div class="loading-more">
-              <span class="spinner"></span>
+              <Spinner tam={14} grosor={2} color="var(--amarillo)" />
               <span>Cargando más…</span>
             </div>
           {:else if !hasMore && items.length > 0}
@@ -3606,12 +3607,6 @@
     padding: 20px; color: var(--texto-4); font-size: 12px;
     letter-spacing: 0.5px; text-transform: uppercase;
   }
-  .spinner {
-    width: 14px; height: 14px; border-radius: 50%;
-    border: 2px solid var(--borde); border-top-color: var(--amarillo);
-    animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
   .end-mark .dash { width: 30px; height: 1px; background: #333; }
   .card {
     background: var(--superficie-1); border: 0; border-radius: 6px;

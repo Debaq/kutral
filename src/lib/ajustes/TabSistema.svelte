@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Spinner from "$lib/ui/Spinner.svelte";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { getVersion } from "@tauri-apps/api/app";
@@ -192,7 +193,7 @@
   {#if updStage === "idle"}
     <button data-nav class="btn-link" onclick={checkUpdate}>Buscar actualizaciones</button>
   {:else if updStage === "checking"}
-    <p class="upd-line"><span class="spinner"></span> Buscando…</p>
+    <p class="upd-line"><Spinner tam={12} grosor={2} /> Buscando…</p>
   {:else if updStage === "uptodate"}
     <p class="upd-line upd-ok">Estás al día.</p>
     <button data-nav class="link-tiny" onclick={checkUpdate}>Volver a buscar</button>
@@ -204,7 +205,7 @@
     <button data-nav class="btn-link" onclick={installUpdate}>Instalar y reiniciar</button>
     <button data-nav class="link-tiny" onclick={() => { updStage = "idle"; }}>Más tarde</button>
   {:else if updStage === "installing"}
-    <p class="upd-line"><span class="spinner"></span> Descargando…</p>
+    <p class="upd-line"><Spinner tam={12} grosor={2} /> Descargando…</p>
     {#if updTotal > 0}
       <div class="bar"><div class="bar-fill" style="width: {updPct()}%"></div></div>
       <p class="upd-mb">{updMb(updDownloaded)} / {updMb(updTotal)} MB · {updPct()}%</p>
@@ -212,7 +213,7 @@
       <p class="upd-mb">{updMb(updDownloaded)} MB</p>
     {/if}
   {:else if updStage === "ready"}
-    <p class="upd-line"><span class="spinner"></span> Reiniciando…</p>
+    <p class="upd-line"><Spinner tam={12} grosor={2} /> Reiniciando…</p>
   {:else if updStage === "error"}
     <p class="err">{updErr}</p>
     <button data-nav class="link-tiny" onclick={checkUpdate}>Reintentar</button>

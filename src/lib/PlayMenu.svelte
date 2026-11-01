@@ -1,4 +1,5 @@
 <script lang="ts">
+  import FondoDifuminado from "$lib/ui/FondoDifuminado.svelte";
   // Vista completa al entrar a un título. Paleta de la marca (oro / naranja
   // cálido sobre fondo cinematográfico). Sin iframe embebido para que el foco
   // no quede capturado y Esc/Backspace siempre puedan cerrar.
@@ -360,10 +361,8 @@
 <svelte:window onkeydown={onKey} />
 
 <div class="pm-root">
-  {#if backdropUrl}
-    <div class="pm-bg" style:background-image="url({backdropUrl})"></div>
-  {/if}
-  <div class="pm-scrim"></div>
+  <FondoDifuminado src={backdropUrl} blur={12} escala={1.08} opacidad={0.7}
+    velo="linear-gradient(90deg, rgba(13, 6, 4, 0.94) 0%, rgba(13, 6, 4, 0.78) 55%, rgba(13, 6, 4, 0.9) 100%), linear-gradient(0deg, rgba(13, 6, 4, 0.85) 0%, rgba(13, 6, 4, 0.15) 50%)" />
 
   <div class="pm-hint-back">Esc o Backspace para volver</div>
 
@@ -562,22 +561,6 @@
     background: var(--fondo);
     color: #ffe6c8;
     font-family: "Inter", system-ui, sans-serif;
-  }
-  .pm-bg {
-    position: absolute;
-    inset: -40px;
-    background-size: cover;
-    background-position: center;
-    filter: blur(12px) saturate(1.15);
-    transform: scale(1.08);
-    opacity: 0.7;
-  }
-  .pm-scrim {
-    position: absolute;
-    inset: 0;
-    background:
-      linear-gradient(90deg, rgba(13, 6, 4, 0.94) 0%, rgba(13, 6, 4, 0.78) 55%, rgba(13, 6, 4, 0.9) 100%),
-      linear-gradient(0deg, rgba(13, 6, 4, 0.85) 0%, rgba(13, 6, 4, 0.15) 50%);
   }
 
   .pm-hint-back {

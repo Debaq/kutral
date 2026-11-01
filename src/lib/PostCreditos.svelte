@@ -1,4 +1,5 @@
 <script lang="ts">
+  import FondoDifuminado from "$lib/ui/FondoDifuminado.svelte";
   // Pantalla de fin: lo que se ve cuando la película o el capítulo termina solo
   // (evento "mpv:fin"). Antes acá había un corte seco al catálogo.
   //
@@ -144,10 +145,8 @@
 <svelte:window onkeydown={onKey} />
 
 <div class="pc-root">
-  {#if backdrop}
-    <div class="pc-bg" style:background-image="url({backdrop})"></div>
-  {/if}
-  <div class="pc-scrim"></div>
+  <FondoDifuminado src={backdrop} blur={14} escala={1.06}
+    velo="linear-gradient(90deg, rgba(8, 8, 12, 0.95) 0%, rgba(8, 8, 12, 0.7) 55%, rgba(8, 8, 12, 0.9) 100%), linear-gradient(0deg, rgba(8, 8, 12, 0.92) 0%, rgba(8, 8, 12, 0.3) 60%)" />
 
   <div class="pc-content">
     <header class="pc-head">
@@ -220,21 +219,6 @@
     overflow: hidden;
     background: var(--fondo);
     color: var(--texto);
-  }
-  .pc-bg {
-    position: absolute;
-    inset: -40px;
-    background-size: cover;
-    background-position: center;
-    filter: blur(14px) saturate(1.1);
-    transform: scale(1.06);
-  }
-  .pc-scrim {
-    position: absolute;
-    inset: 0;
-    background:
-      linear-gradient(90deg, rgba(8, 8, 12, 0.95) 0%, rgba(8, 8, 12, 0.7) 55%, rgba(8, 8, 12, 0.9) 100%),
-      linear-gradient(0deg, rgba(8, 8, 12, 0.92) 0%, rgba(8, 8, 12, 0.3) 60%);
   }
   .pc-content {
     position: relative;

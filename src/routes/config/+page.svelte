@@ -5,6 +5,7 @@
 </script>
 
 <script lang="ts">
+  import Spinner from "$lib/ui/Spinner.svelte";
   import "$lib/ajustes/ajustes.css";
   import { onMount, onDestroy, tick } from "svelte";
   import { goto } from "$app/navigation";
@@ -202,7 +203,7 @@
             </div>
           </div>
         {:else if phoneBusy}
-          <p class="hint"><span class="spinner"></span> Conectando…</p>
+          <p class="hint"><Spinner tam={12} grosor={2} /> Conectando…</p>
         {/if}
         {#if phoneErr}<p class="err">{phoneErr}</p>{/if}
       </section>

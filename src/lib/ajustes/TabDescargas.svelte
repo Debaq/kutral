@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Spinner from "$lib/ui/Spinner.svelte";
   import { onMount } from "svelte";
   import {
     config,
@@ -184,7 +185,7 @@
       {/if}
     </div>
     {#if dirEstado === "probando"}
-      <p class="hint"><span class="spinner"></span> Comprobando…</p>
+      <p class="hint"><Spinner tam={12} grosor={2} /> Comprobando…</p>
     {:else if dirEstado === "ok"}
       <p class="hint dir-ok">✓ Se puede escribir en <em>{dirMsg}</em></p>
     {:else if dirEstado === "error"}

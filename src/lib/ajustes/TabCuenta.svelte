@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Spinner from "$lib/ui/Spinner.svelte";
   import { onMount, onDestroy } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { openUrl } from "@tauri-apps/plugin-opener";
@@ -619,7 +620,7 @@
       <p class="rd-step">2. Escribe este código:</p>
       <div class="rd-code">{rdLink.user_code}</div>
       <p class="rd-wait">
-        <span class="spinner"></span>
+        <Spinner tam={12} grosor={2} />
         Esperando autorización… <em>{fmtMmSs(secondsLeft)}</em>
       </p>
       <button data-nav class="btn-sec" onclick={cancelRd}>Cancelar</button>
@@ -876,7 +877,7 @@
         <p class="rd-step">2. Escribe este código:</p>
         <div class="rd-code">{llvLink.user_code}</div>
         <p class="rd-wait">
-          <span class="spinner"></span>
+          <Spinner tam={12} grosor={2} />
           Esperando autorización… <em>{fmtMmSs(llvSegundos)}</em>
         </p>
         <button data-nav class="btn-sec" onclick={llvCancelar}>Cancelar</button>

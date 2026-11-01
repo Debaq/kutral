@@ -1,4 +1,6 @@
 <script lang="ts">
+  import FondoDifuminado from "$lib/ui/FondoDifuminado.svelte";
+  import Spinner from "$lib/ui/Spinner.svelte";
   // Selector de temporada/episodio para la ruta debrid (series + anime).
   // 2 paneles: temporadas (izq) | episodios (der, carga perezosa vía
   // tmdb_season). Teclado propio: ←→ cambia panel, ↑↓ navega, Enter elige,
@@ -306,10 +308,8 @@
 <svelte:window onkeydown={onKey} />
 
 <div class="ep-root">
-  {#if backdrop}
-    <div class="ep-bg" style:background-image="url({backdrop})"></div>
-  {/if}
-  <div class="ep-scrim"></div>
+  <FondoDifuminado src={backdrop} blur={10} escala={1.06}
+    velo="linear-gradient(0deg, rgba(8, 8, 12, 0.95) 0%, rgba(8, 8, 12, 0.75) 60%, rgba(8, 8, 12, 0.5) 100%)" />
 
   <div class="ep-content">
     <header class="ep-head">
@@ -350,7 +350,7 @@
       <!-- Episodios -->
       <div class="ep-episodes" class:active={pane === "episodes"}>
         {#if loadingEps}
-          <div class="ep-center"><span class="ep-spinner"></span><p>Cargando episodios…</p></div>
+          <div class="ep-center"><Spinner tam={30} /><p>Cargando episodios…</p></div>
         {:else if epError}
           <div class="ep-error-box">
             <p class="ep-error">No se pudieron cargar los capítulos de esta temporada.</p>
@@ -419,19 +419,6 @@
     z-index: 50;
     overflow: hidden;
     background: var(--fondo);
-  }
-  .ep-bg {
-    position: absolute;
-    inset: -40px;
-    background-size: cover;
-    background-position: center;
-    filter: blur(10px) saturate(1.1);
-    transform: scale(1.06);
-  }
-  .ep-scrim {
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(0deg, rgba(8, 8, 12, 0.95) 0%, rgba(8, 8, 12, 0.75) 60%, rgba(8, 8, 12, 0.5) 100%);
   }
   .ep-content {
     position: relative;
@@ -678,19 +665,6 @@
     gap: 12px;
     height: 100%;
     color: var(--texto-2);
-  }
-  .ep-spinner {
-    width: 30px;
-    height: 30px;
-    border: 3px solid var(--borde);
-    border-top-color: var(--marca);
-    border-radius: 50%;
-    animation: ep-spin 1s linear infinite;
-  }
-  @keyframes ep-spin {
-    to {
-      transform: rotate(360deg);
-    }
   }
   .ep-error {
     margin: 0;
