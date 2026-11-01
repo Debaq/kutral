@@ -3048,6 +3048,19 @@
                 </div>
               </a>
 
+              <!-- Sin filtro para niños todavía (fase 2): en un perfil
+                   infantil no aparece. -->
+              {#if !ninos}
+                <a class="card libros-card" data-nav href="/audiolibros" title="Audiolibros">
+                  <div class="libros-poster">
+                    <div class="vera-title-poster">
+                      <span class="libros-marca">Audiolibros</span>
+                      <em>clásicos</em>
+                    </div>
+                  </div>
+                </a>
+              {/if}
+
               {#if tab !== "movie"}
                 <button class="card cat-card cat-movie" data-nav onclick={() => switchTab("movie")} title="Películas">
                   <div class="cat-poster">
@@ -3649,6 +3662,31 @@
     color: transparent;
   }
   .iptv-card em { color: #fca56b !important; text-shadow: 0 0 14px rgba(249, 115, 22, 0.45); }
+
+  /* Audiolibros — ámbar de lámpara de lectura. */
+  .libros-card { text-decoration: none; }
+  .libros-poster {
+    aspect-ratio: 2 / 1;
+    background: radial-gradient(ellipse at 50% 35%, #2a1d06 0%, #160f04 65%, #0a0702 100%);
+    position: relative; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .libros-poster::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background:
+      radial-gradient(circle at 30% 20%, rgba(245, 158, 11, 0.18), transparent 55%),
+      radial-gradient(circle at 70% 80%, rgba(253, 230, 138, 0.10), transparent 55%);
+  }
+  .libros-marca {
+    font-size: clamp(14px, 1.9vw, 22px);
+    font-weight: 800;
+    background-image: linear-gradient(90deg, #b45309, #f59e0b, #fde68a, #f59e0b, #b45309);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+  }
+  .libros-card em { color: #fcd34d !important; text-shadow: 0 0 14px rgba(245, 158, 11, 0.45); }
 
   /* Cards de categoría (Películas / Series / Anime) — reemplazan los tabs. */
   .cat-card {

@@ -32,11 +32,16 @@ novedades**.
 
 ### Fases
 
-1. **Catálogo y escucha básica**
-   - `src-tauri/src/audiolibros.rs`: `audiolibros_destacados(idioma, pagina)`,
-     `audiolibros_buscar(q, idioma, pagina)`, `audiolibro_detalle(id)` →
-     título, autor, descripción (HTML limpio), portada, capítulos
-     `[{titulo, url, segundos}]`. Reusar `client`/`fetch_json` y la caché.
+1. **Catálogo y escucha básica** — HECHA (2026-11-01, sin prueba real)
+   - Sin backend: Archive responde con CORS `*` y el CSP deja pedir https,
+     así que todo va en `src/lib/audiolibros.ts` (catálogo, ficha,
+     capítulos, idioma normalizado) con tests en `audiolibros.test.ts`.
+     LibriVox NO tiene CORS: para sus géneros (fase 2) sí hará falta Rust.
+   - Filtro Español / Inglés / Ambos (se recuerda en localStorage) y
+     etiqueta ES/EN en cada tarjeta y ficha.
+   - En perfil de niños no aparece la tarjeta y la página no carga nada.
+   - Al salir de `/audiolibros` el audio se corta (seguir sonando por la
+     app = fase 2).
    - Ruta propia `src/routes/audiolibros/+page.svelte`, como `/iptv` (NO dentro
      de `+page.svelte`, que ya pasa las 3.900 líneas). Tarjeta en el inicio
      junto a la de IPTV.
