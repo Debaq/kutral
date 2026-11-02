@@ -5,7 +5,8 @@
   import { getVersion } from "@tauri-apps/api/app";
   import { check, type Update } from "@tauri-apps/plugin-updater";
   import { relaunch } from "@tauri-apps/plugin-process";
-  import { config, LANGS, cambiarIdioma } from "$lib/config.svelte";
+  import { config, LANGS, cambiarIdioma, TAMANOS_UI, zoomUi } from "$lib/config.svelte";
+  import { guardar } from "./guardar.svelte";
   import { notify } from "$lib/notifStore.svelte";
   import { resetOnboarding } from "$lib/onboarding";
 
@@ -43,6 +44,8 @@
     if (kioskoPrevio) config.modeOverride = kioskoPrevio;
     modoAntes = config.modeOverride;
     kioskoPrevio = null;
+    // Cambio hecho por código: no dispara `change`, hay que guardarlo a mano.
+    guardar();
   }
   $effect(() => () => {
     if (kioskoTimer) clearInterval(kioskoTimer);
@@ -134,6 +137,25 @@
           onchange={() => cambiarIdioma(l.id)}
         />
         <span>{l.label}</span>
+      </label>
+    {/each}
+  </div>
+</section>
+
+<section class="block">
+  <h2>Tamaño de la interfaz</h2>
+  <p class="hint">
+    Agranda toda la app (textos, botones, carátulas). Útil en una TV grande o
+    a varios metros. Automático: según la pantalla, ahora
+    <strong>{Math.round(zoomUi("auto") * 100)} %</strong>.
+  </p>
+  <div class="mode-group tamanos">
+    {#each TAMANOS_UI as tam}
+      <label class="mode-card" class:sel={config.tamanoUi === tam}>
+        <input data-nav type="radio" name="tamanoUi" value={tam} bind:group={config.tamanoUi} />
+        <div>
+          <strong>{tam === "auto" ? "Automático" : `${Math.round(parseFloat(tam) * 100)} %`}</strong>
+        </div>
       </label>
     {/each}
   </div>

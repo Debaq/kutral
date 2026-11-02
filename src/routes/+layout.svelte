@@ -13,7 +13,8 @@
   import HistorialTracker from "$lib/HistorialTracker.svelte";
   import CastPill from "$lib/CastPill.svelte";
   import { cargarCast, recuperarTv } from "$lib/cast.svelte";
-  import { config, loadConfig, initDetection, initRd, refreshRdLinked } from "$lib/config.svelte";
+  import { config, loadConfig, initDetection, initRd, refreshRdLinked, zoomUi } from "$lib/config.svelte";
+  import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { onboardingHecho, faltaLoMinimo } from "$lib/onboarding";
   import { initTorrentSession, startQueuePoll, stopQueuePoll } from "$lib/torrents.svelte";
   import { setConcurrenciaScreening } from "$lib/screening.svelte";
@@ -300,6 +301,20 @@
     ultimaKeyWeb = k;
     void invoke("web_set_tmdb_key", { key: k }).catch((e) => {
       console.warn("[web key]", e);
+    });
+  });
+
+  // Tamaño de la interfaz: zoom de página del webview (WebKitGTK y WebView2).
+  // Escala todo de forma pareja, incluidos los clics: el `zoom` de CSS
+  // descuadraba las barras de progreso.
+  let zoomAplicado = 1;
+  $effect(() => {
+    if (!config.loaded) return;
+    const z = zoomUi(config.tamanoUi);
+    if (z === zoomAplicado) return;
+    zoomAplicado = z;
+    getCurrentWebview().setZoom(z).catch((e) => {
+      console.warn("[zoom]", e);
     });
   });
 

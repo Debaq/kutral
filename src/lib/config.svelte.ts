@@ -200,6 +200,25 @@ export const SUB_LANGS: { id: string; label: string }[] = [
 	{ id: "off", label: "Sin subtítulos" },
 ];
 
+export const TAMANOS_UI = ["auto", "1", "1.25", "1.5", "1.75", "2"] as const;
+export type TamanoUi = (typeof TAMANOS_UI)[number];
+
+/**
+ * Factor de zoom de la interfaz. En "auto": cuántas veces cabe un 1920 en el
+ * ancho de la pantalla (en px CSS, o sea ya con el escalado del sistema), de
+ * a cuartos, entre 1 y 2. Un 4K con el sistema al 200 % da 1; uno sin
+ * escalar (TV, Kütral OS) da 2.
+ */
+// Medido una sola vez, al cargar el módulo y antes de aplicar ningún zoom: el
+// zoom de página puede cambiar lo que reporta screen.width, y recalcular con
+// el ancho ya ampliado haría oscilar el "auto".
+const ANCHO_PANTALLA = typeof screen !== "undefined" ? screen.width : 1920;
+
+export function zoomUi(t: TamanoUi = config.tamanoUi): number {
+	if (t !== "auto") return parseFloat(t);
+	return Math.min(2, Math.max(1, Math.round((ANCHO_PANTALLA / 1920) * 4) / 4));
+}
+
 export const config = $state({
 	lang: "es-CL" as Lang,
 	tmdbKey: "",
@@ -215,6 +234,10 @@ export const config = $state({
 	// Sonido del fuego al abrir Kütral (lo lee también app.html, antes de que
 	// cargue la app: por eso vive en su propia clave de localStorage).
 	sonidoInicio: true,
+	// Tamaño de toda la interfaz (zoom de página del webview). "auto" lo
+	// calcula del ancho de la pantalla: una TV 4K sin escalado del sistema
+	// mostraba todo diminuto. Ver zoomUi().
+	tamanoUi: "auto" as TamanoUi,
 	screeningConcurrency: SCREENING_DEFAULT,
 	// Subtítulos: idioma preferido (ISO 639-1) y API key de Wyzie para buscar.
 	// Sin wyzieKey: el player intenta auto-buscar en OpenSubtitles (cuota limitada).
@@ -313,6 +336,8 @@ export function loadConfig() {
 	config.modeOverride = ["auto", "kiosk", "desktop"].includes(m) ? m : "auto";
 	config.pantallaCompleta = localStorage.getItem("pantalla_completa") === "1";
 	config.sonidoInicio = localStorage.getItem("sonido_inicio") !== "0";
+	const tu = localStorage.getItem("tamano_ui") || "auto";
+	config.tamanoUi = (TAMANOS_UI as readonly string[]).includes(tu) ? (tu as TamanoUi) : "auto";
 	const sc = parseInt(localStorage.getItem("screening_concurrency") || "", 10);
 	config.screeningConcurrency = clampConcurrency(sc);
 	const sl = localStorage.getItem("subs_lang") || "es";
@@ -458,6 +483,7 @@ export function saveConfig() {
 	localStorage.setItem("kiosk_mode", config.modeOverride);
 	localStorage.setItem("pantalla_completa", config.pantallaCompleta ? "1" : "0");
 	localStorage.setItem("sonido_inicio", config.sonidoInicio ? "1" : "0");
+	localStorage.setItem("tamano_ui", config.tamanoUi);
 	localStorage.setItem(
 		"screening_concurrency",
 		String(clampConcurrency(config.screeningConcurrency)),
