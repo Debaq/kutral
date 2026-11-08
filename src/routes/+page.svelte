@@ -2107,6 +2107,7 @@
       episode,
       kitsuId: d.kitsu_id ?? null,
       tmdbId: d.is_anime ? null : d.id,
+      anio: parseInt(d.year) || null,
     });
   }
 
@@ -2884,6 +2885,7 @@
     backdrop={selected.backdrop_path ? art(selected.backdrop_path, "w1280", 1280) : null}
     kitsuId={selected.kitsu_id ?? null}
     tmdbId={selected.is_anime ? null : selected.id}
+    anio={parseInt(selected.year) || null}
     rdLinked={config.rdLinked}
     autoplay={sourcesAutoplay}
     descargarSolo={sourcesDescargar}

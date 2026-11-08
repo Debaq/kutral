@@ -111,6 +111,9 @@ pub const BUSCADORES: &[Buscador] = &[
     Buscador { id: "torrentio", nombre: "Torrentio", descripcion: "Agregador de torrents de todo el mundo (el de Stremio). La base de casi todo.", tipos: &["movie", "series"], idioma: "multi", balandro: None },
     Buscador { id: "mediafusion", nombre: "MediaFusion", descripcion: "Otro agregador de torrents; suma versiones que Torrentio no tiene.", tipos: &["movie", "series"], idioma: "multi", balandro: None },
     Buscador { id: "pelispanda", nombre: "PelisPanda", descripcion: "Torrents en español latino y dual, con el idioma bien etiquetado.", tipos: &["movie", "series"], idioma: "es", balandro: Some("pelispanda") },
+    Buscador { id: "hacktorrent", nombre: "HackTorrent", descripcion: "Torrents de películas en español latino y dual (mismo motor que PelisPanda, otro catálogo).", tipos: &["movie"], idioma: "es", balandro: Some("hacktorrent") },
+    Buscador { id: "elitetorrent", nombre: "EliteTorrent", descripcion: "Películas y capítulos en latino y castellano; calidad variable (hay estrenos en TS).", tipos: &["movie", "series"], idioma: "es", balandro: Some("elitetorrent") },
+    Buscador { id: "grantorrent", nombre: "GranTorrent", descripcion: "Películas y series en castellano, con estrenos recientes.", tipos: &["movie", "series"], idioma: "es", balandro: Some("grantorrent") },
     Buscador { id: "yts", nombre: "YTS", descripcion: "Películas en inglés, livianas y de buena calidad.", tipos: &["movie"], idioma: "en", balandro: Some("yts") },
     Buscador { id: "eztv", nombre: "EZTV", descripcion: "Capítulos de series en inglés.", tipos: &["series"], idioma: "en", balandro: Some("eztv") },
     Buscador { id: "torrentio-kitsu", nombre: "Torrentio (anime)", descripcion: "Torrents de anime por capítulo exacto (ID de Kitsu).", tipos: &["anime"], idioma: "multi", balandro: None },
@@ -167,6 +170,7 @@ pub async fn fuentes_catalogo() -> Vec<BuscadorInfo> {
 /// `kitsu_id` (anime, vía ani.zip): habilita Torrentio por ID Kitsu, que es
 /// exacto por episodio — los anime suelen no tener IMDb o numerar distinto.
 /// `tmdb_id`: empareja exacto con los sitios que lo publican (pelispanda).
+/// `anio`: año del título, para los sitios que se emparejan por nombre.
 /// `apagadas`: ids de BUSCADORES que no se consultan (apagados a mano en
 /// Configuración o en pausa por fallar seguido).
 #[tauri::command]
@@ -180,6 +184,7 @@ pub async fn kodios_search(
     original_title: Option<String>,
     kitsu_id: Option<u64>,
     tmdb_id: Option<u64>,
+    anio: Option<u32>,
     apagadas: Option<Vec<String>>,
 ) -> Result<Busqueda, String> {
     let imdb_ok = imdb_id.starts_with("tt");
@@ -195,6 +200,7 @@ pub async fn kodios_search(
         original_title.unwrap_or_default(),
         kitsu_id,
         tmdb_id,
+        anio,
         apagadas.unwrap_or_default(),
     )
     .await)
@@ -210,6 +216,7 @@ async fn aggregate(
     original_title: String,
     kitsu_id: Option<u64>,
     tmdb_id: Option<u64>,
+    anio: Option<u32>,
     apagadas: Vec<String>,
 ) -> Busqueda {
     eprintln!("[kodios] search imdb={imdb} kind={kind} s={season:?} e={episode:?} kitsu={kitsu_id:?} apagadas={apagadas:?}");
@@ -237,14 +244,36 @@ async fn aggregate(
 
     // pelispanda: torrents en español con el idioma etiquetado. Por tmdb_id
     // (exacto) o, sin él, por título único (ver pelispanda::elegir).
-    if (kind == "movie" || kind == "series") && on("pelispanda") {
+    // Sitios en español: wpreact (pelispanda, hacktorrent) por tmdb_id; los
+    // de HTML (elitetorrent, grantorrent) por título + año.
+    if kind == "movie" || kind == "series" {
         let titulos: Vec<String> = [title.clone(), original_title.clone()]
             .into_iter()
             .filter(|t| !t.trim().is_empty())
             .collect();
-        if tmdb_id.is_some() || !titulos.is_empty() {
+        let hay = tmdb_id.is_some() || !titulos.is_empty();
+        if hay && on("pelispanda") {
+            let t = titulos.clone();
             tasks.push(("pelispanda", tokio::spawn(async move {
-                crate::pelispanda::pelispanda_search(tmdb_id, &titulos, season, episode).await
+                crate::pelispanda::wpreact_search(&crate::pelispanda::PELISPANDA, tmdb_id, &t, season, episode).await
+            })));
+        }
+        if hay && kind == "movie" && on("hacktorrent") {
+            let t = titulos.clone();
+            tasks.push(("hacktorrent", tokio::spawn(async move {
+                crate::pelispanda::wpreact_search(&crate::pelispanda::HACKTORRENT, tmdb_id, &t, season, episode).await
+            })));
+        }
+        if !titulos.is_empty() && on("elitetorrent") {
+            let t = titulos.clone();
+            tasks.push(("elitetorrent", tokio::spawn(async move {
+                crate::sitios_es::elitetorrent_search(&t, anio, season, episode).await
+            })));
+        }
+        if !titulos.is_empty() && on("grantorrent") {
+            let t = titulos.clone();
+            tasks.push(("grantorrent", tokio::spawn(async move {
+                crate::sitios_es::grantorrent_search(&t, anio, season, episode).await
             })));
         }
     }
@@ -333,7 +362,7 @@ async fn aggregate(
 }
 
 /// Sitios cuyo título trae el idioma puesto a mano (no el nombre del release).
-const ETIQUETAN_IDIOMA: &[&str] = &["pelispanda"];
+const ETIQUETAN_IDIOMA: &[&str] = &["pelispanda", "hacktorrent", "elitetorrent", "grantorrent"];
 
 /// Dedup por info_hash + merge (mejor seeders/size, acumula fuentes),
 /// luego ordena por calidad y seeders.
@@ -994,6 +1023,7 @@ mod tests {
             Some(1),
             "Frieren: Beyond Journey's End".into(),
             "Sousou no Frieren".into(),
+            None,
             None,
             None,
             Vec::new(),

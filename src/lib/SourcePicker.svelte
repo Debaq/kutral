@@ -132,6 +132,7 @@
     backdrop = null,
     kitsuId = null,
     tmdbId = null,
+    anio = null,
     rdLinked,
     autoplay = false,
     descargarSolo = false,
@@ -158,6 +159,9 @@
     // TMDb del título (null en anime de AniList): emparejamiento exacto en
     // los sitios que lo publican (pelispanda).
     tmdbId?: number | null;
+    // Año: los sitios que se emparejan por título lo usan para no confundir
+    // películas homónimas.
+    anio?: number | null;
     rdLinked: boolean;
     autoplay?: boolean;
     /**
@@ -558,6 +562,7 @@
           episode: episode ?? null,
           kitsuId: kitsuId ?? null,
           tmdbId: tmdbId ?? null,
+          anio: anio ?? null,
         });
       } catch (e) {
         // Sin internet no hay scrapers, pero la copia del disco sí se puede

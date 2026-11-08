@@ -1,4 +1,5 @@
-// pelispanda.rs — torrents en español (latino y dual) desde pelispanda.org.
+// pelispanda.rs — torrents en español (latino y dual) desde los sitios con la
+// API "wpreact": pelispanda.org y hacktorrent (mismo motor, otro catálogo).
 //
 // El sitio es un WordPress con API JSON propia (wp-json/wpreact/v1): sin
 // Cloudflare, sin HTML que raspar. Lo valioso es que cada versión trae el
@@ -16,9 +17,18 @@
 use crate::kodios::{Quality, Source};
 use serde_json::Value;
 
-/// Dominios de respaldo. El vigente llega de la lista de Balandro
-/// (dominios.rs), así un cambio de dominio no exige versión nueva.
-const MIRRORS: &[&str] = &["https://pelispanda.org"];
+/// Un sitio con la API wpreact. `id` es el del buscador y el canal de Balandro.
+pub struct Sitio {
+    pub id: &'static str,
+    /// Dominios de respaldo. El vigente llega de la lista de Balandro
+    /// (dominios.rs), así un cambio de dominio no exige versión nueva.
+    pub espejos: &'static [&'static str],
+}
+
+pub const PELISPANDA: Sitio = Sitio { id: "pelispanda", espejos: &["https://pelispanda.org"] };
+/// En series sus links pasan por un acortador cifrado: no son magnets y se
+/// descartan solos (ver `fuente`). Se usa para películas.
+pub const HACKTORRENT: Sitio = Sitio { id: "hacktorrent", espejos: &["https://hacktorrent.cc"] };
 
 /// Minúsculas, sin acentos ni puntuación: "Superman: Hijo rojo" y
 /// "superman hijo rojo" colapsan al mismo valor.
@@ -132,7 +142,7 @@ fn calidad(q: &str) -> Quality {
 /// El título lleva el idioma tal cual lo pone el sitio ("Latino/Inglés"): el
 /// picker lo lee (langScore) para ordenar según el idioma del usuario, y
 /// "Dual" cuando trae dos audios.
-fn fuente(d: &Value, nombre: &str) -> Option<Source> {
+fn fuente(d: &Value, nombre: &str, sitio: &str) -> Option<Source> {
     let magnet = texto(&d["download_link"]);
     if !magnet.starts_with("magnet:") {
         return None;
@@ -142,7 +152,7 @@ fn fuente(d: &Value, nombre: &str) -> Option<Source> {
     let dual = if idioma.contains('/') && !q.to_ascii_lowercase().contains("dual") { " Dual" } else { "" };
     let subs = if num(&d["subs"]).unwrap_or(0) > 0 { " +Subs" } else { "" };
     Some(Source {
-        source: "pelispanda".into(),
+        source: sitio.into(),
         title: format!("{nombre} [{q}]{dual} [{idioma}]{subs}"),
         magnet: Some(magnet.to_string()),
         url: None,
@@ -160,8 +170,9 @@ fn fuente(d: &Value, nombre: &str) -> Option<Source> {
     })
 }
 
-/// Fuentes de pelispanda para una película (sin temporada) o un capítulo.
-pub async fn pelispanda_search(
+/// Fuentes de un sitio wpreact para una película (sin temporada) o un capítulo.
+pub async fn wpreact_search(
+    sitio: &Sitio,
     tmdb_id: Option<u64>,
     titulos: &[String],
     season: Option<u32>,
@@ -170,7 +181,7 @@ pub async fn pelispanda_search(
     let serie = season.is_some() && episode.is_some();
     let mut elegida: Option<Ficha> = None;
     let mut base = String::new();
-    let espejos = crate::dominios::espejos("pelispanda", MIRRORS).await;
+    let espejos = crate::dominios::espejos(sitio.id, sitio.espejos).await;
     let espejos: Vec<&str> = espejos.iter().map(String::as_str).collect();
     for t in titulos.iter().filter(|t| !t.trim().is_empty()) {
         let path = format!(
@@ -178,7 +189,7 @@ pub async fn pelispanda_search(
             urlencoding::encode(t.trim())
         );
         let (b, cuerpo) = crate::net::get_first(&espejos, &path).await?;
-        let v: Value = serde_json::from_str(&cuerpo).map_err(|e| format!("pelispanda búsqueda: {e}"))?;
+        let v: Value = serde_json::from_str(&cuerpo).map_err(|e| format!("{} búsqueda: {e}", sitio.id))?;
         let resultados = v["results"].as_array().cloned().unwrap_or_default();
         if let Some(f) = elegir(&resultados, tmdb_id, serie, titulos) {
             elegida = Some(f);
@@ -186,8 +197,8 @@ pub async fn pelispanda_search(
             break;
         }
     }
-    let f = elegida.ok_or(format!("{}pelispanda sin coincidencia", crate::kodios::VACIO))?;
-    eprintln!("[pelispanda] {} ({}) → {}/{}", f.title, f.year, f.tipo, f.slug);
+    let f = elegida.ok_or(format!("{}{} sin coincidencia", crate::kodios::VACIO, sitio.id))?;
+    eprintln!("[{}] {} ({}) → {}/{}", sitio.id, f.title, f.year, f.tipo, f.slug);
 
     let ruta = match (serie, f.tipo.as_str()) {
         (false, _) => format!("/wp-json/wpreact/v1/movie/{}/", f.slug),
@@ -196,7 +207,7 @@ pub async fn pelispanda_search(
     };
     let url = format!("{}{}", base.trim_end_matches('/'), ruta);
     let cuerpo = crate::net::get_text(&url, Some(&base)).await?;
-    let v: Value = serde_json::from_str(&cuerpo).map_err(|e| format!("pelispanda ficha: {e}"))?;
+    let v: Value = serde_json::from_str(&cuerpo).map_err(|e| format!("{} ficha: {e}", sitio.id))?;
     let descargas = v["downloads"].as_array().cloned().unwrap_or_default();
 
     let out: Vec<Source> = if serie {
@@ -205,14 +216,14 @@ pub async fn pelispanda_search(
         descargas
             .iter()
             .filter(|d| num(&d["season"]) == Some(s) && num(&d["episode"]) == Some(e))
-            .filter_map(|d| fuente(d, &nombre))
+            .filter_map(|d| fuente(d, &nombre, sitio.id))
             .collect()
     } else {
         let nombre = if f.year.is_empty() { f.title.clone() } else { format!("{} ({})", f.title, f.year) };
-        descargas.iter().filter_map(|d| fuente(d, &nombre)).collect()
+        descargas.iter().filter_map(|d| fuente(d, &nombre, sitio.id)).collect()
     };
     if out.is_empty() {
-        return Err(format!("{}pelispanda {}: sin magnets para lo pedido", crate::kodios::VACIO, f.slug));
+        return Err(format!("{}{} {}: sin magnets para lo pedido", crate::kodios::VACIO, sitio.id, f.slug));
     }
     Ok(out)
 }
@@ -255,18 +266,18 @@ mod tests {
     fn fuente_lleva_idioma_calidad_y_hash() {
         let d = json!({"quality":"WEB-DL 1080p","size":"9.94 GB","subs":"1","language":"Latino/Inglés",
             "download_link":"magnet:?xt=urn:btih:0761280FC0AD8139100A3E44A50AF0D4D8BCDAAA&dn=x"});
-        let s = fuente(&d, "Superman (2025)").unwrap();
+        let s = fuente(&d, "Superman (2025)", "pelispanda").unwrap();
         assert_eq!(s.title, "Superman (2025) [WEB-DL 1080p] Dual [Latino/Inglés] +Subs");
         assert_eq!(s.quality, Quality::P1080);
         assert_eq!(s.size_bytes, Some(9_940_000_000));
         assert_eq!(s.info_hash.as_deref(), Some("0761280fc0ad8139100a3e44a50af0d4d8bcdaaa"));
         // "Dual 720p" ya dice Dual: no se repite.
         let d2 = json!({"quality":"Dual 720p","size":"1.56 GB","subs":"0","language":"Latino/Inglés","download_link":"magnet:?xt=urn:btih:abc"});
-        let s2 = fuente(&d2, "X").unwrap();
+        let s2 = fuente(&d2, "X", "pelispanda").unwrap();
         assert_eq!(s2.title, "X [Dual 720p] [Latino/Inglés]");
         assert!(s2.info_hash.is_none());
         // Lo que no es magnet no entra.
-        assert!(fuente(&json!({"download_link":"https://x"}), "X").is_none());
+        assert!(fuente(&json!({"download_link":"https://x"}), "X", "pelispanda").is_none());
     }
 
     #[test]
@@ -282,9 +293,9 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn pelispanda_e2e() {
-        let peli = pelispanda_search(Some(1061474), &["Superman".into()], None, None).await.unwrap();
+        let peli = wpreact_search(&PELISPANDA, Some(1061474), &["Superman".into()], None, None).await.unwrap();
         assert!(peli.iter().any(|s| s.title.contains("Latino")));
-        let cap = pelispanda_search(Some(100088), &["The Last of Us".into()], Some(1), Some(1)).await.unwrap();
+        let cap = wpreact_search(&PELISPANDA, Some(100088), &["The Last of Us".into()], Some(1), Some(1)).await.unwrap();
         assert!(!cap.is_empty());
         for s in peli.iter().chain(&cap) {
             println!("{} {:?}", s.title, s.size_bytes);

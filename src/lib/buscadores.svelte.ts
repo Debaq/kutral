@@ -140,6 +140,7 @@ export type PedidoKodios = {
   episode?: number;
   kitsuId?: number;
   tmdbId?: number;
+  anio?: number;
 };
 
 /** Busca fuentes con los buscadores encendidos y anota su salud. */

@@ -40,6 +40,9 @@ UA = {"User-Agent": "kutral-fuentes/1.0"}
 # los humanos de Balandro arreglaron algo y conviene revisar el nuestro.
 VIGILADOS = {
     "pelispanda": "src-tauri/src/pelispanda.rs",
+    "hacktorrent": "src-tauri/src/pelispanda.rs",
+    "elitetorrent": "src-tauri/src/sitios_es.rs",
+    "grantorrent": "src-tauri/src/sitios_es.rs",
     "jkanime": "src-tauri/src/anime_web.rs",
 }
 

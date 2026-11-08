@@ -178,7 +178,7 @@ fn jk_episode_embeds(base: &str, html: &str) -> Vec<String> {
 
 /// Base64 estándar (con o sin relleno). El `remote` de jkanime viene así y no
 /// vale una dependencia nueva por 20 líneas.
-fn b64_decode(s: &str) -> Option<Vec<u8>> {
+pub(crate) fn b64_decode(s: &str) -> Option<Vec<u8>> {
     let val = |c: u8| -> Option<u32> {
         Some(match c {
             b'A'..=b'Z' => (c - b'A') as u32,

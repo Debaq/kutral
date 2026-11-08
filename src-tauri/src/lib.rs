@@ -37,6 +37,7 @@ mod reposo_win;
 mod red_directa;
 mod screening;
 mod sistema;
+mod sitios_es;
 mod tmdb;
 mod vera;
 mod torrent;
