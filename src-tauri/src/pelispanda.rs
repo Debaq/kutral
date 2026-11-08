@@ -81,7 +81,7 @@ fn elegir(resultados: &[Value], tmdb_id: Option<u64>, serie: bool, titulos: &[St
         })
         .collect();
     match iguales.as_slice() {
-        [uno] => Some(ficha(*uno)),
+        [uno] => Some(ficha(uno)),
         _ => None,
     }
 }
