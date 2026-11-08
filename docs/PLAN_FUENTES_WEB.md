@@ -110,6 +110,9 @@ y anime. Mismos magnets que mega1080 (mismo grupo), pero con mejor API.
    `fuentes-balandro.yml` → rama de datos `fuentes` (`balandro.json`) + issue
    cuando cambia un canal vigilado (pelispanda, jkanime). Kütral toma de ahí el
    dominio vigente (`src-tauri/src/dominios.rs`).
-3. Lista de fuentes con salud automática en Configuración.
+3. ✅ Configuración → Fuentes (ff82525): interruptor por buscador, salud por
+   equipo (ok/vacío/falla/timeout; 3 fallas seguidas → pausa 6 h), datos de
+   Balandro. Orden: en doblado el audio en tu idioma gana a "al instante"; el
+   merge por hash conserva el título con idioma; proveedor legible en la fila.
 4. Descarga HTTP de lo que da RD (así el anime de jkanime también se baja).
 5. Más sitios (elitetorrent, divxtotal, mitorrent…), uno por uno.
