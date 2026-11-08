@@ -128,6 +128,24 @@ fn to_addrs(ips: Vec<IpAddr>) -> Addrs {
     Box::new(ips.into_iter().map(|ip| SocketAddr::new(ip, 0)))
 }
 
+/// Como `scrape_client`, pero sin seguir redirecciones: hay sitios que
+/// entregan el link del hoster en el `Location` de un 302.
+pub fn scrape_client_sin_redireccion() -> Result<reqwest::Client, String> {
+    static CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            let resolver = Arc::new(DohResolver::new()?);
+            reqwest::Client::builder()
+                .user_agent(SCRAPE_UA)
+                .timeout(Duration::from_secs(SCRAPE_TIMEOUT_S))
+                .dns_resolver(resolver)
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .map_err(|e| format!("scrape client: {e}"))
+        })
+        .clone()
+}
+
 /// Cliente compartido de scraping. Único para toda la app: así la caché DNS y
 /// el pool de conexiones se reaprovechan entre sitios.
 pub fn scrape_client() -> Result<reqwest::Client, String> {

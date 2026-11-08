@@ -43,6 +43,9 @@ VIGILADOS = {
     "hacktorrent": "src-tauri/src/pelispanda.rs",
     "elitetorrent": "src-tauri/src/sitios_es.rs",
     "grantorrent": "src-tauri/src/sitios_es.rs",
+    "henaojaran": "src-tauri/src/hosters_es.rs",
+    "animeflvone": "src-tauri/src/hosters_es.rs",
+    "peliculaspro": "src-tauri/src/hosters_es.rs",
     "jkanime": "src-tauri/src/anime_web.rs",
 }
 

@@ -22,7 +22,7 @@ use sha1::{Digest, Sha1};
 // ---- Utilidades ------------------------------------------------------------
 
 /// Minúsculas, sin acentos ni puntuación.
-fn norm(s: &str) -> String {
+pub(crate) fn norm(s: &str) -> String {
     tokens(s).join("")
 }
 
@@ -58,7 +58,7 @@ const RELLENO: &[&str] = &[
 ];
 
 /// Título del sitio sin el relleno final ni un año suelto al final.
-fn titulo_limpio(s: &str) -> String {
+pub(crate) fn titulo_limpio(s: &str) -> String {
     let mut t = tokens(s);
     while let Some(u) = t.last() {
         let anio = u.len() == 4 && u.chars().all(|c| c.is_ascii_digit()) && t.len() > 1;
@@ -72,13 +72,13 @@ fn titulo_limpio(s: &str) -> String {
 }
 
 /// ¿El título del sitio es alguno de los que buscamos?
-fn coincide(del_sitio: &str, titulos: &[String]) -> bool {
+pub(crate) fn coincide(del_sitio: &str, titulos: &[String]) -> bool {
     let a = titulo_limpio(del_sitio);
     !a.is_empty() && titulos.iter().any(|t| norm(t) == a)
 }
 
 /// Entidades HTML que aparecen en estos títulos.
-fn des_html(s: &str) -> String {
+pub(crate) fn des_html(s: &str) -> String {
     s.replace("&#215;", "×")
         .replace("&times;", "×")
         .replace("&amp;", "&")
@@ -88,10 +88,11 @@ fn des_html(s: &str) -> String {
         .replace("&quot;", "\"")
         .replace("&ntilde;", "ñ")
         .replace("&nbsp;", " ")
+        .replace("&#038;", "&")
 }
 
 /// Texto sin etiquetas, con espacios colapsados.
-fn sin_tags(s: &str) -> String {
+pub(crate) fn sin_tags(s: &str) -> String {
     let mut out = String::new();
     let mut dentro = false;
     for c in s.chars() {
@@ -109,7 +110,7 @@ fn sin_tags(s: &str) -> String {
 }
 
 /// "Temporada 2×1" / "2x01" al final de un texto → (2, 1).
-fn sxe(s: &str) -> Option<(u32, u32)> {
+pub(crate) fn sxe(s: &str) -> Option<(u32, u32)> {
     let t = des_html(s).replace('×', "x").to_ascii_lowercase();
     let b = t.as_bytes();
     // Busca desde el final el último "N x M".
@@ -167,7 +168,7 @@ fn destino_acortador(i: &str) -> Option<String> {
 }
 
 /// Hasta `n` caracteres de `s` desde el byte `i` (sin cortar una letra a la mitad).
-fn trozo(s: &str, i: usize, n: usize) -> &str {
+pub(crate) fn trozo(s: &str, i: usize, n: usize) -> &str {
     let r = s.get(i..).unwrap_or("");
     let fin = r.char_indices().nth(n).map(|(j, _)| j).unwrap_or(r.len());
     &r[..fin]
@@ -192,7 +193,7 @@ fn campo(html: &str, etiqueta: &str) -> Option<String> {
 }
 
 /// Primer año de 4 cifras (1900-2099) del texto.
-fn anio_de(s: &str) -> Option<u32> {
+pub(crate) fn anio_de(s: &str) -> Option<u32> {
     let b = s.as_bytes();
     (0..b.len().saturating_sub(3)).find_map(|i| {
         let w = &b[i..i + 4];
@@ -206,7 +207,7 @@ fn anio_de(s: &str) -> Option<u32> {
     })
 }
 
-fn anio_ok(pedido: Option<u32>, del_sitio: Option<u32>) -> bool {
+pub(crate) fn anio_ok(pedido: Option<u32>, del_sitio: Option<u32>) -> bool {
     match (pedido, del_sitio) {
         (Some(a), Some(b)) => a.abs_diff(b) <= 1,
         _ => true,
@@ -230,7 +231,7 @@ fn tamano(s: &str) -> Option<u64> {
     Some((n * mult) as u64)
 }
 
-fn calidad(q: &str) -> Quality {
+pub(crate) fn calidad(q: &str) -> Quality {
     let q = q.to_ascii_lowercase();
     if q.contains("2160") || q.contains("4k") {
         Quality::P2160
@@ -248,7 +249,7 @@ fn calidad(q: &str) -> Quality {
 }
 
 /// Idioma tal como lo lee el picker (langScore): Latino, Castellano, VOSE.
-fn idioma(s: &str) -> String {
+pub(crate) fn idioma(s: &str) -> String {
     let t = s.to_lowercase();
     if t.contains("latino") {
         "Latino".into()
@@ -379,11 +380,11 @@ async fn bajar_bytes(url: &str, referer: &str) -> Result<Vec<u8>, String> {
     r.bytes().await.map(|b| b.to_vec()).map_err(|e| format!("body {url}: {e}"))
 }
 
-async fn espejos(canal: &str, fijos: &[&str]) -> Vec<String> {
+pub(crate) async fn espejos(canal: &str, fijos: &[&str]) -> Vec<String> {
     crate::dominios::espejos(canal, fijos).await
 }
 
-async fn pagina(espejos: &[String], path: &str) -> Result<(String, String), String> {
+pub(crate) async fn pagina(espejos: &[String], path: &str) -> Result<(String, String), String> {
     let refs: Vec<&str> = espejos.iter().map(String::as_str).collect();
     crate::net::get_first(&refs, path).await
 }

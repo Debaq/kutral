@@ -10,6 +10,7 @@ mod cuenta;
 mod descarga_http;
 mod dlna;
 mod dominios;
+mod hosters_es;
 mod kitsu;
 mod kodios;
 mod llavero;

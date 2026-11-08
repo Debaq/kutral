@@ -46,6 +46,23 @@ struct TorrentFile {
 #[derive(Deserialize)]
 struct Unrestrict {
     download: String, // URL directa reproducible
+    #[serde(default)]
+    filename: String,
+    #[serde(default, rename = "mimeType")]
+    mime: String,
+}
+
+/// ¿Es un comprimido? RD abre el link igual, pero un .rar no se reproduce ni
+/// sirve bajado: los sitios de descargas suben así muchas películas.
+fn es_comprimido(filename: &str, mime: &str) -> bool {
+    let f = filename.to_ascii_lowercase();
+    let ext = [".rar", ".zip", ".7z", ".tar", ".gz", ".r00", ".001"];
+    ext.iter().any(|e| f.ends_with(e))
+        || f.contains(".part1.rar")
+        || mime.contains("rar")
+        || mime.contains("zip")
+        || mime.contains("7z")
+        || mime.contains("x-tar")
 }
 
 fn client() -> Result<reqwest::Client, String> {
@@ -115,6 +132,10 @@ async fn select_files(
 }
 
 async fn unrestrict(cli: &reqwest::Client, token: &str, link: &str) -> Result<String, String> {
+    unrestrict_info(cli, token, link).await.map(|u| u.download)
+}
+
+async fn unrestrict_info(cli: &reqwest::Client, token: &str, link: &str) -> Result<Unrestrict, String> {
     let r = cli
         .post(format!("{BASE}/unrestrict/link"))
         .header("Authorization", bearer(token))
@@ -130,8 +151,7 @@ async fn unrestrict(cli: &reqwest::Client, token: &str, link: &str) -> Result<St
         }
         return Err(format!("unrestrict {}", r.status()));
     }
-    let v: Unrestrict = r.json().await.map_err(|e| format!("unrestrict parse: {e}"))?;
-    Ok(v.download)
+    r.json().await.map_err(|e| format!("unrestrict parse: {e}"))
 }
 
 /// Lo que sale de resolver un magnet: la URL del capítulo y, si el torrent
@@ -574,11 +594,16 @@ pub async fn rd_unrestrict(app: tauri::AppHandle, link: String) -> Result<String
         return Err("link vacío".into());
     }
     let link = link.trim();
-    con_token(&app, |token| async move {
+    let u = con_token(&app, |token| async move {
         let cli = client()?;
-        unrestrict(&cli, &token, link).await
+        unrestrict_info(&cli, &token, link).await
     })
-    .await
+    .await?;
+    if es_comprimido(&u.filename, &u.mime) {
+        // Quien llama prueba la copia siguiente (otro hoster, otro idioma).
+        return Err(format!("COMPRIMIDO: {} no se puede reproducir", u.filename));
+    }
+    Ok(u.download)
 }
 
 /// Devuelve qué info_hashes ya están cacheados en RD (para badge "instantáneo").
@@ -861,5 +886,17 @@ pub(crate) async fn esperar_vinculacion(
             client_secret: creds.client_secret,
             expires_at: now + t.expires_in,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests_comprimidos {
+    #[test]
+    fn comprimidos_se_detectan() {
+        assert!(super::es_comprimido("SPRM4N2025-1080p.rar", "application/x-rar-compressed"));
+        assert!(super::es_comprimido("peli.part1.rar", ""));
+        assert!(super::es_comprimido("x.bin", "application/zip"));
+        assert!(!super::es_comprimido("TLU.S01E01.mkv", "video/x-matroska"));
+        assert!(!super::es_comprimido("001.mp4", "video/mp4"));
     }
 }

@@ -114,11 +114,14 @@ pub const BUSCADORES: &[Buscador] = &[
     Buscador { id: "hacktorrent", nombre: "HackTorrent", descripcion: "Torrents de películas en español latino y dual (mismo motor que PelisPanda, otro catálogo).", tipos: &["movie"], idioma: "es", balandro: Some("hacktorrent") },
     Buscador { id: "elitetorrent", nombre: "EliteTorrent", descripcion: "Películas y capítulos en latino y castellano; calidad variable (hay estrenos en TS).", tipos: &["movie", "series"], idioma: "es", balandro: Some("elitetorrent") },
     Buscador { id: "grantorrent", nombre: "GranTorrent", descripcion: "Películas y series en castellano, con estrenos recientes.", tipos: &["movie", "series"], idioma: "es", balandro: Some("grantorrent") },
+    Buscador { id: "peliculaspro", nombre: "PeliculasPro", descripcion: "Películas y series en latino y castellano, con copias en Mega, Mediafire o 1fichier vía Real-Debrid (sobre todo series).", tipos: &["movie", "series"], idioma: "es", balandro: Some("peliculaspro") },
     Buscador { id: "yts", nombre: "YTS", descripcion: "Películas en inglés, livianas y de buena calidad.", tipos: &["movie"], idioma: "en", balandro: Some("yts") },
     Buscador { id: "eztv", nombre: "EZTV", descripcion: "Capítulos de series en inglés.", tipos: &["series"], idioma: "en", balandro: Some("eztv") },
     Buscador { id: "torrentio-kitsu", nombre: "Torrentio (anime)", descripcion: "Torrents de anime por capítulo exacto (ID de Kitsu).", tipos: &["anime"], idioma: "multi", balandro: None },
     Buscador { id: "animetosho", nombre: "AnimeTosho", descripcion: "Releases de anime de los fansubs, casi todo con subtítulos en inglés.", tipos: &["anime"], idioma: "en", balandro: None },
     Buscador { id: "nyaa", nombre: "Nyaa", descripcion: "El índice de anime más grande; subtítulos en inglés.", tipos: &["anime"], idioma: "en", balandro: None },
+    Buscador { id: "henaojara", nombre: "Henaojara", descripcion: "Anime con subtítulos en español; copias en VOE, Mixdrop o Mega vía Real-Debrid (lo reciente abre, lo viejo suele estar caído).", tipos: &["anime"], idioma: "es", balandro: Some("henaojaran") },
+    Buscador { id: "animeflv", nombre: "AnimeFLV", descripcion: "Anime con subtítulos en español; copias en Mega o Streamtape vía Real-Debrid.", tipos: &["anime"], idioma: "es", balandro: Some("animeflvone") },
     Buscador { id: "jkanime", nombre: "JKAnime", descripcion: "Anime con subtítulos en español ya dentro del video, y copias en Mega o Mediafire vía Real-Debrid.", tipos: &["anime"], idioma: "es", balandro: Some("jkanime") },
 ];
 
@@ -270,6 +273,12 @@ async fn aggregate(
                 crate::sitios_es::elitetorrent_search(&t, anio, season, episode).await
             })));
         }
+        if !titulos.is_empty() && on("peliculaspro") {
+            let t = titulos.clone();
+            tasks.push(("peliculaspro", tokio::spawn(async move {
+                crate::hosters_es::pelispro_search(&t, anio, season, episode).await
+            })));
+        }
         if !titulos.is_empty() && on("grantorrent") {
             let t = titulos.clone();
             tasks.push(("grantorrent", tokio::spawn(async move {
@@ -312,6 +321,13 @@ async fn aggregate(
                 .into_iter()
                 .filter(|t| !t.trim().is_empty())
                 .collect();
+            // Henaojara y AnimeFLV: copias en hosters para Real-Debrid.
+            for (id, sitio) in [("henaojara", &crate::hosters_es::HENAOJARA), ("animeflv", &crate::hosters_es::ANIMEFLV)] {
+                if !titles.is_empty() && on(id) {
+                    let t = titles.clone();
+                    tasks.push((id, tokio::spawn(async move { crate::hosters_es::flv_search(sitio, &t, episode).await })));
+                }
+            }
             if !titles.is_empty() && on("jkanime") {
                 tasks.push(("jkanime", tokio::spawn(async move {
                     crate::anime_web::jkanime_search(&titles, episode).await
@@ -362,7 +378,7 @@ async fn aggregate(
 }
 
 /// Sitios cuyo título trae el idioma puesto a mano (no el nombre del release).
-const ETIQUETAN_IDIOMA: &[&str] = &["pelispanda", "hacktorrent", "elitetorrent", "grantorrent"];
+const ETIQUETAN_IDIOMA: &[&str] = &["pelispanda", "hacktorrent", "elitetorrent", "grantorrent", "peliculaspro"];
 
 /// Dedup por info_hash + merge (mejor seeders/size, acumula fuentes),
 /// luego ordena por calidad y seeders.

@@ -203,6 +203,9 @@ const PROVEEDOR: Record<string, string> = {
   animetosho: "AnimeTosho",
   nyaa: "Nyaa",
   jkanime: "JKAnime",
+  henaojara: "Henaojara",
+  animeflv: "AnimeFLV",
+  peliculaspro: "PeliculasPro",
   "jkanime-rd": "JKAnime vía Real-Debrid",
 };
 
