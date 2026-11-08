@@ -114,5 +114,12 @@ y anime. Mismos magnets que mega1080 (mismo grupo), pero con mejor API.
    equipo (ok/vacío/falla/timeout; 3 fallas seguidas → pausa 6 h), datos de
    Balandro. Orden: en doblado el audio en tu idioma gana a "al instante"; el
    merge por hash conserva el título con idioma; proveedor legible en la fila.
-4. Descarga HTTP de lo que da RD (así el anime de jkanime también se baja).
-5. Más sitios (elitetorrent, divxtotal, mitorrent…), uno por uno.
+4. ✅ Descarga HTTP con Real-Debrid (e539d4d): descarga_http.rs, en la misma
+   cola que los torrents; RD primero si está vinculado, torrent si RD no puede.
+5. ✅ hacktorrent, elitetorrent, grantorrent (860850d). Sondeados y aplazados:
+   divxtotal y subtorrents (HTML por título, .torrent; fáciles con sitios_es),
+   mitorrent (mismos magnets que pelispanda, exige clave AES de Balandro),
+   series de hacktorrent (acortador cifrado).
+6. Anime en español: Balandro tiene ~25 canales activos (animeflv, animeav1,
+   tioanime, latanime, henaojara…), casi todos streaming con hosters: mismo
+   camino que jkanime (copias vía Real-Debrid).
