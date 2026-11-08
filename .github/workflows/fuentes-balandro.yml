@@ -1,0 +1,61 @@
+name: Fuentes (Balandro)
+
+# Una vez al día lee Balandro (repobal/base + repobal/fix) SIN ejecutar su
+# código y actualiza la rama de datos `fuentes` con los sitios vivos y sus
+# dominios. Si un canal que Kütral usa cambió, abre un aviso para revisar
+# nuestro scraper. Ver scripts/fuentes_balandro.py.
+on:
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: fuentes-balandro
+  cancel-in-progress: false
+
+jobs:
+  actualizar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Rama de datos
+        uses: actions/checkout@v5
+        with:
+          ref: fuentes
+          path: datos
+
+      - name: Leer Balandro
+        run: |
+          python3 -I scripts/fuentes_balandro.py \
+            --previo datos/balandro.json \
+            --salida datos/balandro.json \
+            --cambios cambios.md
+
+      - name: Publicar si cambió
+        working-directory: datos
+        run: |
+          if git diff --quiet; then
+            echo "sin cambios"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "datos: fuentes desde Balandro $(jq -r .version balandro.json)"
+          git push
+
+      - name: Avisar cambios en canales que usamos
+        if: hashFiles('cambios.md') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          titulo="Balandro cambió canales que usa Kütral ($(jq -r .version datos/balandro.json))"
+          if gh issue list --state open --search "in:title \"$titulo\"" --json number --jq '.[0].number' | grep -q .; then
+            echo "ya hay un aviso abierto"
+          else
+            gh issue create --title "$titulo" --body-file cambios.md
+          fi

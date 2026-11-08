@@ -16,7 +16,8 @@
 use crate::kodios::{Quality, Source};
 use serde_json::Value;
 
-/// Dominios en orden de preferencia (el sitio cambia de dominio cada tanto).
+/// Dominios de respaldo. El vigente llega de la lista de Balandro
+/// (dominios.rs), así un cambio de dominio no exige versión nueva.
 const MIRRORS: &[&str] = &["https://pelispanda.org"];
 
 /// Minúsculas, sin acentos ni puntuación: "Superman: Hijo rojo" y
@@ -169,12 +170,14 @@ pub async fn pelispanda_search(
     let serie = season.is_some() && episode.is_some();
     let mut elegida: Option<Ficha> = None;
     let mut base = String::new();
+    let espejos = crate::dominios::espejos("pelispanda", MIRRORS).await;
+    let espejos: Vec<&str> = espejos.iter().map(String::as_str).collect();
     for t in titulos.iter().filter(|t| !t.trim().is_empty()) {
         let path = format!(
             "/wp-json/wpreact/v1/search?query={}&posts_per_page=20&page=1",
             urlencoding::encode(t.trim())
         );
-        let (b, cuerpo) = crate::net::get_first(MIRRORS, &path).await?;
+        let (b, cuerpo) = crate::net::get_first(&espejos, &path).await?;
         let v: Value = serde_json::from_str(&cuerpo).map_err(|e| format!("pelispanda búsqueda: {e}"))?;
         let resultados = v["results"].as_array().cloned().unwrap_or_default();
         if let Some(f) = elegir(&resultados, tmdb_id, serie, titulos) {

@@ -8,6 +8,7 @@ mod creds;
 mod boveda;
 mod cuenta;
 mod dlna;
+mod dominios;
 mod kitsu;
 mod kodios;
 mod llavero;

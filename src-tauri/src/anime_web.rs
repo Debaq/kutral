@@ -21,8 +21,9 @@ use crate::kodios::{Quality, Source};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-/// Dominios de jkanime, en orden de preferencia. Si el primero cae (o está
-/// bloqueado por IP, que DoH no saltea), se prueba el siguiente.
+/// Dominios de jkanime de respaldo. El vigente llega de la lista de Balandro
+/// (dominios.rs); si uno cae (o está bloqueado por IP, que DoH no saltea), se
+/// prueba el siguiente.
 const JK_MIRRORS: &[&str] = &["https://jkanime.net"];
 
 // ---- Utilidades de parseo (sin crate de regex: el HTML es estable y chico) --
@@ -96,7 +97,9 @@ async fn jk_find_slug(titles: &[String]) -> Option<(String, String)> {
             return Some((slug, t.clone()));
         }
         let path = format!("/buscar/{}/", urlencoding::encode(t.trim()));
-        let (_, html) = match crate::net::get_first(JK_MIRRORS, &path).await {
+        let espejos = crate::dominios::espejos("jkanime", JK_MIRRORS).await;
+        let espejos: Vec<&str> = espejos.iter().map(String::as_str).collect();
+        let (_, html) = match crate::net::get_first(&espejos, &path).await {
             Ok(v) => v,
             Err(e) => {
                 eprintln!("[jkanime] búsqueda '{t}' falló: {e}");
@@ -317,7 +320,9 @@ pub async fn jkanime_search(titles: &[String], episode: Option<u32>) -> Result<V
     let ep = episode.unwrap_or(1);
     let (slug, matched) = jk_find_slug(titles).await.ok_or("jkanime: sin coincidencia de título")?;
     eprintln!("[jkanime] '{matched}' → slug={slug} ep={ep}");
-    let (base, html) = crate::net::get_first(JK_MIRRORS, &format!("/{slug}/{ep}/")).await?;
+    let espejos = crate::dominios::espejos("jkanime", JK_MIRRORS).await;
+    let espejos: Vec<&str> = espejos.iter().map(String::as_str).collect();
+    let (base, html) = crate::net::get_first(&espejos, &format!("/{slug}/{ep}/")).await?;
     let embeds = jk_episode_embeds(&base, &html);
     let referer = format!("{base}/{slug}/{ep}/");
 

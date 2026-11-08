@@ -104,9 +104,12 @@ y anime. Mismos magnets que mega1080 (mismo grupo), pero con mejor API.
 
 ## Orden sugerido
 
-1. pelispanda como fuente torrent en español (por tmdb_id).
-2. GitHub Actions diario: lee Alfa sin ejecutarlo → JSON de dominios/estado +
-   aviso (issue) cuando cambia un canal que usamos.
+1. ✅ pelispanda como fuente torrent en español (por tmdb_id) — 72d5fd8.
+2. ✅ Lista de sitios vivos desde **Balandro** (repobal/base + repobal/fix; Alfa
+   descartado): `scripts/fuentes_balandro.py` + workflow diario
+   `fuentes-balandro.yml` → rama de datos `fuentes` (`balandro.json`) + issue
+   cuando cambia un canal vigilado (pelispanda, jkanime). Kütral toma de ahí el
+   dominio vigente (`src-tauri/src/dominios.rs`).
 3. Lista de fuentes con salud automática en Configuración.
 4. Descarga HTTP de lo que da RD (así el anime de jkanime también se baja).
 5. Más sitios (elitetorrent, divxtotal, mitorrent…), uno por uno.
