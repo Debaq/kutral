@@ -120,6 +120,9 @@ y anime. Mismos magnets que mega1080 (mismo grupo), pero con mejor API.
    divxtotal y subtorrents (HTML por título, .torrent; fáciles con sitios_es),
    mitorrent (mismos magnets que pelispanda, exige clave AES de Balandro),
    series de hacktorrent (acortador cifrado).
-6. Anime en español: Balandro tiene ~25 canales activos (animeflv, animeav1,
-   tioanime, latanime, henaojara…), casi todos streaming con hosters: mismo
-   camino que jkanime (copias vía Real-Debrid).
+6. ✅ Streaming con hosters vía RD (19c6f88): henaojara, animeflv (anime),
+   peliculaspro (pelis/series). rd_unrestrict descarta .rar/.zip.
+   Cruce Balandro × RD: 36 de 93 sitios de streaming usan algún hoster que RD
+   abre. Descartados tras probar: serieskao (VOE caídos), cinecalidad y
+   cuevanamx (bloqueados en Chile). Lo viejo suele estar caído en hosters.
+   Siguientes candidatos: doramasyt, cuevanavip, cinemitas, animeav1.
