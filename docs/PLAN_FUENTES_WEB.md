@@ -62,6 +62,21 @@ cinelibreonline (200); dontorrent, grantorrent, hacktorrent, wolfmax4k (301);
 mejortorrent (Cloudflare); cinecalidad, poseidonhd (TLS roto: ¿bloqueo DNS del
 operador? probar con el DoH de net.rs); pelisplus (no resuelve).
 
+### Puente para ejecutar Alfa en el PC: DESCARTADO (2026-11-07)
+
+- Se intentó correr Alfa sin Kodi (reemplazos del mediaserver + un comodín para
+  lo que falta). Llega hasta importar los canales, pero Alfa carga módulos
+  **ofuscados** (`lib/alfaresolver*.py`, `lib/planb*.py`, 200-400 KB, bytecode
+  marshal en base64 ejecutado con `exec`, uno por versión de Python).
+  `generictools` los importa, y casi todos los canales dependen de él.
+- Ejecutar código cerrado y autoactualizable en el PC de cada usuario (que
+  guarda tokens RD y la bóveda) no es aceptable.
+- Correrlo en el servidor tampoco: el hosting es PHP 7.4 compartido, sin
+  Python, y todas las búsquedas saldrían desde tecmedhub.org (exposición
+  legal, y los sitios bloquean la IP del servidor).
+- Lo que se usa de Alfa: sus archivos como DATO (dominios, activo, lista negra)
+  y como AVISO (si cambia un canal que usamos, revisar nuestro scraper).
+
 ### pelispanda.org (probado): la mejor candidata
 
 API JSON de WordPress, sin Cloudflare:
@@ -90,7 +105,8 @@ y anime. Mismos magnets que mega1080 (mismo grupo), pero con mejor API.
 ## Orden sugerido
 
 1. pelispanda como fuente torrent en español (por tmdb_id).
-2. Alimentador de dominios desde Alfa (host_alt / black_list / active).
+2. GitHub Actions diario: lee Alfa sin ejecutarlo → JSON de dominios/estado +
+   aviso (issue) cuando cambia un canal que usamos.
 3. Lista de fuentes con salud automática en Configuración.
 4. Descarga HTTP de lo que da RD (así el anime de jkanime también se baja).
 5. Más sitios (elitetorrent, divxtotal, mitorrent…), uno por uno.
