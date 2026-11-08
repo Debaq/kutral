@@ -1,0 +1,3293 @@
+{
+ "canales": {
+  "123pelis": {
+   "activo": false,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "123Pelis",
+   "nota": "Web CERRADA. Películas por géneros. También Series",
+   "sha": ""
+  },
+  "allpeliculas": {
+   "activo": false,
+   "categorias": [
+    "movie"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "AllPeliculas",
+   "nota": "Web CERRADA. Películas por géneros.",
+   "sha": ""
+  },
+  "allpeliculasse": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow",
+    "torrent"
+   ],
+   "host": "https://allpeliculas.la/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "AllPeliculasSe",
+   "nota": "Canal con enlaces Streaming y Torrent. Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "a922dfbd729c85b9"
+  },
+  "animeav1": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://animeav1.com/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "AnimeAv1",
+   "nota": "Web dedicada exclusivamente al anime.",
+   "sha": "5867d668c59df6b3"
+  },
+  "animeclub": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "AnimeClub",
+   "nota": "Web dedicada exclusivamente al anime.",
+   "sha": "428fa496c70a2e84"
+  },
+  "animeflv": {
+   "activo": false,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "AnimeFlv",
+   "nota": "Web ANULADA. Web dedicada exclusivamente al anime.",
+   "sha": ""
+  },
+  "animeflvone": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://vww.animeflv.one/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "AnimeFlvOne",
+   "nota": "Web dedicada exclusivamente al anime.",
+   "sha": "692f2f43d0110947"
+  },
+  "animejara": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://animejara.com/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "AnimeJara",
+   "nota": "Web dedicada exclusivamente al anime.",
+   "sha": "c40be380f2aa25da"
+  },
+  "animejl": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://www.anime-jl.net/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "AnimeJl",
+   "nota": "Web dedicada exclusivamente al anime. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "d54e7ea7b90782ad"
+  },
+  "animeonline": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://ww3.animeonline.ninja/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [
+    "https://animeonline1.ninja/",
+    "https://www1.animeonline.ninja/",
+    "https://ww2.animeonline.ninja/"
+   ],
+   "nombre": "AnimeOnline",
+   "nota": "Web dedicada exclusivamente al anime. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "ce86eb9b6d7ea8e1"
+  },
+  "animeyt": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://animeyt.cc/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [
+    "https://animeyt.moe/",
+    "https://animeenlatino.moe/",
+    "https://aniyt.net/",
+    "https://wvw.aniyt.net/",
+    "https://animeytx.com/",
+    "https://animeytx.net/",
+    "https://wwv.animeytx.net/"
+   ],
+   "nombre": "AnimeYt",
+   "nota": "Web dedicada exclusivamente al anime",
+   "sha": "543de3b965d84370"
+  },
+  "areadocumental": {
+   "activo": true,
+   "categorias": [
+    "documentary"
+   ],
+   "host": "https://www.area-documental.com/",
+   "idiomas": [
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "AreaDocumental",
+   "nota": "Documentales en versión original con subtítulos en castellano. Por categorías, series completas.",
+   "sha": "8b0dfc07aba048e1"
+  },
+  "areshd": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://areshd.com/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "AresHd",
+   "nota": "Películas por géneros. También Series",
+   "sha": "44a05a4adf1a6c0f"
+  },
+  "bloghorror": {
+   "activo": true,
+   "categorias": [
+    "torrent",
+    "movie"
+   ],
+   "host": "https://bloghorror.com/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "BlogHorror",
+   "nota": "Canal con enlaces Streaming y Torrent. Películas por géneros.",
+   "sha": "c373229ef9631b1e"
+  },
+  "ciberdocumentales": {
+   "activo": true,
+   "categorias": [
+    "documentary"
+   ],
+   "host": "https://www.ciberdocumentales.com",
+   "idiomas": [
+    "cast"
+   ],
+   "muertos": [],
+   "nombre": "CiberDocumentales",
+   "nota": "Documentales en castellano.",
+   "sha": "f52f00ec8e1c6b88"
+  },
+  "cine24h": {
+   "activo": false,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "Cine24h",
+   "nota": "Web ANULADA. Películas por géneros. También Series.",
+   "sha": ""
+  },
+  "cineasiaonline": {
+   "activo": false,
+   "categorias": [
+    "movie"
+   ],
+   "host": "",
+   "idiomas": [
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "CineAsiaOnline",
+   "nota": "Web CERRADA. Películas Subtituladas y en versión original. Películas por géneros.",
+   "sha": ""
+  },
+  "cinecalidad": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow",
+    "torrent"
+   ],
+   "host": "https://www.cinecalidad.vg/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [
+    "https://www.cinecalidad.eu/",
+    "https://www.cinecalidad.im/",
+    "https://www.cinecalidad.is/",
+    "https://www.cinecalidad.li/",
+    "https://www.cine-calidad.com/",
+    "https://cinecalidad.website/",
+    "https://www.cinecalidad.lat/",
+    "https://cinecalidad3.com/",
+    "https://www5.cine-calidad.com/",
+    "https://v3.cine-calidad.com/",
+    "https://cinecalidad.dev/",
+    "https://cinecalidad.ms/",
+    "https://www3.cinecalidad.ms/",
+    "https://ww1.cinecalidad.ms/",
+    "https://www.cinecalidad.gs/",
+    "https://www.cinecalidad.tf/",
+    "https://wvw.cinecalidad.tf/",
+    "https://vww.cinecalidad.tf/",
+    "https://wwv.cinecalidad.tf/",
+    "https://www.cinecalidad.foo/",
+    "https://vw.cinecalidad.foo/",
+    "https://ww.cinecalidad.foo/",
+    "https://w.cinecalidad.foo/",
+    "https://wwv.cinecalidad.foo/",
+    "https://wv.cinecalidad.foo/",
+    "https://vwv.cinecalidad.foo/",
+    "https://wzw.cinecalidad.foo/",
+    "https://v2.cinecalidad.foo/",
+    "https://www.cinecalidad.so/",
+    "https://wvw.cinecalidad.so/",
+    "https://vww.cinecalidad.so/",
+    "https://wwv.cinecalidad.so/",
+    "https://vvv.cinecalidad.so/",
+    "https://ww.cinecalidad.so/",
+    "https://w.cinecalidad.so/",
+    "https://vvw.cinecalidad.so/",
+    "https://wv.cinecalidad.so/",
+    "https://vvvv.cinecalidad.so/",
+    "https://wvvv.cinecalidad.so/",
+    "https://cinecalidad.fi/"
+   ],
+   "nombre": "CineCalidad",
+   "nota": "Canal con enlaces Streaming y Torrent. Acceso por separado Castellano y Latino. Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "05b4fb80734a2f9c"
+  },
+  "cinecalidadla": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow",
+    "torrent"
+   ],
+   "host": "https://cine-calidad.mx/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [
+    "https://cinecalidad.la/",
+    "https://cinecalidad.fo/",
+    "https://ww22.cinecalidad.fo/",
+    "https://ww3.cinecalidad.do/",
+    "https://ww4.cinecalidad.do/",
+    "https://cinecalidad.do/",
+    "https://cinecalidad.llc/",
+    "https://cinecalidad.st/",
+    "https://cinecalidad.vc/",
+    "https://cinecalidad.lc/",
+    "https://www3.cinecalidad.lc/",
+    "https://ww1.cinecalidad.lc/",
+    "https://ww2.cinecalidad.lc/",
+    "https://ww4.cinecalidad.lc/",
+    "https://w1.cinecalidad.lc/",
+    "https://w2.cinecalidad.lc/",
+    "https://w3.cinecalidad.lc/",
+    "https://w4.cinecalidad.lc/",
+    "https://w5.cinecalidad.lc/",
+    "https://w6.cinecalidad.lc/",
+    "https://w7.cinecalidad.lc/",
+    "https://w9.cinecalidad.lc/",
+    "https://w10.cinecalidad.lc/",
+    "https://w8.cinecalidad.lc/",
+    "https://w11.cinecalidad.lc/",
+    "https://w13.cinecalidad.lc/",
+    "https://c1.cinecalidad.lc/",
+    "https://w14.cinecalidad.lc/",
+    "https://cinecalidad.bz/",
+    "https://w1.cinecalidad.bz/",
+    "https://w2.cinecalidad.bz/",
+    "https://w3.cinecalidad.bz/",
+    "https://w4.cinecalidad.bz/",
+    "https://w5.cinecalidad.bz/",
+    "https://w6.cinecalidad.bz/",
+    "https://w7.cinecalidad.bz/",
+    "https://w8.cinecalidad.bz/",
+    "https://w9.cinecalidad.bz/",
+    "https://w10.cinecalidad.bz/",
+    "https://w11.cinecalidad.bz/",
+    "https://cinecalidad.zip/",
+    "https://cinecalidad.dad/",
+    "https://wvw.cinecalidad.dad/"
+   ],
+   "nombre": "CineCalidadLa",
+   "nota": "Canal con enlaces Streaming y Torrent. Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "0c5d1bb37411103b"
+  },
+  "cinecalidadlol": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow",
+    "torrent"
+   ],
+   "host": "https://www.cinecalidad.am/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [
+    "https://cinecalidad.lol/",
+    "https://cinecalidad.link/",
+    "https://ww3.cinecalidad.link/",
+    "https://ww2.cinecalidad.link/",
+    "https://ww5.cinecalidad.link/",
+    "https://cinecalidad.fan/",
+    "https://cinecalidad.run/",
+    "https://cinecalidad.cat/",
+    "https://w1.cinecalidad.cat/",
+    "https://w10.cinecalidad.cat/",
+    "https://w2.cinecalidad.cat/",
+    "https://w5.cinecalidad.cat/",
+    "https://w11.cinecalidad.cat/",
+    "https://w15.cinecalidad.cat/",
+    "https://w16.cinecalidad.cat/",
+    "https://w17.cinecalidad.cat/",
+    "https://w18.cinecalidad.cat/",
+    "https://ww1.cinecalidad.cat/",
+    "https://ww2.cinecalidad.cat/",
+    "https://c1.cinecalidad.cat/",
+    "https://c2.cinecalidad.cat/",
+    "https://c3.cinecalidad.cat/",
+    "https://c4.cinecalidad.cat/",
+    "https://cinecalidad.win/",
+    "https://w1.cinecalidad.win/",
+    "https://w2.cinecalidad.win/",
+    "https://w5.cinecalidad.win/",
+    "https://w6.cinecalidad.win/",
+    "https://w7.cinecalidad.win/",
+    "https://w8.cinecalidad.win/",
+    "https://w9.cinecalidad.win/",
+    "https://c1.cinecalidad.win/",
+    "https://c2.cinecalidad.win/",
+    "https://w10.cinecalidad.win/",
+    "https://w1.cinecalidad.ist/",
+    "https://cinecalidad.ist/",
+    "https://cinecalidad.vet/",
+    "https://w1.cinecalidad.vet/",
+    "https://w2.cinecalidad.vet/",
+    "https://w3.cinecalidad.vet/",
+    "https://w4.cinecalidad.vet/",
+    "https://w5.cinecalidad.vet/",
+    "https://w6.cinecalidad.vet/",
+    "https://w7.cinecalidad.vet/",
+    "https://w8.cinecalidad.vet/",
+    "https://w11.cinecalidad.vet/",
+    "https://w12.cinecalidad.vet/",
+    "https://ww.cinecalidad.vet/",
+    "https://wc.cinecalidad.vet/",
+    "https://wy.cinecalidad.vet/",
+    "https://www.cinecalidad.men/",
+    "https://vww.cinecalidad.men/",
+    "https://wwv.cinecalidad.men/",
+    "https://wvw.cinecalidad.men/",
+    "https://ww.cinecalidad.men/",
+    "https://vw.cinecalidad.men/",
+    "https://wv.cinecalidad.men/",
+    "https://vv.cinecalidad.men/",
+    "https://v.cinecalidad.men/",
+    "https://v1.cinecalidad.men/",
+    "https://v2.cinecalidad.men/",
+    "https://v3.cinecalidad.men/",
+    "https://v4.cinecalidad.men/",
+    "https://v5.cinecalidad.men/",
+    "https://www.cinecalidad.gg/",
+    "https://wvw.cinecalidad.gg/",
+    "https://wwv.cinecalidad.gg/",
+    "https://vww.cinecalidad.gg/",
+    "https://vvv.cinecalidad.gg/https://ww.cinecalidad.gg/",
+    "https://w.cinecalidad.gg/",
+    "https://vvw.cinecalidad.gg/",
+    "https://wv.cinecalidad.gg/",
+    "https://vwv.cinecalidad.gg/",
+    "https://wwc.cinecalidad.gg/",
+    "https://cww.cinecalidad.gg/",
+    "https://oww.cinecalidad.gg/",
+    "https://wow.cinecalidad.gg/",
+    "https://woo.cinecalidad.gg/",
+    "https://oow.cinecalidad.gg/",
+    "https://wwe.cinecalidad.gg/",
+    "https://wwm.cinecalidad.gg/",
+    "https://mww.cinecalidad.gg/",
+    "https://wmw.cinecalidad.gg/",
+    "https://wwa.cinecalidad.gg/",
+    "https://aww.cinecalidad.gg/",
+    "https://waw.cinecalidad.gg/",
+    "https://wwz.cinecalidad.gg/",
+    "https://wwu.cinecalidad.gg/",
+    "https://wuw.cinecalidad.gg/",
+    "https://wee.cinecalidad.gg/",
+    "https://eew.cinecalidad.gg/",
+    "https://wwx.cinecalidad.gg/",
+    "https://xww.cinecalidad.gg/",
+    "https://wxw.cinecalidad.gg/",
+    "https://www.cinecalidad.ec/"
+   ],
+   "nombre": "CineCalidadLol",
+   "nota": "Canal con enlaces Streaming y Torrent. Películas por géneros y año. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "59f64dd87e023d5b"
+  },
+  "cinecalidadrs": {
+   "activo": true,
+   "categorias": [
+    "movie"
+   ],
+   "host": "https://www.cinecalidad.my/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "CineCalidadRs",
+   "nota": "Acceso por separado Castellano y Latino. Películas por géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "16ab65a99265c78c"
+  },
+  "cinedeantes": {
+   "activo": true,
+   "categorias": [
+    "movie"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast"
+   ],
+   "muertos": [],
+   "nombre": "CineDeAntes",
+   "nota": "Películas clásicas.",
+   "sha": "f91858b3c08e09a0"
+  },
+  "cinehindi": {
+   "activo": true,
+   "categorias": [
+    "movie"
+   ],
+   "host": "https://cinehindi.com/",
+   "idiomas": [
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "CineHindi",
+   "nota": "Películas por géneros.",
+   "sha": "ba1470ad183030d6"
+  },
+  "cinelibreonline": {
+   "activo": true,
+   "categorias": [
+    "movie"
+   ],
+   "host": "https://www.cinelibreonline.com/",
+   "idiomas": [
+    "cast",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "CineLibreOnline",
+   "nota": "Películas clásicas, por géneros y año.",
+   "sha": "a2b7bd4e19c8a1ec"
+  },
+  "cinema": {
+   "activo": true,
+   "categorias": [
+    "movie"
+   ],
+   "host": "https://www1.verpelis.top/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "Cinema",
+   "nota": "Películas por géneros.",
+   "sha": "67603f49e3922be8"
+  },
+  "cinematteflix": {
+   "activo": true,
+   "categorias": [
+    "movie"
+   ],
+   "host": "https://www.cinematte.com.es/",
+   "idiomas": [
+    "cast",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "CineMatteFlix",
+   "nota": "Películas clásicas.",
+   "sha": "51158f77a5bafc39"
+  },
+  "cinemitas": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://cinemitas.org/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "CineMitas",
+   "nota": "Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "82c890663a6a8b17"
+  },
+  "cinemundo": {
+   "activo": true,
+   "categorias": [
+    "movie"
+   ],
+   "host": "https://www.cinemundo.com.ar/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "CineMundo",
+   "nota": "Películas clásicas y cine independiente.",
+   "sha": "5422188eb0850781"
+  },
+  "cineplay": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://peliplay.xyz/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "CinePlay",
+   "nota": "Películas por géneros y Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "8135ae9d81377eb9"
+  },
+  "cineplus": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "CinePlus",
+   "nota": "Películas por géneros.",
+   "sha": "674830e88a3dc438"
+  },
+  "cineteca": {
+   "activo": true,
+   "categorias": [
+    "movie"
+   ],
+   "host": "https://www.cinetecagay.com/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "CineTeca",
+   "nota": "Películas por géneros.",
+   "sha": "0d849a741207baaf"
+  },
+  "cliver": {
+   "activo": false,
+   "categorias": [
+    "movie"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "CliVer",
+   "nota": "Web CERRADA. Películas por géneros.",
+   "sha": ""
+  },
+  "cuevana2": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://www.cuevana2.lat/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [
+    "https://www.cuevana2.icu/",
+    "https://ww2.cuevana2.biz/",
+    "https://cuevana2.biz/",
+    "https://www.cuevana2.run/"
+   ],
+   "nombre": "Cuevana2",
+   "nota": "Películas por géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "da09a1d7e7e0e4c8"
+  },
+  "cuevana2esp": {
+   "activo": false,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "Cuevana2Esp",
+   "nota": "Web CERRADA. Películas por géneros.",
+   "sha": ""
+  },
+  "cuevana3pro": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://cuevanapro.org",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [
+    "https://wwa3.cuevana3.vip",
+    "https://wlw.cuevana3.vip",
+    "https://wlv.cuevana3.vip",
+    "https://wli3.cuevana3.vip",
+    "https://wnv3.cuevana3.vip",
+    "https://wn3.cuevana3.vip",
+    "https://wv3i.cuevana3.vip",
+    "https://wmi.cuevana3.vip",
+    "https://wi3v.cuevana3.vip",
+    "https://wev3.cuevana3.vip",
+    "https://wl3n.cuevana3.vip",
+    "https://wiw3.cuevana3.vip",
+    "https://wmi3.cuevana3.vip",
+    "https://wn3l.cuevana3.vip",
+    "https://imu.cuevana3.vip",
+    "https://wni3.cuevana3.vip",
+    "https://mvi.cuevana3.vip",
+    "https://wi3n.cuevana3.vip",
+    "https://wi3m.cuevana3.vip",
+    "https://im3.cuevana3.vip",
+    "https://iv3.cuevana3.vip",
+    "https://lm3.cuevana3.vip",
+    "https://ww3v.cuevana3.vip",
+    "https://ww3u.cuevana3.vip",
+    "https://wl3v.cuevana3.vip",
+    "https://wv3n.cuevana3.vip",
+    "https://wl3r.cuevana3.vip",
+    "https://me3.cuevana3.vip",
+    "https://me4.cuevana3.vip",
+    "https://mia.cuevana3.vip",
+    "https://max.cuevana3.vip",
+    "https://zx1.cuevana3.vip",
+    "https://zz.cuevana3.vip",
+    "https://gx.cuevana3.vip",
+    "https://tv.cuevana3.vip",
+    "https://tv8.cuevana3.vip",
+    "https://b1.cuevana3.vip",
+    "https://sw.cuevana3.vip",
+    "https://cuevana3.vip",
+    "https://dh1.cuevana3.vip"
+   ],
+   "nombre": "Cuevana3Pro",
+   "nota": "Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "3fa875361015a0e7"
+  },
+  "cuevanamx": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://www.cuevana-3.mx",
+   "idiomas": [
+    "lat",
+    "cast",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "CuevanaMx",
+   "nota": "Películas por géneros. También Series.",
+   "sha": "a88eec351432f2f2"
+  },
+  "cuevanavip": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://ver.cuevana3.one/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "CuevanaVip",
+   "nota": "Películas por géneros. También Series. Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "a3270956e4ea1c23"
+  },
+  "destotal": {
+   "activo": false,
+   "categorias": [
+    "movie"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "DesTotal",
+   "nota": "Web CERRADA. Películas por géneros.",
+   "sha": ""
+  },
+  "divxtotal": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow",
+    "torrent"
+   ],
+   "host": "https://divxtotal.foo/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [
+    "https://www.divxtotal.re/",
+    "https://www.divxtotal.ac/",
+    "https://www.divxtotal.dev/",
+    "https://www.divxtotal.ms/",
+    "https://www.divxtotal.fi/",
+    "https://www.divxtotal.cat/",
+    "https://www.divxtotal.pl/",
+    "https://www.divxtotal.wf/",
+    "https://www.divxtotal.win/",
+    "https://www1.divxtotal.zip/",
+    "https://www2.divxtotal.zip/",
+    "https://www2.divxtotal.mov/",
+    "https://www3.divxtotal.mov/",
+    "https://www4.divxtotal.mov/",
+    "https://www5.divxtotal.mov/",
+    "https://divxtotal.io/",
+    "https://www1.divxtotal.lol/",
+    "https://www3.divxtotal.lol/"
+   ],
+   "nombre": "DivxTotal",
+   "nota": "Canal con enlaces Torrent exclusivamente. Películas por géneros y calidad. También series. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "c7688442da21b052"
+  },
+  "documentaleson": {
+   "activo": true,
+   "categorias": [
+    "documentary"
+   ],
+   "host": "https://documentaleson.com/",
+   "idiomas": [
+    "cast"
+   ],
+   "muertos": [],
+   "nombre": "DocumentalesOn",
+   "nota": "Documentales en castellano.",
+   "sha": "cdff18b5ee28ecdb"
+  },
+  "documentalesonline": {
+   "activo": true,
+   "categorias": [
+    "documentary"
+   ],
+   "host": "https://www.documentales-online.com",
+   "idiomas": [
+    "cast"
+   ],
+   "muertos": [],
+   "nombre": "DocumentalesOnline",
+   "nota": "Documentales en castellano.",
+   "sha": "1a0191bb3b900967"
+  },
+  "documentaryheaven": {
+   "activo": true,
+   "categorias": [
+    "documentary"
+   ],
+   "host": "https://documentaryheaven.com/",
+   "idiomas": [
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "DocumentaryHeaven",
+   "nota": "Documentales en versión original.",
+   "sha": "e152f54d1f1d5bcf"
+  },
+  "documentarystorm": {
+   "activo": true,
+   "categorias": [
+    "documentary"
+   ],
+   "host": "https://www.documentarystorm.com/",
+   "idiomas": [
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "DocumentaryStorm",
+   "nota": "Documentales en versión original.",
+   "sha": "647dcadfc9a6ae25"
+  },
+  "dontorrents": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow",
+    "torrent"
+   ],
+   "host": "https://dontorrent.tips/",
+   "idiomas": [
+    "cast"
+   ],
+   "muertos": [
+    "https://dontorrents.org/",
+    "https://dontorrents.net/",
+    "https://dontorrent.one/",
+    "https://dontorrent.app/",
+    "https://dontorrent.lol/",
+    "https://dontorrent.nz/",
+    "https://dontorrent.rip/",
+    "https://dontorrent.vip/",
+    "https://dontorrent.ws/",
+    "https://dontorrent.win/",
+    "https://dontorrent.rs/",
+    "https://dontorrent.bz/",
+    "https://dontorrent.men/",
+    "https://dontorrent.fit/",
+    "https://dontorrent.art/",
+    "https://dontorrent.fun/",
+    "https://dontorrent.se/",
+    "https://dontorrent.pw/",
+    "https://dontorrent.li/",
+    "https://dontorrent.it/",
+    "https://dontorrent.red/",
+    "https://dontorrent.nu/",
+    "https://dontorrent.si/",
+    "https://dontorrent.sk/",
+    "https://dontorrent.eu/",
+    "https://dontorrent.top/",
+    "https://dontorrent.pm/",
+    "https://dontorrent.re/",
+    "https://dontorrent.wf/",
+    "https://dontorrent.run/",
+    "https://dontorrent.cat/",
+    "https://dontorrent.pl/",
+    "https://dontorrent.tel/",
+    "https://dontorrent.nl/",
+    "https://dontorrent.cx/",
+    "https://dontorrent.bet/",
+    "https://dontorrent.cab/",
+    "https://dontorrent.wtf/",
+    "https://dontorrent.fi/",
+    "https://dontorrent.ink/",
+    "https://dontorrent.kim/",
+    "https://dontorrent.tw/",
+    "https://dontorrent.yt/",
+    "https://dontorrent.vg/",
+    "https://dontorrent.ch/",
+    "https://dontorrent.vet/",
+    "https://dontorrent.dog/",
+    "https://dontorrent.dev/",
+    "https://dontorrent.bid/",
+    "https://dontorrent.pet/",
+    "https://dontorrent.soy/",
+    "https://dontorrent.moe/",
+    "https://dontorrent.pub/",
+    "https://dontorrent.tf/",
+    "https://dontorrent.vin/",
+    "https://dontorrent.ist/",
+    "https://dontorrent.uno/",
+    "https://dontorrent.fans/",
+    "https://dontorrent.ltd/",
+    "https://dontorrent.me/",
+    "https://dontorrent.gs/",
+    "https://dontorrent.gy/",
+    "https://dontorrent.click/",
+    "https://dontorrent.fail/",
+    "https://dontorrent.futbol/",
+    "https://dontorrent.mba/",
+    "https://dontorrent.army/",
+    "https://dontorrent.blue/",
+    "https://dontorrent.beer/",
+    "https://dontorrent.surf/",
+    "https://dontorrent.how/",
+    "https://dontorrent.casa/",
+    "https://dontorrent.chat/",
+    "https://dontorrent.plus/",
+    "https://dontorrent.ninja/",
+    "https://dontorrent.love/",
+    "https://dontorrent.cloud/",
+    "https://dontorrent.africa/",
+    "https://dontorrent.pictures/",
+    "https://dontorrent.ms/",
+    "https://dontorrent.care/",
+    "https://dontorrent.cash/",
+    "https://dontorrent.observer/",
+    "https://dontorrent.company/",
+    "https://dontorrent.discount/",
+    "https://dontorrent.dad/",
+    "https://dontorrent.zip/",
+    "https://dontorrent.mov/",
+    "https://dontorrent.day/",
+    "https://dontorrent.boo/",
+    "https://dontorrent.foo/",
+    "https://dontorrent.hair/",
+    "https://dontorrent.rsvp/",
+    "https://dontorrent.quest/",
+    "https://dontorrent.nexus/",
+    "https://dontorrent.bond/",
+    "https://dontorrent.tokyo/",
+    "https://dontorrent.boston/",
+    "https://dontorrent.rodeo/",
+    "https://dontorrent.durban/",
+    "https://dontorrent.party/",
+    "https://dontorrent.joburg/",
+    "https://dontorrent.wales/",
+    "https://dontorrent.nagoya/",
+    "https://dontorrent.contact/",
+    "https://dontorrent.cymru/",
+    "https://dontorrent.capetown/",
+    "https://dontorrent.yokohama/",
+    "https://dontorrent.makeup/",
+    "https://dontorrent.band/",
+    "https://dontorrent.center/",
+    "https://dontorrent.cooking/",
+    "https://dontorrent.cyou/",
+    "https://dontorrent.agency/",
+    "https://dontorrent.skin/",
+    "https://dontorrent.directory/",
+    "https://dontorrent.boutique/",
+    "https://dontorrent.miami/",
+    "https://dontorrent.business/",
+    "https://dontorrent.clothing/",
+    "https://dontorrent.icu/",
+    "https://dontorrent.fyi/",
+    "https://dontorrent.sbs/",
+    "https://dontorrent.cc/",
+    "https://dontorrent.esq/",
+    "https://dontorrent.city/",
+    "https://dontorrent.cologne/",
+    "https://dontorrent.dance/",
+    "https://dontorrent.cricket/",
+    "https://dontorrent.earth/",
+    "https://dontorrent.date/",
+    "https://dontorrent.email/",
+    "https://dontorrent.education/",
+    "https://dontorrent.exposed/",
+    "https://dontorrent.faith/",
+    "https://dontorrent.gratis/",
+    "https://dontorrent.equipment/",
+    "https://dontorrent.fashion/",
+    "https://dontorrent.gallery/",
+    "https://dontorrent.yoga/",
+    "https://dontorrent.foundation/",
+    "https://dontorrent.co/",
+    "https://dontorrent.auction/",
+    "https://dontorrent.football/",
+    "https://dontorrent.wiki/",
+    "https://dontorrent.games/",
+    "https://dontorrent.tube/",
+    "https://dontorrent.trade/",
+    "https://dontorrent.webcam/",
+    "https://dontorrent.schule/",
+    "https://dontorrent.stream/",
+    "https://dontorrent.website/",
+    "https://dontorrent.group/",
+    "https://dontorrent.download/",
+    "https://dontorrent.gift/",
+    "https://dontorrent.report/",
+    "https://dontorrent.homes/",
+    "https://dontorrent.haus/",
+    "https://dontorrent.news/",
+    "https://dontorrent.institute/",
+    "https://dontorrent.jetzt/",
+    "https://dontorrent.loan/",
+    "https://dontorrent.graphics/",
+    "https://dontorrent.international/",
+    "https://dontorrent.irish/",
+    "https://dontorrent.lighting/",
+    "https://dontorrent.istanbul/",
+    "https://dontorrent.onl/",
+    "https://dontorrent.kids/",
+    "https://dontorrent.kiwi/",
+    "https://dontorrent.live/",
+    "https://dontorrent.phd/",
+    "https://dontorrent.gripe/",
+    "https://dontorrent.sarl/",
+    "https://dontorrent.club/",
+    "https://dontorrent.prof/",
+    "https://dontorrent.info/",
+    "https://dontorrent.promo/",
+    "https://dontorrent.photos/",
+    "https://dontorrent.cfd/",
+    "https://dontorrent.pink/",
+    "https://dontorrent.reisen/",
+    "https://dontorrent.racing/",
+    "https://dontorrent.rocks/",
+    "https://dontorrent.science/",
+    "https://dontorrent.support/",
+    "https://dontorrent.review/",
+    "https://dontorrent.management/",
+    "https://dontorrent.soccer/",
+    "https://dontorrent.supply/",
+    "https://dontorrent.moi/",
+    "https://dontorrent.meme/",
+    "https://dontorrent.channel/",
+    "https://dontorrent.diy/"
+   ],
+   "nombre": "DonTorrents",
+   "nota": "Canal con enlaces Torrent exclusivamente. Películas por géneros y años. También Series y Documentales. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "0a5758569f760d86"
+  },
+  "doramaexpress": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://doramaexpress.com/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "DoramaExpress",
+   "nota": "Web dedicada exclusivamente al dorama.",
+   "sha": "5279e4e027bfc7c8"
+  },
+  "doramasflix": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://doramasflix.co/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "DoramasFlix",
+   "nota": "Web dedicada exclusivamente al dorama",
+   "sha": "66b43c30d62f0e8f"
+  },
+  "doramasflixin": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://doramasflix.in/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "DoramasFlixIn",
+   "nota": "Web dedicada exclusivamente al dorama",
+   "sha": "724da83e1aa0491d"
+  },
+  "doramasflixio": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://doramasflix.io/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "DoramasFlixIo",
+   "nota": "Web dedicada exclusivamente al dorama",
+   "sha": "732389b7e5c8b81a"
+  },
+  "doramasorg": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://www.doramas.org/",
+   "idiomas": [
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "DoramasOrg",
+   "nota": "Web dedicada exclusivamente al dorama",
+   "sha": "1b0a53a4677fcc65"
+  },
+  "doramasyt": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://www.doramasyt.com/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "DoramasYt",
+   "nota": "Web dedicada exclusivamente al dorama. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "644b6f71ffad0da4"
+  },
+  "doramedplaylat": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://doramedplay.net/",
+   "idiomas": [
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "DoramedPlayLat",
+   "nota": "Web dedicada exclusivamente al dorama",
+   "sha": "b47b0f21b48891f6"
+  },
+  "elifilms": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow",
+    "torrent"
+   ],
+   "host": "https://allcalidad.re/",
+   "idiomas": [
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [
+    "https://elifilms.net/",
+    "https://elifilms.org/",
+    "https://allcalidad.si/",
+    "https://allcalidad.ms/"
+   ],
+   "nombre": "EliFilms",
+   "nota": "Canal con enlaces Streaming y Torrent. Películas por géneros, año. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "aaccb070eb57a5b1"
+  },
+  "elitetorrent": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow",
+    "torrent"
+   ],
+   "host": "https://www.elitetorrent.com/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [
+    "https://elitetorrent.app/",
+    "https://elitetorrent.la/",
+    "https://www.elitetorrent.wtf/",
+    "https://www.elitetorrent.dev/"
+   ],
+   "nombre": "EliteTorrent",
+   "nota": "Canal con enlaces Torrent exclusivamente. Películas por géneros. También Series. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "d20d251a76241155"
+  },
+  "elitetorrentnz": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow",
+    "torrent"
+   ],
+   "host": "https://www.elitetorrent.wf/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [
+    "https://www.elitetorrent.nz/",
+    "https://www.elitetorrent.ac/"
+   ],
+   "nombre": "EliteTorrentNz",
+   "nota": "Canal con enlaces Torrent exclusivamente. Películas por géneros. También Series. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "fe2cd7b4f799a5e8"
+  },
+  "ennovelastv": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://l.ennovelas-tv.com/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [
+    "https://c.ennovelas-tv.com/",
+    "https://d.ennovelas-tv.com/",
+    "https://e.ennovelas-tv.com/",
+    "https://f.ennovelas-tv.com/",
+    "https://g.ennovelas-tv.com/",
+    "https://h.ennovelas-tv.com/",
+    "https://i.ennovelas-tv.com/",
+    "https://j.ennovelas-tv.com/",
+    "https://k.ennovelas-tv.com/",
+    "https://novelashd.ennovelas-tv.com/",
+    "https://novelass.ennovelas-tv.com/",
+    "https://enn.ennovelas-tv.com/"
+   ],
+   "nombre": "EnNovelasTv",
+   "nota": "Web dedicada exclusivamente en Novelas. Series por Géneros.",
+   "sha": "fee76562b932b137"
+  },
+  "entrepeliculasyseries": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://entrepeliculasyseries.nz/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [
+    "https://entrepeliculasyseries.com/",
+    "https://entrepeliculasyseries.io/",
+    "https://entrepeliculasyseries.nu/"
+   ],
+   "nombre": "EntrePeliculasySeries",
+   "nota": "Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "a9cabd931e52bdee"
+  },
+  "estrenosanime": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://estrenosanime.net/",
+   "idiomas": [
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "EstrenosAnime",
+   "nota": "Web dedicada exclusivamente al anime",
+   "sha": "097501f6895f6059"
+  },
+  "estrenoscinesaa": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://www.estrenoscinesaa.com/",
+   "idiomas": [
+    "cast"
+   ],
+   "muertos": [],
+   "nombre": "EstrenosCinesaA",
+   "nota": "Películas y Series en Castellano, por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "76db7f991c9d66b3"
+  },
+  "flizzmovies": {
+   "activo": true,
+   "categorias": [
+    "movie"
+   ],
+   "host": "https://flizzmovies.org/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "FlizzMovies",
+   "nota": "Películas por géneros.",
+   "sha": "ae07e12e732ab1bb"
+  },
+  "gatotv": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://ver.seriesonline.ws/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "GatoTv",
+   "nota": "Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "90c70f3ea57839ca"
+  },
+  "gdrive": {
+   "activo": false,
+   "categorias": [
+    "movie"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast"
+   ],
+   "muertos": [],
+   "nombre": "GDrive",
+   "nota": "Canal Privado. Listas de Películas y Series en Google Drive",
+   "sha": ""
+  },
+  "genteclic": {
+   "activo": true,
+   "categorias": [
+    "movie"
+   ],
+   "host": "https://www.genteclic.com/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "GenteClic",
+   "nota": "Cine clásico y moderno. Películas por géneros",
+   "sha": "3efe1d9bb1a1d833"
+  },
+  "gnulatv": {
+   "activo": true,
+   "categorias": [
+    "movie"
+   ],
+   "host": "https://ver.gnula.one/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "GnulaTv",
+   "nota": "Películas por géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "80fe8c27bb02cf0d"
+  },
+  "grantorrent": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow",
+    "torrent"
+   ],
+   "host": "https://grantorrent.foo/",
+   "idiomas": [
+    "cast"
+   ],
+   "muertos": [
+    "http://grantorrent.net/",
+    "https://grantorrent1.com/",
+    "https://grantorrent.one/",
+    "https://grantorrent.tv/",
+    "https://grantorrent.la/",
+    "https://grantorrent.io/",
+    "https://grantorrent.eu/",
+    "https://grantorrent.cc/",
+    "https://grantorrent.li/",
+    "https://grantorrent.online/",
+    "https://grantorrentt.com/",
+    "https://grantorrent.nl/",
+    "https://grantorrent.ch/",
+    "https://grantorrent.ac/",
+    "https://grantorrent.re/",
+    "https://grantorrent.se/",
+    "https://grantorrent.si/",
+    "https://grantorrent.fi/",
+    "https://grantorrent.bz/",
+    "https://grantorrent.zip/",
+    "https://www1.grantorrent.pm/",
+    "https://www1.grantorrent.wf/",
+    "https://www2.grantorrent.wf/",
+    "https://www3.grantorrent.wf/",
+    "https://www4.grantorrent.wf/",
+    "https://grantorrent.mov/",
+    "https://www1.grantorrent.lol/",
+    "https://www2.grantorrent.lol/",
+    "https://www3.grantorrent.lol/",
+    "https://grantorrent.zip/"
+   ],
+   "nombre": "GranTorrent",
+   "nota": "Canal con enlaces Torrent exclusivamente. Películas por géneros. También Series. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "7053df1fa8d51f4e"
+  },
+  "hacktorrent": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow",
+    "torrent"
+   ],
+   "host": "https://hacktorrent.cc/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "HackTorrent",
+   "nota": "Canal con enlaces Torrent exclusivamente. Las Series tienen enlaces Streaming/Torrent. Películas por géneros. También Series.",
+   "sha": "413ec9f10158ce0b"
+  },
+  "hdcinema": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://pelicinehd.com/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "HdCinema",
+   "nota": "Películas por géneros y años. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "5d9f284d7f906301"
+  },
+  "hdfull": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [
+    "https://hdfull.sh/",
+    "https://hdfull.im/",
+    "https://hdfull.in/",
+    "https://hdfull.pro/",
+    "https://hdfull.la/",
+    "https://hdfull.tv/",
+    "https://hd-full.cc/",
+    "https://hdfull.me/",
+    "https://hdfull.io/",
+    "https://hdfull.lv/",
+    "https://hdfullcdn.cc/",
+    "https://hdfull.stream/",
+    "https://hdfull.click/",
+    "https://hdfull.lol/",
+    "https://hdfull.fun/",
+    "https://hdfull.top/",
+    "https://hdfull.vip/",
+    "https://hdfull.wtf/",
+    "https://hdfull.gdn/",
+    "https://hdfull.cloud/",
+    "https://hdfull.video/",
+    "https://hdfull.work/",
+    "https://hdfull.life/",
+    "https://hdfull.digital/",
+    "https://hdfull.store/",
+    "https://hd-full.in/",
+    "https://hdfull.icu/",
+    "https://hd-full.im/",
+    "https://hd-full.one/",
+    "https://hdfull.link/",
+    "https://hd-full.co/",
+    "https://hd-full.lol/",
+    "https://hdfull.quest/",
+    "https://hd-full.info/",
+    "https://hd-full.sbs/",
+    "https://hd-full.life/",
+    "https://hd-full.fit/",
+    "https://hd-full.me/",
+    "https://hd-full.vip/",
+    "https://hdfull.blog/",
+    "https://hdfull.cfd/",
+    "https://hdfull.help/",
+    "https://hd-full.biz/"
+   ],
+   "nombre": "HdFull",
+   "nota": "Películas por géneros. Series por Géneros. Categoría Novelas. Dispone de varios posibles dominios. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "ec8f00311846a844"
+  },
+  "henaojara": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://henaojara.com/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "HenaOjara",
+   "nota": "Web dedicada exclusivamente al anime. No recibe Actualizaciones a partir del 15/12/25",
+   "sha": "c54f69e36b89a616"
+  },
+  "henaojaran": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://ww1.henaojara.net/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "HenaOjaraN",
+   "nota": "Web dedicada exclusivamente al anime.",
+   "sha": "e13bc4f7b9d6d14c"
+  },
+  "homecine": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://www3.homecine.to/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [
+    "https://homecine.tv/",
+    "https://www3.homecine.tv/",
+    "https://homecine.cc/"
+   ],
+   "nombre": "HomeCine",
+   "nota": "Películas por géneros, años y países. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "c6e630eccb70c73c"
+  },
+  "ikucomics": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://ver.ikucomics.net/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "IkuComics",
+   "nota": "Web dedicada exclusivamente al anime. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "e4933ccf9272b05c"
+  },
+  "jkanime": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://jkanime.net/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "JkAnime",
+   "nota": "Web dedicada exclusivamente al anime. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "387ef0cf325f8a9d"
+  },
+  "lacartoons": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://www.lacartoons.com/",
+   "idiomas": [
+    "lat"
+   ],
+   "muertos": [],
+   "nombre": "LaCartoons",
+   "nota": "Series cartoons en idioma orignal de emisión.",
+   "sha": "c3415ab3df4a0901"
+  },
+  "lamovie": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://lamovie.org/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "LaMovie",
+   "nota": "Canal con enlaces Streaming y Torrent. Películas por géneros. Series por Géneros.",
+   "sha": "5b7961d9bd859643"
+  },
+  "latanime": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://latanime.org/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "LatAnime",
+   "nota": "Web dedicada exclusivamente al anime. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "c5d30cee6aaad59b"
+  },
+  "legalmentegratis": {
+   "activo": true,
+   "categorias": [
+    "movie"
+   ],
+   "host": "https://legalmentegratis.com/",
+   "idiomas": [
+    "cast",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "LegalmenteGratis",
+   "nota": "Películas por géneros y categorias.",
+   "sha": "c137e29ba55259af"
+  },
+  "mbstelenovelas": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://ww2.ojearnovelas.com/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "MbsTeleNovelas",
+   "nota": "Web dedicada exclusivamente en Novelas.",
+   "sha": "f506bc79f44f9671"
+  },
+  "megadedeoficial": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://megadede.mobi/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "MegaDedeOficial",
+   "nota": "Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "06cf212b59985d37"
+  },
+  "mejortorrentapp": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow",
+    "torrent"
+   ],
+   "host": "https://www47.mejortorrent.eu",
+   "idiomas": [
+    "cast"
+   ],
+   "muertos": [
+    "https://mejortorrent.app",
+    "https://mejortorrent.wtf",
+    "https://www1.mejortorrent.rip",
+    "https://www2.mejortorrent.rip",
+    "https://www3.mejortorrent.rip",
+    "https://www4.mejortorrent.rip",
+    "https://www5.mejortorrent.rip",
+    "https://www6.mejortorrent.rip",
+    "https://www7.mejortorrent.rip",
+    "https://www8.mejortorrent.rip",
+    "https://www9.mejortorrent.rip",
+    "https://www10.mejortorrent.rip",
+    "https://www11.mejortorrent.rip",
+    "https://www12.mejortorrent.rip",
+    "https://www13.mejortorrent.rip",
+    "https://www14.mejortorrent.rip",
+    "https://www15.mejortorrent.rip",
+    "https://www16.mejortorrent.rip",
+    "https://www17.mejortorrent.zip",
+    "https://www18.mejortorrent.zip",
+    "https://www19.mejortorrent.zip",
+    "https://www20.mejortorrent.zip",
+    "https://www21.mejortorrent.zip",
+    "https://www22.mejortorrent.zip",
+    "https://www23.mejortorrent.zip",
+    "https://www24.mejortorrent.zip",
+    "https://www25.mejortorrent.zip",
+    "https://www26.mejortorrent.eu",
+    "https://www27.mejortorrent.eu",
+    "https://www28.mejortorrent.eu",
+    "https://www29.mejortorrent.eu",
+    "https://www30.mejortorrent.eu",
+    "https://www31.mejortorrent.eu",
+    "https://www32.mejortorrent.eu",
+    "https://www33.mejortorrent.eu",
+    "https://www34.mejortorrent.eu",
+    "https://www35.mejortorrent.eu",
+    "https://www36.mejortorrent.eu",
+    "https://www37.mejortorrent.eu",
+    "https://www38.mejortorrent.eu",
+    "https://www39.mejortorrent.eu",
+    "https://www40.mejortorrent.eu",
+    "https://www41.mejortorrent.eu",
+    "https://www42.mejortorrent.eu",
+    "https://www43.mejortorrent.eu",
+    "https://www44.mejortorrent.eu",
+    "https://www45.mejortorrent.eu",
+    "https://www46.mejortorrent.eu"
+   ],
+   "nombre": "MejorTorrentApp",
+   "nota": "Canal con enlaces Torrent exclusivamente. Películas por géneros. También Series y Documentales. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "620a99ff54cf6a13"
+  },
+  "mirandogratis": {
+   "activo": true,
+   "categorias": [
+    "movie"
+   ],
+   "host": "https://mirandogratis.com/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "MirandoGratis",
+   "nota": "Películas por géneros.",
+   "sha": "84ae466c4da32b67"
+  },
+  "mitorrent": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow",
+    "torrent"
+   ],
+   "host": "https://mitorrent.mx/",
+   "idiomas": [
+    "cast",
+    "lat"
+   ],
+   "muertos": [
+    "https://mitorrent.org/",
+    "https://mitorrent.eu/",
+    "https://mitorrent.me/"
+   ],
+   "nombre": "MiTorrent",
+   "nota": "Canal con enlaces Torrent exclusivamente. Películas por géneros. Series por Géneros.",
+   "sha": "5dcdf0e1be1ce660"
+  },
+  "monoschinos": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://vww.monoschinos2.net/",
+   "idiomas": [
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "MonosChinos",
+   "nota": "Web dedicada exclusivamente al anime.",
+   "sha": "ac3e64ec4c695dfb"
+  },
+  "monoschinos2": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://vww.monoschinos2.net/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "MonosChinos2",
+   "nota": "Web dedicada exclusivamente al anime.",
+   "sha": "c53636dc033bea8a"
+  },
+  "moviesdvdr": {
+   "activo": false,
+   "categorias": [
+    "movie",
+    "torrent"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "MoviesDvdr",
+   "nota": "Web CERRADA. Canal con enlaces Torrent exclusivamente. Películas por géneros.",
+   "sha": ""
+  },
+  "mundodesconocido": {
+   "activo": true,
+   "categorias": [
+    "documentary"
+   ],
+   "host": "https://www.mundodesconocido.es/",
+   "idiomas": [
+    "cast"
+   ],
+   "muertos": [],
+   "nombre": "MundoDesconocido",
+   "nota": "Documentales narrativos en castellano.",
+   "sha": "cc47f55b606d5386"
+  },
+  "mundodonghua": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://www.mundodonghua.com/",
+   "idiomas": [
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "MundoDonghua",
+   "nota": "Web dedicada exclusivamente al anime. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "a643511420ef972e"
+  },
+  "mundodonghuaxyz": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://www.mundodonghua.xyz/",
+   "idiomas": [
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "MundoDonghuaXyz",
+   "nota": "Web dedicada exclusivamente al anime. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "3ea39abddad643a2"
+  },
+  "mundokaos": {
+   "activo": false,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "MundoKaos",
+   "nota": "Web CERRADA. Películas por géneros. También Series",
+   "sha": ""
+  },
+  "nextdede": {
+   "activo": false,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "NextDede",
+   "nota": "Web ANULADA. Películas por géneros. Series por Géneros.",
+   "sha": ""
+  },
+  "novelas360": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://novelas360.com/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "Novelas360",
+   "nota": "Web dedicada exclusivamente en Novelas.",
+   "sha": "dd739fd421494731"
+  },
+  "osjonosu": {
+   "activo": false,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast"
+   ],
+   "muertos": [],
+   "nombre": "OsjoNosu",
+   "nota": "Web CERRADA. Películas por géneros. Series por Géneros.",
+   "sha": ""
+  },
+  "pandramaio": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://pandrama.io/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "PanDramaIo",
+   "nota": "Web dedicada exclusivamente al dorama",
+   "sha": "d2905390f4e2298a"
+  },
+  "pasateatorrent": {
+   "activo": true,
+   "categorias": [
+    "torrent",
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://pasateatorrent.org/",
+   "idiomas": [
+    "cast"
+   ],
+   "muertos": [],
+   "nombre": "PasateATorrent",
+   "nota": "Canal con enlaces Torrent exclusivamente. Películas por géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "17314445984f62f8"
+  },
+  "peliculasonline": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://ver.pelisonline.ws/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "PeliculasOnline",
+   "nota": "Películas por géneros. También Series.",
+   "sha": "c30565a4ad97105e"
+  },
+  "peliculaspro": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "PeliculasPro",
+   "nota": "Películas por géneros. También Series. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "4b4a95b98f4e0062"
+  },
+  "pelis182": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://pelis182.net/",
+   "idiomas": [
+    "lat"
+   ],
+   "muertos": [],
+   "nombre": "Pelis182",
+   "nota": "Películas por géneros. También Series.",
+   "sha": "67145f5bdf22bd04"
+  },
+  "pelisforte": {
+   "activo": true,
+   "categorias": [
+    "movie"
+   ],
+   "host": "https://www2.pelisforte.se/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [
+    "https://pelisforte.co/",
+    "https://pelisforte.nu/",
+    "https://www1.pelisforte.se/"
+   ],
+   "nombre": "PelisForte",
+   "nota": "Películas por idiomas, géneros y año. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "927b169a3fa92160"
+  },
+  "pelisgratishd": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://pelisgratishd.zip/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "PelisGratisHd",
+   "nota": "Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "2cb7855631d7b348"
+  },
+  "pelismaraton": {
+   "activo": false,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "PelisMaraton",
+   "nota": "Web CERRADA. Películas por géneros. También Series.",
+   "sha": ""
+  },
+  "pelismart": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://smartpelis.tv/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [
+    "https://pelismart.tv/",
+    "https://smartpeli.com/",
+    "https://www3.smartpeli.com/",
+    "https://smartpeli.tv/"
+   ],
+   "nombre": "PelisMart",
+   "nota": "Películas por géneros, año. También Series",
+   "sha": "a8283a8737a2a4e9"
+  },
+  "pelispanda": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow",
+    "torrent"
+   ],
+   "host": "https://pelispanda.org/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [
+    "https://pelispanda.com/",
+    "https://pelispanda.re/",
+    "https://pelispanda.win/"
+   ],
+   "nombre": "PelisPanda",
+   "nota": "Canal con enlaces Torrent exclusivamente. Películas por géneros. También Series. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "a9ac3be194bcc945"
+  },
+  "pelispedia": {
+   "activo": false,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "PelisPedia",
+   "nota": "Web ANULADA. Películas por géneros. Series por Géneros.",
+   "sha": ""
+  },
+  "pelispediais": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://pelispedia.is/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "PelisPediaIs",
+   "nota": "Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "60219fe6d3f43256"
+  },
+  "pelisplanet": {
+   "activo": false,
+   "categorias": [
+    "movie"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "PelisPlanet",
+   "nota": "Web CERRADA. Películas por géneros.",
+   "sha": ""
+  },
+  "pelisplushdlat": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://pelisplushd.la/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [
+    "https://pelisplushd.lat/",
+    "https://www1.pelisplushd.lat/",
+    "https://www2.pelisplushd.lat/",
+    "https://ww1.pelisplushd.to/",
+    "https://www9.pelisplushd.to/",
+    "https://www11.pelisplushd.to/",
+    "https://www15.pelisplushd.to/",
+    "https://www16.pelisplushd.to/",
+    "https://www17.pelisplushd.to/",
+    "https://www18.pelisplushd.to/",
+    "https://www19.pelisplushd.to/",
+    "https://www20.pelisplushd.to/",
+    "https://www23.pelisplushd.to/",
+    "https://www24.pelisplushd.to/",
+    "https://ww3.pelisplushd.to/",
+    "https://ww4.pelisplushd.to/",
+    "https://ww5.pelisplushd.to/",
+    "https://www25.pelisplushd.to/",
+    "https://www26.pelisplushd.to/",
+    "https://www.pelisplushd.la/",
+    "https://pelisplushd.to/"
+   ],
+   "nombre": "PelisPlusHdLat",
+   "nota": "Películas por géneros y años. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "f2eeedcdcc340ddd"
+  },
+  "pelisplushdnz": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://pelisplushd.bz/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [
+    "https://pelisplushd.cx/",
+    "https://ww3.pelisplushd.nz/",
+    "https://pelisplushd.top/",
+    "https://pelisplushd.rip/",
+    "https://pelisplushd.run/",
+    "https://pelisplushd.nz/"
+   ],
+   "nombre": "PelisPlusHdNz",
+   "nota": "Películas por géneros y años. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "7d6a941dc363d419"
+  },
+  "pelisretro": {
+   "activo": false,
+   "categorias": [
+    "movie"
+   ],
+   "host": "",
+   "idiomas": [
+    "lat"
+   ],
+   "muertos": [],
+   "nombre": "PelisRetro",
+   "nota": "Web CERRADA. Películas clásicas, por géneros.",
+   "sha": ""
+  },
+  "pelisxd": {
+   "activo": false,
+   "categorias": [
+    "movie"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "PelisXd",
+   "nota": "Web CERRADA. Películas por géneros.",
+   "sha": ""
+  },
+  "pelisyseries": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow",
+    "torrent"
+   ],
+   "host": "https://www2.pelisyseries.net/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "PelisySeries",
+   "nota": "Canal con enlaces Streaming y Torrent. Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "cee3c1c9344f7b36"
+  },
+  "playdede": {
+   "activo": false,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "PlayDede",
+   "nota": "Web CERRADA. Películas por géneros. Series por Géneros.",
+   "sha": ""
+  },
+  "playview": {
+   "activo": false,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "",
+   "idiomas": [
+    "lat",
+    "cast",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "PlayView",
+   "nota": "Web CERRADA. Películas por géneros. También Series.",
+   "sha": ""
+  },
+  "plushd": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://tioplus.app/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "PlusHd",
+   "nota": "Películas por géneros y años. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "173cd3cbd66b0f23"
+  },
+  "poseidonhd2": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://www.poseidonhd2.co/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [
+    "https://www.poseidonhd2.com/",
+    "https://poseidonhd2.co/"
+   ],
+   "nombre": "PoseidonHd2",
+   "nota": "Películas por géneros. También Series. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "8f6116e0200819d6"
+  },
+  "repelis": {
+   "activo": false,
+   "categorias": [
+    "movie"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "RePelis",
+   "nota": "Web CERRADA. Películas por géneros.",
+   "sha": ""
+  },
+  "repelis28": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://repelis28.org/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "RePelis28",
+   "nota": "Películas por géneros. Series por Géneros.",
+   "sha": "141c74fe30be738c"
+  },
+  "repelishd": {
+   "activo": true,
+   "categorias": [
+    "movie"
+   ],
+   "host": "https://repelishd.blog/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [
+    "https://repelishd.cam/",
+    "https://repelishd.city/",
+    "https://repelishd.run/",
+    "https://repelishd.ceo/",
+    "https://repelishd.fit/",
+    "https://repelishd.bid/",
+    "https://repelishd.courses/",
+    "https://repelishd.pics/"
+   ],
+   "nombre": "RePelisHd",
+   "nota": "Películas por géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "d3198868907efb55"
+  },
+  "retrocinema": {
+   "activo": true,
+   "categorias": [
+    "movie"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "RetroCinema",
+   "nota": "Películas clásicas por géneros.",
+   "sha": "ede27b1f2ece9064"
+  },
+  "retroflix": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://retroflix.org/",
+   "idiomas": [
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "RetroFlix",
+   "nota": "Películas clásicas por géneros, Documentales clásicos. Episodios de Cartoons y Episodios de Series clásicas. En idioma orignal de emisión.",
+   "sha": "134945c780b75840"
+  },
+  "retrotv": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://retrotve.com/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "RetroTv",
+   "nota": "Películas por géneros. Series clásicas, por Géneros. Series en idioma orignal de emisión.",
+   "sha": "0c3a769642b3a751"
+  },
+  "seriesbiblicas": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://seriesbiblicas.net/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "SeriesBiblicas",
+   "nota": "Películas y Series. Con temas Bíblicos.",
+   "sha": "68ae06e92aefce63"
+  },
+  "seriesflix": {
+   "activo": false,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "SeriesFlix",
+   "nota": "Web CERRADA. Series por Géneros.",
+   "sha": ""
+  },
+  "seriesflv": {
+   "activo": false,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "SeriesFlv",
+   "nota": "Web CERRADA. Series por Géneros.",
+   "sha": ""
+  },
+  "seriesgato": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://ver.seriesgato.pw/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "SeriesGato",
+   "nota": "Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "32f5218aaed58d4b"
+  },
+  "serieskao": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://serieskao.top/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [
+    "https://serieskao.tv/",
+    "https://serieskao.net/",
+    "https://serieskao.org/"
+   ],
+   "nombre": "SeriesKao",
+   "nota": "Películas por géneros, año. Series por Géneros.",
+   "sha": "f64c56c4741310c0"
+  },
+  "serieslan": {
+   "activo": false,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "",
+   "idiomas": [
+    "lat"
+   ],
+   "muertos": [],
+   "nombre": "SeriesLan",
+   "nota": "Web CERRADA. Series infantiles clásicas en idioma orignal de emisión.",
+   "sha": ""
+  },
+  "seriesly": {
+   "activo": false,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "SeriesLy",
+   "nota": "Web CERRADA. Películas por géneros. Series por Géneros.",
+   "sha": ""
+  },
+  "seriesmetro": {
+   "activo": false,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "SeriesMetro",
+   "nota": "Web CERRADA. Series por Géneros.",
+   "sha": ""
+  },
+  "seriesmetron": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://www3.seriesmetro.net/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "SeriesMetroN",
+   "nota": "Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "d4c0375599205384"
+  },
+  "seriespapaya": {
+   "activo": false,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "SeriesPapaya",
+   "nota": "Web CERRADA. Series, con capítulos de estreno en castellano, latino y subtituladas.",
+   "sha": ""
+  },
+  "seriespapayato": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://magistv24.com/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [
+    "https://seriespapaya.to/",
+    "https://papayaseries.net/",
+    "https://www3.papayaseries.net/"
+   ],
+   "nombre": "SeriesPapayaTo",
+   "nota": "Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "d0e5e748a9bf7ff6"
+  },
+  "seriespepito": {
+   "activo": false,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "SeriesPepito",
+   "nota": "Web CERRADA. Series por Géneros.",
+   "sha": ""
+  },
+  "seriesretro": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow",
+    "torrent"
+   ],
+   "host": "https://seriesretro.com/",
+   "idiomas": [
+    "lat"
+   ],
+   "muertos": [],
+   "nombre": "SeriesRetro",
+   "nota": "Canal con enlaces Streaming y Torrent. Películas por géneros y años. Series clásicas, por Géneros, años en idioma orignal de emisión. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "328ce68581c131be"
+  },
+  "seriesturcas": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://kaj.seriesturcastv.to/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "SeriesTurcas",
+   "nota": "Web dedicada exclusivamente en Novelas. Series por Géneros.",
+   "sha": "b8f3d9be1a44eb99"
+  },
+  "seriesyonkis": {
+   "activo": false,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "SeriesYonkis",
+   "nota": "Web ANULADA. Películas por géneros. Series por Géneros.",
+   "sha": ""
+  },
+  "seriesyonkissx": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow",
+    "torrent"
+   ],
+   "host": "https://seriesyonkis.cx/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "SeriesYonkisSx",
+   "nota": "Canal con enlaces Streaming y Torrent. Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "59e945faf8e1afea"
+  },
+  "sigloxx": {
+   "activo": true,
+   "categorias": [
+    "movie"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast"
+   ],
+   "muertos": [],
+   "nombre": "SigloXX",
+   "nota": "Películas clásicas. Por sagas, año, interpretes, directores, etc.",
+   "sha": "54959fca77b7a9df"
+  },
+  "sinpeli": {
+   "activo": false,
+   "categorias": [
+    "movie"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "SinPeli",
+   "nota": "Web CERRADA. Películas por géneros.",
+   "sha": ""
+  },
+  "sololatino": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://sololatino.net/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "SoloLatino",
+   "nota": "Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "fafa3d7f3371b95a"
+  },
+  "srnovelas": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://srnovelas.com/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [
+    "https://www.srnovelas.cc/",
+    "https://meganovelas.online/",
+    "https://srnovelas.org/"
+   ],
+   "nombre": "SrNovelas",
+   "nota": "Web dedicada exclusivamente en Novelas. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "9f61a7fcea37555a"
+  },
+  "subtorrents": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow",
+    "torrent"
+   ],
+   "host": "https://www1.subtorrents.zip/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [
+    "https://www.subtorrents.nl/",
+    "https://www.subtorrents.ch/",
+    "https://www.subtorrents.nz/",
+    "https://www.subtorrents.in/",
+    "https://www.subtorrents.li/",
+    "https://www.subtorrents.do/",
+    "https://www.subtorrents.re/",
+    "https://www.subtorrents.eu/"
+   ],
+   "nombre": "SubTorrents",
+   "nota": "Canal con enlaces Torrent exclusivamente. Películas y Series Subtituladas y en versión original. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "6df9d704ad067a79"
+  },
+  "tioanime": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://tioanime.com",
+   "idiomas": [
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "TioAnime",
+   "nota": "Web dedicada exclusivamente al anime",
+   "sha": "93654608681c2495"
+  },
+  "tiodonghua": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://tiodonghua.lat/",
+   "idiomas": [
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "TioDonghua",
+   "nota": "Web dedicada exclusivamente al anime. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "0db7e7a666de504f"
+  },
+  "todocineclasico": {
+   "activo": true,
+   "categorias": [
+    "movie"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "TodoCineClasico",
+   "nota": "Películas clásicas por géneros.",
+   "sha": "bc0499e9e3f4f2a2"
+  },
+  "topdocumentaryfilms": {
+   "activo": true,
+   "categorias": [
+    "documentary"
+   ],
+   "host": "https://topdocumentaryfilms.com/",
+   "idiomas": [
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "TopDocumentaryFilms",
+   "nota": "Documentales en versión original.",
+   "sha": "0a958f423a07762c"
+  },
+  "trailers": {
+   "activo": true,
+   "categorias": [
+    "movie"
+   ],
+   "host": "https://www.ecartelera.com/",
+   "idiomas": [
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "Trailers",
+   "nota": "Web dedicada exclusivamente a los tráilers de Películas.",
+   "sha": "2ba5cb4d9c06f4bc"
+  },
+  "tucineclasico": {
+   "activo": false,
+   "categorias": [
+    "movie"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "TuCineClasico",
+   "nota": "Web CERRADA. Películas clásicas por géneros.",
+   "sha": ""
+  },
+  "tvseries": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast"
+   ],
+   "muertos": [],
+   "nombre": "TvSeries",
+   "nota": "Series clásicas.",
+   "sha": "e48e2f6bb78503b2"
+  },
+  "ultrapelis": {
+   "activo": true,
+   "categorias": [
+    "movie"
+   ],
+   "host": "https://verpeliculasultra.com/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "UltraPelis",
+   "nota": "Películas por géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "51eac221487263e7"
+  },
+  "veranime": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://ver-anime.com/",
+   "idiomas": [
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "VerAnime",
+   "nota": "Web dedicada exclusivamente al anime",
+   "sha": "5c51da7639cdd1ac"
+  },
+  "verdocumentalesonline": {
+   "activo": true,
+   "categorias": [
+    "documentary"
+   ],
+   "host": "https://www.dailymotion.com/",
+   "idiomas": [
+    "cast"
+   ],
+   "muertos": [],
+   "nombre": "VerDocumentalesOnline",
+   "nota": "Documentales en castellano.",
+   "sha": "b7379d0b82eeed1a"
+  },
+  "veronline": {
+   "activo": false,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "VerOnline",
+   "nota": "Web CERRADA. Series por Géneros.",
+   "sha": ""
+  },
+  "verpelis": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://verpelis.gratis/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "VerPelis",
+   "nota": "Películas por géneros. Series por Géneros.",
+   "sha": "bd85ab49004d2931"
+  },
+  "vision": {
+   "activo": true,
+   "categorias": [
+    "movie"
+   ],
+   "host": "https://verpeliculasonline.net/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "Vision",
+   "nota": "Películas por géneros.",
+   "sha": "0d8fc19a018f465a"
+  },
+  "vivatorrents": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow",
+    "torrent"
+   ],
+   "host": "https://www.vivatorrents.org/",
+   "idiomas": [
+    "cast"
+   ],
+   "muertos": [],
+   "nombre": "VivaTorrents",
+   "nota": "Canal con enlaces Torrent exclusivamente. Películas y Series.",
+   "sha": "1e95791caf97a87c"
+  },
+  "yandispoiler": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://yandispoiler.net/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "YandiSpoiler",
+   "nota": "Web dedicada exclusivamente al dorama.",
+   "sha": "1e31caf3ef5cd9ea"
+  },
+  "youtubedocs": {
+   "activo": true,
+   "categorias": [
+    "documentary"
+   ],
+   "host": "https://www.youtube.com/",
+   "idiomas": [
+    "cast"
+   ],
+   "muertos": [],
+   "nombre": "YouTubeDocs",
+   "nota": "Canal con varios Sub-Canales. Documentales en castellano.",
+   "sha": "c0a84e2c106c34a0"
+  },
+  "ytsoficial": {
+   "activo": true,
+   "categorias": [
+    "torrent",
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://en.yts-official.com",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "YtsOficial",
+   "nota": "Canal con enlaces Torrent exclusivamente. Películas por géneros y años. Series por Géneros y años.",
+   "sha": "1c48765bd0c0c640"
+  },
+  "zonaleros": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://zona-leros.com/",
+   "idiomas": [
+    "lat"
+   ],
+   "muertos": [],
+   "nombre": "ZonaLeros",
+   "nota": "Películas por géneros y año. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "dc0db5ec7200eb86"
+  },
+  "zoowomaniacos": {
+   "activo": true,
+   "categorias": [
+    "movie"
+   ],
+   "host": "",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "ZoowoManiacos",
+   "nota": "Películas clásicas y cine independiente, por diversos criteríos.",
+   "sha": "e358484d94218df6"
+  }
+ },
+ "generado": "2026-11-08T02:55:57+00:00",
+ "origen": "repobal/base v4.0.34 + repobal/fix (32 archivos)",
+ "version": "4.0.34"
+}
