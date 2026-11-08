@@ -30,6 +30,10 @@ export type Src = {
   // MediaFusion): en un pack de temporada separa el E05 del resto.
   file_idx?: number | null;
   filename?: string | null;
+  // Copias del archivo en hosters (Mega, Mediafire, Mixdrop, VOE…) que
+  // Real-Debrid convierte en URL directa (rd_unrestrict), en orden de
+  // preferencia: se prueban hasta que una abra. Sin debrid no sirve.
+  links?: string[] | null;
   _count?: number; // cuántas fuentes equivalentes se apilaron en esta
   // Veredicto de la verificación REAL de pistas (ffprobe sobre la URL
   // resuelta): qué español embebido trae el archivo de verdad.
@@ -234,7 +238,9 @@ function normKey(s: Src): string {
     .slice(0, 45);
   // El hardsub va en su propia clave: apilarlo con un torrent de nombre
   // parecido escondería la única fuente con español garantizado.
-  return `${s.quality}|${s.hardsub || ""}|${t}`;
+  // Lo mismo con la copia en hosters: comparte nombre con el HLS de su sitio
+  // y apilarlas escondería una de las dos vías.
+  return `${s.quality}|${s.hardsub || ""}|${s.links?.length ? "rd" : ""}|${t}`;
 }
 
 /**

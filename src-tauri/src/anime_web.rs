@@ -3,9 +3,13 @@
 // cobertura: acá el sub ya viene dentro del video, no hay que buscar nada.
 //
 // jkanime sirve HLS FIRMADO desde su propio reproductor (m3u8 con token de
-// expiración) y mpv lo reproduce directo: sin debrid, sin yt-dlp. Los
-// servidores de terceros (ok.ru, mega, streamtape) necesitan un resolvedor
-// aparte y quedan fuera por ahora — se descartan en silencio.
+// expiración) y mpv lo reproduce directo: sin debrid, sin yt-dlp.
+//
+// Además cada capítulo lista copias del MISMO archivo en hosters (Mega,
+// Mediafire, Mixdrop, VOE…). Real-Debrid las convierte en un mp4 directo con
+// /unrestrict/link: sirve de respaldo cuando el HLS falla, se puede adelantar
+// y atrasar sin cortes, y el video sale de los servidores de RD (esquiva los
+// bloqueos por país). Ver `jk_hosters`.
 //
 // Todo el módulo es BEST-EFFORT: si el sitio cambió el HTML o está bloqueado,
 // devuelve vacío y el picker sigue mostrando torrents. Nunca es la única vía.
@@ -135,9 +139,7 @@ async fn jk_find_slug(titles: &[String]) -> Option<(String, String)> {
 /// URLs de los reproductores incrustados de un episodio, en orden de aparición.
 /// El HTML las mete en un array JS:
 ///   video[0] = '<iframe class="player_conte" src="https://jkanime.net/jkplayer/um?e=…"…>';
-async fn jk_episode_embeds(slug: &str, ep: u32) -> Result<Vec<String>, String> {
-    let path = format!("/{slug}/{ep}/");
-    let (base, html) = crate::net::get_first(JK_MIRRORS, &path).await?;
+fn jk_episode_embeds(base: &str, html: &str) -> Vec<String> {
     let mut out = Vec::new();
     for (i, _) in html.match_indices("video[") {
         let frag = &html[i..];
@@ -155,10 +157,135 @@ async fn jk_episode_embeds(slug: &str, ep: u32) -> Result<Vec<String>, String> {
             out.push(url);
         }
     }
-    if out.is_empty() {
-        return Err(format!("jkanime {slug}/{ep}: sin reproductores en el HTML"));
+    out
+}
+
+// ---- Hosters vía Real-Debrid --------------------------------------------
+
+/// Base64 estándar (con o sin relleno). El `remote` de jkanime viene así y no
+/// vale una dependencia nueva por 20 líneas.
+fn b64_decode(s: &str) -> Option<Vec<u8>> {
+    let val = |c: u8| -> Option<u32> {
+        Some(match c {
+            b'A'..=b'Z' => (c - b'A') as u32,
+            b'a'..=b'z' => (c - b'a' + 26) as u32,
+            b'0'..=b'9' => (c - b'0' + 52) as u32,
+            b'+' | b'-' => 62,
+            b'/' | b'_' => 63,
+            _ => return None,
+        })
+    };
+    let bytes: Vec<u8> = s.bytes().filter(|c| !c.is_ascii_whitespace() && *c != b'=').collect();
+    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
+    for chunk in bytes.chunks(4) {
+        let mut n = 0u32;
+        for (i, &c) in chunk.iter().enumerate() {
+            n |= val(c)? << (18 - 6 * i);
+        }
+        let k = match chunk.len() {
+            4 => 3,
+            3 => 2,
+            2 => 1,
+            _ => return None,
+        };
+        for i in 0..k {
+            out.push((n >> (16 - 8 * i)) as u8);
+        }
     }
-    Ok(out)
+    Some(out)
+}
+
+/// Hoster de jkanime → link que Real-Debrid sabe abrir, o None si RD no lo
+/// soporta. Probado contra RD real (2026-11-07):
+///   - Mega: el embed `/embed/ID#KEY` hay que pasarlo a `/file/ID#KEY`.
+///   - Mixdrop: jkanime usa dominios espejo que RD no conoce; el ID es el
+///     mismo en mixdrop.ag.
+///   - Mediafire, VOE, 1Fichier, Streamtape: tal cual.
+///   - Mp4upload ("hoster_unsupported"), Streamwish, Vidhide, Filemoon y
+///     Doodstream: RD no los abre.
+/// El número es la preferencia: primero los que guardan el archivo original.
+fn link_para_rd(server: &str, url: &str) -> Option<(u8, String)> {
+    let url = url.trim();
+    match server.to_ascii_lowercase().as_str() {
+        "mega" => {
+            let u = if let Some(r) = url.split_once("/embed/").map(|(_, r)| r) {
+                format!("https://mega.nz/file/{r}")
+            } else if let Some(r) = url.split_once("/embed#!").map(|(_, r)| r) {
+                format!("https://mega.nz/#!{r}")
+            } else {
+                url.to_string()
+            };
+            Some((0, u))
+        }
+        "mediafire" => Some((1, url.to_string())),
+        "1fichier" => Some((2, url.to_string())),
+        "mixdrop" => {
+            let id = url.trim_end_matches('/').rsplit('/').next().filter(|s| !s.is_empty())?;
+            Some((3, format!("https://mixdrop.ag/f/{id}")))
+        }
+        "voe" => Some((4, url.to_string())),
+        "streamtape" => Some((5, url.to_string())),
+        _ => None,
+    }
+}
+
+/// Copias del capítulo en hosters, agrupadas por idioma (`lang` de jkanime:
+/// 1 = japonés con sub español, otro = doblaje). El HTML trae:
+///   var servers = [{"remote":"<base64 url>","server":"Mega","lang":1,"size":"52 MB",…}];
+/// Devuelve (lang, tamaño en bytes, links ordenados para RD).
+fn jk_hosters(html: &str) -> Vec<(u64, Option<u64>, Vec<String>)> {
+    let Some(i) = html.find("var servers = ") else { return Vec::new() };
+    let rest = &html[i + "var servers = ".len()..];
+    let Some(end) = rest.find("];") else { return Vec::new() };
+    let Ok(lista) = serde_json::from_str::<Vec<serde_json::Value>>(&rest[..end + 1]) else {
+        eprintln!("[jkanime] var servers ilegible");
+        return Vec::new();
+    };
+    let mut grupos: Vec<(u64, Option<u64>, Vec<(u8, String)>)> = Vec::new();
+    for s in &lista {
+        let server = s["server"].as_str().unwrap_or("");
+        let Some(url) = s["remote"]
+            .as_str()
+            .and_then(b64_decode)
+            .and_then(|b| String::from_utf8(b).ok())
+        else {
+            continue;
+        };
+        let Some(link) = link_para_rd(server, &url) else { continue };
+        let lang = s["lang"].as_u64().unwrap_or(1);
+        let size = s["size"].as_str().and_then(tamano_bytes);
+        match grupos.iter_mut().find(|g| g.0 == lang) {
+            Some(g) => {
+                if g.1.is_none() {
+                    g.1 = size;
+                }
+                if !g.2.iter().any(|(_, l)| *l == link.1) {
+                    g.2.push(link);
+                }
+            }
+            None => grupos.push((lang, size, vec![link])),
+        }
+    }
+    grupos
+        .into_iter()
+        .map(|(lang, size, mut links)| {
+            links.sort_by_key(|(p, _)| *p);
+            (lang, size, links.into_iter().map(|(_, l)| l).collect())
+        })
+        .collect()
+}
+
+/// "52 MB" / "1.2 GB" → bytes.
+fn tamano_bytes(s: &str) -> Option<u64> {
+    let mut it = s.split_whitespace();
+    let n: f64 = it.next()?.replace(',', ".").parse().ok()?;
+    let mult = match it.next()?.to_ascii_uppercase().as_str() {
+        "KB" => 1e3,
+        "MB" => 1e6,
+        "GB" => 1e9,
+        _ => return None,
+    };
+    Some((n * mult) as u64)
 }
 
 /// Convierte un embed del reproductor PROPIO de jkanime en su HLS directo.
@@ -180,14 +307,16 @@ async fn jk_resolve_embed(embed: &str, referer: &str) -> Option<String> {
 }
 
 /// Fuentes de jkanime para un episodio. `titles` debe traer el romaji primero.
-/// Devuelve como mucho una fuente: los distintos "servidores" del sitio apuntan
-/// al mismo HLS, así que se deduplica por URL.
+/// Hasta dos tipos: el HLS propio (los distintos "servidores" del sitio
+/// apuntan al mismo HLS, así que se deduplica por URL) y una fuente por idioma
+/// con las copias en hosters para Real-Debrid. Basta con que haya una.
 pub async fn jkanime_search(titles: &[String], episode: Option<u32>) -> Result<Vec<Source>, String> {
     let ep = episode.unwrap_or(1);
     let (slug, matched) = jk_find_slug(titles).await.ok_or("jkanime: sin coincidencia de título")?;
     eprintln!("[jkanime] '{matched}' → slug={slug} ep={ep}");
-    let embeds = jk_episode_embeds(&slug, ep).await?;
-    let referer = format!("{}/{slug}/{ep}/", JK_MIRRORS[0]);
+    let (base, html) = crate::net::get_first(JK_MIRRORS, &format!("/{slug}/{ep}/")).await?;
+    let embeds = jk_episode_embeds(&base, &html);
+    let referer = format!("{base}/{slug}/{ep}/");
 
     let mut urls: Vec<String> = Vec::new();
     for e in &embeds {
@@ -200,30 +329,48 @@ pub async fn jkanime_search(titles: &[String], episode: Option<u32>) -> Result<V
             }
         }
     }
-    if urls.is_empty() {
-        return Err(format!("jkanime {slug}/{ep}: ningún servidor resolvió a HLS"));
+    let hosters = jk_hosters(&html);
+    if urls.is_empty() && hosters.is_empty() {
+        return Err(format!("jkanime {slug}/{ep}: ni HLS ni hosters que sirvan"));
     }
-    Ok(urls
+    let base_src = |title: String| Source {
+        source: "jkanime".into(),
+        title,
+        magnet: None,
+        url: None,
+        info_hash: None,
+        size_bytes: None,
+        seeders: None,
+        // Ni el HLS ni el sitio declaran resolución: no inventamos una calidad.
+        quality: Quality::Unknown,
+        rd_cached: None,
+        hardsub: Some("lat".into()),
+        file_idx: None,
+        filename: None,
+        links: None,
+    };
+    // "Subtitulado"/"Latino" en el título no es decorativo: langScore del
+    // picker lo lee para ordenar según el modo doblado/subtitulado del usuario.
+    let mut out: Vec<Source> = urls
         .into_iter()
         .map(|url| Source {
-            source: "jkanime".into(),
-            // "Subtitulado" en el título no es decorativo: langScore del picker
-            // lo lee para ordenar según el modo doblado/subtitulado del usuario.
-            title: format!("{matched} — Episodio {ep} [Subtitulado español]"),
-            magnet: None,
             url: Some(url),
-            info_hash: None,
-            size_bytes: None,
-            seeders: None,
-            // El HLS es una playlist de medios sin declarar resolución: no
-            // inventamos una calidad que no sabemos.
-            quality: Quality::Unknown,
-            rd_cached: None,
-            hardsub: Some("lat".into()),
-            file_idx: None,
-            filename: None,
+            ..base_src(format!("{matched} — Episodio {ep} [Subtitulado español]"))
         })
-        .collect())
+        .collect();
+    for (lang, size, links) in hosters {
+        eprintln!("[jkanime] hosters lang={lang}: {}", links.len());
+        let etiqueta = if lang == 1 { "Subtitulado español" } else { "Latino" };
+        out.push(Source {
+            source: "jkanime-rd".into(),
+            size_bytes: size,
+            links: Some(links),
+            // El doblaje no trae sub quemado; el subtitulado sí.
+            hardsub: if lang == 1 { Some("lat".into()) } else { None },
+            ..base_src(format!("{matched} — Episodio {ep} [{etiqueta}] mp4"))
+        });
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -247,6 +394,44 @@ mod tests {
         let html = r#"<script src="https://cdn.tld/hls.min.js"></script>
                       var conf = { url: 'https://nika.tld/abc.m3u8?st=xyz&e=1', p2p: true };"#;
         assert_eq!(find_url(html, ".m3u8").unwrap(), "https://nika.tld/abc.m3u8?st=xyz&e=1");
+    }
+
+    #[test]
+    fn b64_decodifica_remote_de_jkanime() {
+        let b = b64_decode("aHR0cHM6Ly9tZWRpYWZpcmUuY29tL2ZpbGUvam9uYTJwaXJsNjd4cDRsLwo=").unwrap();
+        assert_eq!(String::from_utf8(b).unwrap(), "https://mediafire.com/file/jona2pirl67xp4l/\n");
+        assert_eq!(b64_decode("YQ").unwrap(), b"a");
+        assert!(b64_decode("a$b").is_none());
+    }
+
+    #[test]
+    fn link_para_rd_reescribe_mega_y_mixdrop() {
+        assert_eq!(
+            link_para_rd("Mega", "https://mega.nz/embed/I2sn2TTS#Yyt").unwrap().1,
+            "https://mega.nz/file/I2sn2TTS#Yyt"
+        );
+        assert_eq!(
+            link_para_rd("Mixdrop", "https://mdbekjwqa.pw/e/6qxol61li9o1xe").unwrap().1,
+            "https://mixdrop.ag/f/6qxol61li9o1xe"
+        );
+        assert!(link_para_rd("Mp4upload", "https://www.mp4upload.com/embed-x.html").is_none());
+        assert!(link_para_rd("Doodstream", "https://d-s.io/e/x").is_none());
+    }
+
+    #[test]
+    fn jk_hosters_agrupa_por_idioma_y_ordena() {
+        // Mega = https://mega.nz/embed/A#kk ; Voe = https://voe.sx/e/z ; Mp4upload no sirve
+        let html = r#"bgservers();  var servers = [
+            {"remote":"aHR0cHM6Ly92b2Uuc3gvZS96","slug":"s1","server":"VOE","lang":1,"size":"52 MB","append":0},
+            {"remote":"aHR0cHM6Ly9tZWdhLm56L2VtYmVkL0Eja2s=","slug":"s2","server":"Mega","lang":1,"size":"52 MB","append":0},
+            {"remote":"aHR0cHM6Ly93d3cubXA0dXBsb2FkLmNvbS9lbWJlZC14Lmh0bWw=","slug":"s3","server":"Mp4upload","lang":1,"size":"52 MB","append":0}
+        ];  var remote = 'x';"#;
+        let g = jk_hosters(html);
+        assert_eq!(g.len(), 1);
+        assert_eq!(g[0].0, 1);
+        assert_eq!(g[0].1, Some(52_000_000));
+        assert_eq!(g[0].2, ["https://mega.nz/file/A#kk", "https://voe.sx/e/z"]);
+        assert!(jk_hosters("<p>sin lista</p>").is_empty());
     }
 
     #[test]

@@ -368,7 +368,10 @@
   // Con el player web apagado (WEB_PLAYER_ENABLED) el pie pierde un botón, así
   // que los índices se corren: si no, quedaría un slot fantasma que el teclado
   // recorre sin nada enfocado y "volver" no respondería al Enter.
-  const nHardsub = $derived(sources.filter((s) => s.hardsub).length);
+  // "Enlace directo" = fuentes web: el HLS con sub quemado y las copias en
+  // hosters vía Real-Debrid (que pueden ser doblaje, sin hardsub).
+  const esWeb = (s: Src) => !!(s.hardsub || s.links?.length);
+  const nHardsub = $derived(sources.filter(esWeb).length);
   const nTorrent = $derived(sources.length - nHardsub);
   // Las pestañas solo aparecen si de verdad hay dos familias entre las que
   // elegir. Con una sola serían ruido en pantalla.
@@ -387,8 +390,8 @@
   // eligió "Enlace directo", caer a un torrent japonés traicionaría la elección.
   const view = $derived(
     famFilter === "all" ? sources
-    : famFilter === "hardsub" ? sources.filter((s) => s.hardsub)
-    : sources.filter((s) => !s.hardsub),
+    : famFilter === "hardsub" ? sources.filter(esWeb)
+    : sources.filter((s) => !esWeb(s)),
   );
 
   // Pie: [Ver en web] · Rebuscar fuentes · Volver.
@@ -616,7 +619,9 @@
       }
 
       // La copia local va SIEMPRE primera: ninguna fuente de la red le gana.
-      sources = local ? [local, ...stack(srcs)] : stack(srcs);
+      // Las copias en hosters solo abren con Real-Debrid: sin él, no se listan.
+      const red = stack(srcs).filter((x) => rdLinked || !x.links?.length);
+      sources = local ? [local, ...red] : red;
       agrupar();
       recordarIdiomas();
       if (!sources.length) {
@@ -1450,6 +1455,24 @@
   // un capítulo y sí el siguiente.
   const capRd = $derived(season != null && episode != null ? `T${season}E${episode}` : "");
 
+  // Copia en hosters: Real-Debrid la convierte en URL directa. Son el mismo
+  // archivo en distintos sitios, así que se prueban en orden hasta que uno
+  // abra (un hoster con el archivo caído no descarta la fuente).
+  async function abrirHoster(links: string[]): Promise<string> {
+    let ultimo = "";
+    for (const link of links) {
+      try {
+        const url = await invoke<string>("rd_unrestrict", { link });
+        dbg(`hoster OK: ${new URL(link).hostname}`);
+        return url;
+      } catch (e) {
+        ultimo = String(e);
+        dbg(`hoster falló (${link.split("/")[2]}): ${ultimo}`);
+      }
+    }
+    throw new Error(`Ningún hoster abrió en Real-Debrid: ${ultimo}`);
+  }
+
   // Hash de la fuente: el del scraper o, si no vino, el del magnet.
   function hashDe(s: Src): string | null {
     return s.info_hash || /btih:([0-9a-z]{40})/i.exec(s.magnet || "")?.[1] || null;
@@ -1502,7 +1525,7 @@
     for (let i = startIdx; i < view.length && tried < MAX_TRIES; i++) {
       if (!vigente()) return;
       const s = view[i];
-      if (!s.magnet && !s.url) { dbg(`#${i} SKIP (sin magnet ni url)`); continue; }
+      if (!s.magnet && !s.url && !s.links?.length) { dbg(`#${i} SKIP (sin magnet ni url)`); continue; }
       // La que ya baja en este equipo: del torrent de la sesión, sin debrid.
       if (s.local && !s.url) {
         if (await playViaTorrent(s)) return;
@@ -1551,7 +1574,9 @@
         let url = s.url;
         // Capítulos del torrent si es un pack: el siguiente sale de ahí.
         let archivos: ArchivoPack[] = [];
-        if (!url) {
+        if (!url && s.links?.length) {
+          url = await abrirHoster(s.links);
+        } else if (!url) {
           const r = await invoke<Resuelto>("rd_resolver", {
             magnet: s.magnet,
             pista: pistaDe(s, season ?? null, episode ?? null),
@@ -2468,6 +2493,7 @@
   /** Si abre ya: en el equipo, enlace directo o lista en Real-Debrid. */
   function estadoFila(s: Src): string {
     if (s.local) return "📁 En tu equipo";
+    if (s.links?.length) return "☁️ Vía Real-Debrid";
     if (s.hardsub) return HARDSUB_LABEL[s.hardsub] || "🔗 Enlace directo";
     if (s.rd_cached) return "⚡ Al instante";
     return "";

@@ -68,6 +68,12 @@ pub struct Source {
     /// resto (ver pack.rs).
     pub file_idx: Option<u32>,
     pub filename: Option<String>,
+    /// Links de hosters (Mega, Mediafire, Mixdrop, VOE…) que Real-Debrid
+    /// convierte en URL directa con /unrestrict/link, en orden de preferencia.
+    /// Son copias del MISMO archivo: al elegir la fuente se prueba uno por uno
+    /// hasta que alguno abra. Sin debrid vinculado no sirve. None = torrent o
+    /// enlace directo.
+    pub links: Option<Vec<String>>,
 }
 
 fn http() -> Result<reqwest::Client, String> {
@@ -338,6 +344,7 @@ async fn stremio_search(
             seeders,
             rd_cached: if pre { Some(true) } else { None },
             hardsub: None,
+            links: None,
             file_idx: s.file_idx,
             filename: s.behavior_hints.and_then(|h| h.filename),
         });
@@ -424,6 +431,7 @@ async fn torrentio_kitsu_search(kitsu_id: u64, episode: Option<u32>) -> Result<V
             seeders,
             rd_cached: None,
             hardsub: None,
+            links: None,
             file_idx: s.file_idx,
             filename: s.behavior_hints.and_then(|h| h.filename),
         });
@@ -504,6 +512,7 @@ async fn yts_search(imdb: &str) -> Result<Vec<Source>, String> {
                 seeders: Some(t.seeds),
                 rd_cached: None,
                 hardsub: None,
+                links: None,
                 file_idx: None,
                 filename: None,
                 title: name,
@@ -579,6 +588,7 @@ async fn eztv_search(
             seeders: Some(t.seeds),
             rd_cached: None,
             hardsub: None,
+            links: None,
             file_idx: None,
             filename: None,
             title: t.title,
@@ -636,6 +646,7 @@ async fn animetosho_search(title: &str, episode: Option<u32>) -> Result<Vec<Sour
             seeders: tosho_num(&it["seeders"]).map(|n| n as u32),
             rd_cached: None,
             hardsub: None,
+            links: None,
             file_idx: None,
             filename: None,
             title: name,
@@ -688,6 +699,7 @@ async fn nyaa_search(title: &str, episode: Option<u32>) -> Result<Vec<Source>, S
             seeders,
             rd_cached: None,
             hardsub: None,
+            links: None,
             file_idx: None,
             filename: None,
             title,
