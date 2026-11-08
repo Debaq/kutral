@@ -44,6 +44,12 @@ export type Src = {
   // El archivo ya está en el disco (descarga terminada): `url` es una ruta
   // local. No pasa por debrid ni por el swarm — se abre y ya.
   local?: boolean;
+  // Lista (SourcePicker.agrupar): sección en la que va la fila.
+  _sec?: "rec" | "idioma" | "otras" | "noabren";
+  // Las equivalentes que stack() escondió detrás de esta (se ven con V).
+  _variantes?: Src[];
+  // Salió de desapilar otra: va marcada como variante.
+  _variante?: boolean;
 };
 
 export const QLABEL: Record<string, string> = {
@@ -183,6 +189,62 @@ function coincide(s: Src, raw: string): number {
   return needles.some((n) => hay.includes(n)) ? 1 : 0;
 }
 
+/**
+ * Lo que se comprobó abriendo el archivo (ffprobe, guardado en
+ * idiomaFuentes.ts) manda sobre lo que promete el nombre: una versión que ya
+ * se sabe sin el idioma no puede quedar arriba porque su nombre dijera
+ * "Latino". 0 = sin el idioma · 1 = no se sabe · 2-3 = comprobado.
+ */
+export function idiomaComprobado(s: Src): number {
+  if (s._es === "none") return 0;
+  if (s._es === "audio") return config.subMode === "dub" ? 3 : 2;
+  if (s._es === "subs") return config.subMode === "dub" ? 2 : 3;
+  return 1;
+}
+
+/** Variante del español según el nombre del release (o el sub quemado). */
+export function dialectoNombre(s: Src): "latino" | "castellano" | null {
+  if (s.hardsub === "lat") return "latino";
+  if (s.hardsub === "cast") return "castellano";
+  const t = (s.title || "").toLowerCase();
+  if (/\blatino\b|\blat\b|dual.?lat|español.?latino/.test(t)) return "latino";
+  if (/castellano|español|espanol|\besp\b|spanish/.test(t)) return "castellano";
+  return null;
+}
+
+/**
+ * Pack de temporada (o batch de anime): trae varios capítulos. Por el nombre,
+ * así que es una pista. Su peso es el del pack entero, no el del capítulo.
+ */
+export function esPack(s: Src, kind: Kind): boolean {
+  if (kind === "movie") return false;
+  const t = (s.title || "").toLowerCase();
+  // Marca de capítulo suelto: S01E05, 1x05, "- 05 (1080p)" del fansub.
+  if (/s\d{1,2}\s?e\d{1,3}|\b\d{1,2}x\d{2}\b|\bcap(itulo)?\.?\s?\d|\s-\s\d{1,3}(v\d)?\s*[[(]/.test(t)) return false;
+  return (
+    /\bs\d{1,2}\b|season|temporada|complet[ae]|\bbatch\b|\bpack\b/.test(t) ||
+    /\(\s?\d{1,3}\s?[-~]\s?\d{1,3}\s?\)|\b\d{1,3}\s?~\s?\d{1,3}\b/.test(t)
+  );
+}
+
+// Peso mínimo creíble por calidad (GB, película). Por debajo huele a fake o
+// a un recorte malo; un capítulo pesa más o menos la cuarta parte.
+const PESO_MIN_GB: Record<string, number> = { p2160: 5, p1080: 1, p720: 0.5, sd: 0.25 };
+
+/**
+ * Tramo de peso para ordenar: a igual idioma y calidad gana la más liviana,
+ * pero por tramos que duplican (1-2 GB, 2-4 GB…) para que 1,9 vs 2,1 GB no
+ * decida nada y por debajo del mínimo creíble no gane la más chica. Sin peso
+ * conocido, o pack (su peso no es el del capítulo), va detrás de las que sí.
+ */
+export function tramoPeso(s: Src, kind: Kind): number {
+  if (!s.size_bytes || esPack(s, kind)) return 50;
+  const gb = s.size_bytes / 1024 ** 3;
+  const min = (PESO_MIN_GB[s.quality] ?? 0) / (kind === "movie" ? 1 : 4);
+  if (gb < min) return 99;
+  return Math.max(0, Math.floor(Math.log2(gb / Math.max(min, 0.1))));
+}
+
 /** 1 si, en modo doblado, el nombre promete audio en el idioma elegido. */
 export function idiomaFuerte(s: Src): number {
   return config.subMode === "dub" && langScore(s) >= 4 ? 1 : 0;
@@ -224,14 +286,26 @@ export function nombreProveedor(source: string): string {
  * es el mismo para reproducir y para bajar: lo que la app te pondría es lo
  * que la app te baja.
  */
-export function ordenarFuentes(srcs: Src[], kind: Kind): Src[] {
+export function ordenarFuentes(srcs: Src[], kind: Kind, hundir?: (s: Src) => boolean): Src[] {
   return srcs.sort((a, b) => {
     // Lista negra: las fuentes bloqueadas se hunden al fondo, pase lo que pase.
     const blk = blockScore(a, kind) - blockScore(b, kind);
     if (blk) return blk;
+    // CAM (grabada en el cine) al fondo: antes valía más que "calidad
+    // desconocida" y le ganaba a un buen release mal nombrado.
+    const cam = (a.quality === "cam" ? 1 : 0) - (b.quality === "cam" ? 1 : 0);
+    if (cam) return cam;
+    // Las que ya se probaron en esta apertura y no sirvieron (SourcePicker).
+    if (hundir) {
+      const h = (hundir(a) ? 1 : 0) - (hundir(b) ? 1 : 0);
+      if (h) return h;
+    }
     // Fuente preferida por el usuario: máxima prioridad (sube al tope).
     const p = prefScore(b, kind) - prefScore(a, kind);
     if (p) return p;
+    // Lo comprobado en el archivo manda sobre lo que dice el nombre.
+    const v = idiomaComprobado(b) - idiomaComprobado(a);
+    if (v) return v;
     // Pool de idioma antes que "instantáneo": de nada sirve que cargue
     // rápido si no entiendes lo que dice.
     const pool = poolScore(b) - poolScore(a);
@@ -249,6 +323,10 @@ export function ordenarFuentes(srcs: Src[], kind: Kind): Src[] {
     if (l) return l;
     const q = (QRANK[b.quality] || 0) - (QRANK[a.quality] || 0);
     if (q) return q;
+    // A igual idioma y calidad, la más liviana: 70 GB de REMUX no se ven
+    // mejor en la tele del living y tardan más en arrancar.
+    const w = tramoPeso(a, kind) - tramoPeso(b, kind);
+    if (w) return w;
     return (b.seeders || 0) - (a.seeders || 0);
   });
 }
@@ -260,8 +338,11 @@ export function stack(list: Src[]): Src[] {
   for (const s of list) {
     const k = normKey(s);
     const ex = groups.get(k);
-    if (!ex) groups.set(k, { ...s, _count: 1 });
-    else ex._count = (ex._count || 1) + 1;
+    if (!ex) groups.set(k, { ...s, _count: 1, _variantes: [] });
+    else {
+      ex._count = (ex._count || 1) + 1;
+      ex._variantes!.push(s);
+    }
   }
   return [...groups.values()];
 }

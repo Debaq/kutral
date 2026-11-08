@@ -6,7 +6,7 @@ vi.mock("$lib/config.svelte", () => ({
   idiomaContenido: () => "es",
 }));
 
-import { fmtSize, infoChips, stack, ordenarFuentes, nombreProveedor, type Src } from "./fuentes";
+import { fmtSize, infoChips, stack, ordenarFuentes, nombreProveedor, esPack, type Src } from "./fuentes";
 
 const src = (over: Partial<Src>): Src => ({ quality: "1080p", title: "", ...over }) as Src;
 
@@ -78,5 +78,43 @@ describe("ordenarFuentes", () => {
     const a = src({ source: "pelispanda", title: "X [Dual 720p] [Latino/Inglés]", rd_cached: null, quality: "p720" });
     const b = src({ source: "torrentio", title: "X.720p.Latino", rd_cached: true, quality: "p720" });
     expect(ordenarFuentes([a, b], "movie")[0]).toBe(b);
+  });
+});
+
+describe("ordenarFuentes: lo comprobado, CAM y peso", () => {
+  const GB = 1024 ** 3;
+  it("la que ya se sabe sin español baja aunque el nombre diga Latino", () => {
+    const mentirosa = src({ title: "X.1080p.Latino", rd_cached: true, quality: "p1080", _es: "none" });
+    const otra = src({ title: "X.1080p.Latino.WEB", rd_cached: true, quality: "p1080" });
+    expect(ordenarFuentes([mentirosa, otra], "movie")[0]).toBe(otra);
+  });
+  it("audio comprobado gana a la que solo lo promete", () => {
+    const promete = src({ title: "X.1080p.Latino", rd_cached: true, quality: "p1080" });
+    const comprobada = src({ title: "X.1080p", rd_cached: true, quality: "p1080", _es: "audio" });
+    expect(ordenarFuentes([promete, comprobada], "movie")[0]).toBe(comprobada);
+  });
+  it("CAM queda bajo una de calidad desconocida", () => {
+    const cam = src({ title: "X.CAM.Latino", quality: "cam" });
+    const nose = src({ title: "X.Latino", quality: "unknown" });
+    expect(ordenarFuentes([cam, nose], "movie")[0]).toBe(nose);
+  });
+  it("a igual idioma y calidad, la más liviana; no una sospechosamente chica", () => {
+    const remux = src({ title: "X.1080p.Latino.REMUX", quality: "p1080", size_bytes: 30 * GB });
+    const web = src({ title: "X.1080p.Latino.WEB", quality: "p1080", size_bytes: 2.5 * GB });
+    const fake = src({ title: "X.1080p.Latino.mini", quality: "p1080", size_bytes: 0.3 * GB });
+    const orden = ordenarFuentes([remux, fake, web], "movie");
+    expect(orden[0]).toBe(web);
+    expect(orden[2]).toBe(fake);
+  });
+});
+
+describe("esPack", () => {
+  it("temporada o batch sí; capítulo suelto no", () => {
+    expect(esPack(src({ title: "Show.S01.1080p.WEB" }), "series")).toBe(true);
+    expect(esPack(src({ title: "Show Temporada 2 Completa" }), "series")).toBe(true);
+    expect(esPack(src({ title: "[Grupo] Show (01-12) [1080p]" }), "anime")).toBe(true);
+    expect(esPack(src({ title: "Show.S01E05.1080p" }), "series")).toBe(false);
+    expect(esPack(src({ title: "[SubsPlease] Show Season 2 - 05 (1080p)" }), "anime")).toBe(false);
+    expect(esPack(src({ title: "Show.S01.1080p" }), "movie")).toBe(false);
   });
 });

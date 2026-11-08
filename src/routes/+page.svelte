@@ -2467,7 +2467,10 @@
     season: number,
     episode: number,
     ep?: { name: string; still_path: string | null },
+    elegirFuente = false,
   ) {
+    // "Rebuscar fuentes" del capítulo: la lista para elegir, nada arranca solo.
+    if (elegirFuente) sourcesAutoplay = false;
     sourcesSeason = season;
     sourcesEpisode = episode;
     setContexto(

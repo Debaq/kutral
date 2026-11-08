@@ -40,6 +40,11 @@
     infoChips,
     fmtSize,
     nombreProveedor,
+    QRANK,
+    langScore,
+    idiomaComprobado,
+    dialectoNombre,
+    esPack,
     type Src,
   } from "$lib/fuentes";
   import { encolar as encolarPendiente } from "$lib/colaDescargas.svelte";
@@ -186,6 +191,14 @@
   // japoneses.
   type Fam = "all" | "hardsub" | "torrent";
   let famFilter = $state<Fam>("all");
+  // Filtro de idioma (L) y orden (O) de la lista. Solo cambian lo que se ve
+  // al elegir a mano: lo que arranca solo va siempre con el recomendado.
+  type FiltroIdioma = "todos" | "tuyo" | "latino" | "castellano";
+  let filtroIdioma = $state<FiltroIdioma>("todos");
+  type Orden = "rec" | "calidad" | "liviana" | "idioma";
+  let orden = $state<Orden>("rec");
+  // I: el nombre crudo del release. Casi siempre es ruido; a veces hace falta.
+  let verInfo = $state(false);
   let focusIdx = $state(0);
   let resolving = $state(false);
   let resolvingMsg = $state("");
@@ -388,7 +401,7 @@
   const showTabs = $derived(nHardsub > 0 && nTorrent > 0);
   const TABS: { id: Fam; label: string }[] = [
     { id: "all", label: "Todas" },
-    { id: "hardsub", label: "🔗 Enlace directo" },
+    { id: "hardsub", label: "🔗 Web" },
     { id: "torrent", label: "🧲 Torrent" },
   ];
   function tabCount(f: Fam): number {
@@ -398,11 +411,162 @@
   // La lista que se ve Y sobre la que se reproduce. Todo lo demás (foco,
   // índices del pie, salto a la siguiente fuente) va contra esto: si el usuario
   // eligió "Enlace directo", caer a un torrent japonés traicionaría la elección.
+  // El filtro de idioma (L) se suma al de familia.
   const view = $derived(
-    famFilter === "all" ? sources
-    : famFilter === "hardsub" ? sources.filter(esWeb)
-    : sources.filter((s) => !esWeb(s)),
+    sources.filter(
+      (s) => (famFilter === "all" || (famFilter === "hardsub") === esWeb(s)) && pasaIdioma(s),
+    ),
   );
+
+  // ---- Idioma, filtros y orden de la lista ----------------------------------
+
+  /**
+   * ¿Trae lo que pediste? Doblado: audio en tu idioma. Subtitulado: subtítulos
+   * (o un audio) en el idioma de los subtítulos. Lo comprobado en el archivo
+   * manda; si no, lo que promete el nombre.
+   */
+  function enTuIdioma(s: Src): boolean {
+    if (s._es === "none") return false;
+    if (config.subMode === "dub") {
+      if (s._es === "audio") return true;
+      if (s._es === "subs") return false;
+      return langScore(s) >= 4;
+    }
+    if (s._es === "audio" || s._es === "subs") return true;
+    if (s.hardsub) {
+      return idiomaSubs() === "es" ? s.hardsub === "lat" || s.hardsub === "cast" : s.hardsub === idiomaSubs();
+    }
+    return langScore(s) >= 4;
+  }
+  function idiomaPedido(): string {
+    return config.subMode === "dub"
+      ? `con audio en ${nombreIdioma(idiomaContenido())}`
+      : `con subtítulos en ${idiomaProbe().texto}`;
+  }
+
+  function pasaIdioma(s: Src): boolean {
+    if (filtroIdioma === "todos" || s.local) return true;
+    if (filtroIdioma === "tuyo") return enTuIdioma(s);
+    return s._es !== "none" && dialectoNombre(s) === filtroIdioma;
+  }
+  const FILTROS = $derived<FiltroIdioma[]>(
+    idiomaContenido() === "es" ? ["todos", "tuyo", "latino", "castellano"] : ["todos", "tuyo"],
+  );
+  function etiquetaFiltro(f: FiltroIdioma): string {
+    if (f === "todos") return "Todos los idiomas";
+    if (f === "tuyo") return idiomaPedido().replace(/^c/, "C");
+    return f === "latino" ? "Latino" : "Castellano";
+  }
+  function cicloIdioma() {
+    const i = FILTROS.indexOf(filtroIdioma);
+    filtroIdioma = FILTROS[(i + 1) % FILTROS.length];
+    focusIdx = 0;
+    scrollFocused();
+  }
+
+  const ORDENES: { id: Orden; label: string }[] = [
+    { id: "rec", label: "Recomendado" },
+    { id: "calidad", label: "Mejor calidad" },
+    { id: "liviana", label: "Más liviana" },
+    { id: "idioma", label: "Idioma primero" },
+  ];
+  function cicloOrden() {
+    const i = ORDENES.findIndex((o) => o.id === orden);
+    orden = ORDENES[(i + 1) % ORDENES.length].id;
+    reordenar();
+  }
+  /**
+   * Reordena la lista con el criterio elegido. Parte siempre del recomendado
+   * (sort estable): a igual calidad o peso, sigue mandando el resto. La copia
+   * del equipo queda primera pase lo que pase.
+   */
+  function reordenar() {
+    const locales = sources.filter((x) => x.local);
+    const red = sources.filter((x) => !x.local);
+    ordenarFuentes(red, kind, esProbada);
+    const cam = (a: Src, b: Src) => (a.quality === "cam" ? 1 : 0) - (b.quality === "cam" ? 1 : 0);
+    // Un pack pesa lo de la temporada entera: no compite en "más liviana".
+    const peso = (x: Src) => (x.size_bytes && !esPack(x, kind) ? x.size_bytes : Number.MAX_SAFE_INTEGER);
+    if (orden === "calidad") {
+      red.sort((a, b) => cam(a, b) || (QRANK[b.quality] || 0) - (QRANK[a.quality] || 0));
+    } else if (orden === "liviana") {
+      red.sort((a, b) => cam(a, b) || peso(a) - peso(b));
+    } else if (orden === "idioma") {
+      red.sort(
+        (a, b) =>
+          idiomaComprobado(b) - idiomaComprobado(a) ||
+          (enTuIdioma(b) ? 1 : 0) - (enTuIdioma(a) ? 1 : 0) ||
+          langScore(b) - langScore(a),
+      );
+    }
+    sources = [...locales, ...red];
+    agrupar();
+    focusIdx = 0;
+    scrollFocused();
+  }
+
+  /** V: muestra las versiones parecidas que stack() juntó en esta fila. */
+  function desapilar(s: Src | undefined) {
+    const vs = s?._variantes;
+    if (!s || !vs?.length) return;
+    const i = sources.indexOf(s);
+    if (i < 0) return;
+    for (const v of vs) {
+      v._variante = true;
+      v._sec = s._sec;
+    }
+    recordarIdiomas(vs);
+    s._variantes = [];
+    s._count = 1;
+    sources = [...sources.slice(0, i + 1), ...vs, ...sources.slice(i + 1)];
+  }
+
+  // Una línea bajo el título: cuántas hay, cuántas abren ya y cuántas traen
+  // lo que pediste.
+  const resumen = $derived.by(() => {
+    const n = sources.length;
+    if (!n) return "";
+    const ya = sources.filter((x) => x.local || x.rd_cached || x.hardsub).length;
+    const tuyas = sources.filter(enTuIdioma).length;
+    return [
+      `${n} ${n === 1 ? "fuente" : "fuentes"}`,
+      ya ? `${ya} ${ya === 1 ? "abre" : "abren"} ya` : "",
+      `${tuyas} ${idiomaPedido()}`,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  });
+
+  /** Por qué la primera es la primera, en pocas palabras. */
+  function motivoRec(s: Src): string {
+    const p: string[] = [];
+    if (prefScore(s, kind)) p.push("tu fuente preferida");
+    const idi = idiomaProbe().texto;
+    const d = dialectoNombre(s);
+    if (s._es === "audio") p.push(`audio en ${idi} ✓`);
+    else if (s._es === "subs") p.push(`subtítulos en ${idi} ✓`);
+    else if (d) p.push(d);
+    const q = QLABEL[s.quality];
+    if (q && q !== "—") p.push(q);
+    if (s.local) p.push("en tu equipo");
+    else if (s.rd_cached || s.hardsub) p.push("abre ya");
+    return p.join(" · ");
+  }
+  function tituloSeccion(s: Src): string {
+    switch (s._sec) {
+      case "rec": {
+        const m = motivoRec(s);
+        return `⭐ Recomendada${m ? ` · ${m}` : ""}`;
+      }
+      case "idioma":
+        return `${config.subMode === "dub" ? "🗣" : "💬"} ${idiomaPedido().replace(/^c/, "C")}`;
+      case "otras":
+        return "Otras versiones";
+      case "noabren":
+        return "🧲 Real-Debrid no las abre · se ven por torrent";
+    }
+    return "";
+  }
 
   // Pie: [Ver en web] · Rebuscar fuentes · Volver.
   const total = $derived(view.length + (WEB_PLAYER_ENABLED ? 3 : 2));
@@ -589,7 +753,9 @@
         // La que RD ya abrió hace poco sigue en la cuenta: abre al instante.
         for (const s of srcs) if (okRd(hashDe(s))) s.rd_cached = true;
       }
-      ordenarFuentes(srcs, kind);
+      // Lo ya comprobado de cada versión entra al orden (idiomaComprobado).
+      recordarIdiomas(srcs);
+      ordenarFuentes(srcs, kind, esProbada);
       if (!vivo) return;
 
       // El torrent de una de estas fuentes ya está en la sesión aunque no
@@ -626,6 +792,8 @@
               `(${QLABEL[config.torrentMaxQuality]} y ${config.torrentMaxGb} GB). ` +
               `Súbelo en Configuración, o elige una a mano.`;
           }
+        } else {
+          agrupar();
         }
         return;
       }
@@ -634,8 +802,9 @@
       // Las copias en hosters solo abren con Real-Debrid: sin él, no se listan.
       const red = stack(srcs).filter((x) => rdLinked || !x.links?.length);
       sources = local ? [local, ...red] : red;
-      agrupar();
-      recordarIdiomas();
+      // Lo que va a arrancar solo no se secciona: el orden de prueba es el
+      // recomendado tal cual (las secciones son para elegir a mano).
+      agrupar(!(autoplay && !cancelado && config.sourceSelect === "auto"));
       if (!sources.length) {
         error = "No encontramos fuentes para esta película.";
       } else if (autoplay && !cancelado && config.sourceSelect === "auto") {
@@ -1537,11 +1706,21 @@
     for (let i = startIdx; i < view.length && tried < MAX_TRIES; i++) {
       if (!vigente()) return;
       const s = view[i];
+      // La que el usuario tocó: se reproduce esa, traiga o no el idioma de
+      // Configuración (los subtítulos externos cubren), y si no abre no se
+      // salta sola a otra. Para eso eligió a mano.
+      const laElegida = elegida && i === startIdx;
       if (!s.magnet && !s.url && !s.links?.length) { dbg(`#${i} SKIP (sin magnet ni url)`); continue; }
       // La que ya baja en este equipo: del torrent de la sesión, sin debrid.
       if (s.local && !s.url) {
         if (await playViaTorrent(s)) return;
         if (torrentCancel) return;
+        if (laElegida) {
+          resolving = false;
+          agrupar();
+          error = error || "Esa fuente no abrió. Elige otra de la lista.";
+          return;
+        }
         error = "";
         continue;
       }
@@ -1554,7 +1733,7 @@
       }
       const marca = marcaRd(s);
       if (marca) {
-        if (elegida && i === startIdx) {
+        if (laElegida) {
           resolving = false;
           // Está en el grupo de "se ven por torrent": un DMCA no se levanta y
           // lo que RD no tenía en caché tampoco va a estar, así que va derecho.
@@ -1605,13 +1784,13 @@
         // buscábamos. Se verifica solo lo que tiene pistas de verdad.
         // Lo ya revisado otra vez (idiomaFuentes.ts) no se vuelve a revisar.
         const sabido = s._es != null && s._es !== "unknown";
-        if (config.verifyEsTracks && !s.hardsub && !sabido && probes < MAX_PROBES) {
+        if (config.verifyEsTracks && !laElegida && !s.hardsub && !sabido && probes < MAX_PROBES) {
           probes++;
           resolvingMsg = `Inspeccionando pistas de la fuente ${i + 1}… 🔎`;
           await revisarIdioma(url, s);
         }
         if (!vigente()) return;
-        if (config.verifyEsTracks && !s.hardsub && s._es === "none") {
+        if (config.verifyEsTracks && !laElegida && !s.hardsub && s._es === "none") {
           sinEs++;
           if (!fallback) fallback = { url, s, archivos };
           dbg(`#${i} sin español embebido${sabido ? " (ya revisada)" : ""} → siguiente`);
@@ -1646,6 +1825,21 @@
           if (f) dbg(`#${i} RD no pudo: ${f.corto}`);
         }
         if (s.magnet) rechazadas.push(s);
+        // La elegida a mano no abrió: de vuelta a la lista, sin probar otra
+        // por su cuenta. Si RD la bloqueó queda en el grupo "por torrent" y
+        // tocarla de nuevo la ve por ahí.
+        if (laElegida && rdLinked) {
+          resolving = false;
+          agrupar();
+          focusIdx = Math.max(0, view.indexOf(s));
+          error = lastErr.includes("BLOQUEADO_DMCA")
+            ? "Real-Debrid bloqueó esa fuente por derechos de autor. Tócala de nuevo para verla por torrent, o elige otra."
+            : `Esa fuente no abrió en Real-Debrid. Elige otra de la lista. (${lastErr.slice(0, 120)})`;
+          scrollFocused();
+          return;
+        }
+        // Sin debrid: solo queda bajarla en local (abajo), ella sola.
+        if (laElegida) break;
         // sigue con la próxima fuente
       }
     }
@@ -1746,8 +1940,8 @@
 
   // Lo que se revisó de cada versión otras veces: sale el chip en la lista y
   // no se vuelve a revisar (5-15 s cada una).
-  function recordarIdiomas() {
-    for (const s of sources) {
+  function recordarIdiomas(lista: Src[] = sources) {
+    for (const s of lista) {
       if (s.hardsub || s.local || s._es) continue;
       const v = veredictoGuardado(hashDe(s), capRd, idiomaSubs());
       if (v) s._es = v;
@@ -1766,14 +1960,27 @@
   // lo que RD ya no pudo, que se ve por torrent. Se reordena solo en momentos
   // fijos (al cargar, al volver a la lista): reordenar mientras playFrom
   // recorre la lista le correría los índices.
-  function agrupar() {
-    if (!rdLinked) return;
-    const abren = sources.filter((x) => !marcaRd(x));
-    const no = sources.filter((x) => marcaRd(x));
-    if (abren.length && no.length) sources = [...abren, ...no];
+  //
+  // Con el orden recomendado y `seccionar`, además: la mejor arriba como
+  // "Recomendada", después las que traen lo que pediste y al final el resto.
+  // Cada fila lleva su sección en `_sec` (los títulos de la lista salen de ahí).
+  function agrupar(seccionar = true) {
+    const no = rdLinked ? sources.filter((x) => marcaRd(x)) : [];
+    const abren = no.length ? sources.filter((x) => !marcaRd(x)) : [...sources];
+    for (const x of no) x._sec = abren.length ? "noabren" : undefined;
+    if (!seccionar || orden !== "rec" || !abren.length) {
+      for (const x of abren) x._sec = undefined;
+      if (no.length) sources = [...abren, ...no];
+      return;
+    }
+    const [mejor, ...resto] = abren;
+    const tuyas = resto.filter(enTuIdioma);
+    const otras = resto.filter((x) => !enTuIdioma(x));
+    mejor._sec = "rec";
+    for (const x of tuyas) x._sec = "idioma";
+    for (const x of otras) x._sec = "otras";
+    sources = [mejor, ...tuyas, ...otras, ...no];
   }
-
-  const hayGrupos = $derived(rdLinked && view.some((x) => marcaRd(x)) && view.some((x) => !marcaRd(x)));
 
   // Las DMCA que se pueden ver por torrent, sin contar la que RD abrió.
   function bloqueadasDmca(sin: Src): Src[] {
@@ -2469,6 +2676,7 @@
   function rebuscar() {
     intento++;
     cancelado = true;
+    orden = "rec";
     error = "";
     avisoLista = "";
     sources = [];
@@ -2491,21 +2699,42 @@
   function tecnicaFila(s: Src): string[] {
     return infoChips(s).filter((c) => TECNICOS.has(c));
   }
-  /** Idioma: lo verificado en el archivo manda; si no, lo que dice el nombre. */
-  function idiomaFila(s: Src): string {
-    const sub = idiomaSubs().toUpperCase();
-    if (s._es === "audio") return `🗣 Audio ${sub} ✓`;
-    if (s._es === "subs") return `💬 Subs ${sub} ✓`;
-    if (s._es === "none") return `Sin ${idiomaProbe().texto}`;
-    return infoChips(s).filter((c) => !TECNICOS.has(c)).join(" · ");
+  /**
+   * Idioma en tres estados que no se confunden: comprobado en el archivo (✓/✗),
+   * deducido del nombre (≈, con la nota) o desconocido (?). Antes lo
+   * desconocido era una línea vacía, que parecía "no tiene".
+   */
+  function idiomaFila(s: Src): { txt: string; nota?: string; cls: "ok" | "no" | "nombre" | "nada" } {
+    const idi = idiomaProbe().texto;
+    if (s._es === "audio") return { txt: `✓ Audio en ${idi}`, cls: "ok" };
+    if (s._es === "subs") return { txt: `✓ Subtítulos en ${idi}`, cls: "ok" };
+    if (s._es === "none") return { txt: `✗ Sin ${idi}`, cls: "no" };
+    if (s.hardsub) {
+      const cual = s.hardsub === "lat" ? "latinos" : s.hardsub === "cast" ? "en castellano" : "en inglés";
+      return { txt: `≈ Subtítulos ${cual}`, nota: "quemados en la imagen", cls: "nombre" };
+    }
+    const chips = infoChips(s)
+      .filter((c) => !TECNICOS.has(c))
+      .map((c) => (c === "ES" ? "Español" : c === "MULTi" ? "Multi" : c));
+    if (/vose|v\.o\.s\.e|subtitulad/.test((s.title || "").toLowerCase())) chips.push("Subtitulada");
+    if (chips.length) return { txt: `≈ ${chips.join(" · ")}`, nota: "según el nombre", cls: "nombre" };
+    return { txt: "? Idioma sin confirmar", cls: "nada" };
   }
-  /** Si abre ya: en el equipo, enlace directo o lista en Real-Debrid. */
+  /** Cómo abre, siempre dicho: un hueco no explicaba nada. */
   function estadoFila(s: Src): string {
     if (s.local) return "📁 En tu equipo";
     if (s.links?.length) return "☁️ Vía Real-Debrid";
-    if (s.hardsub) return HARDSUB_LABEL[s.hardsub] || "🔗 Enlace directo";
-    if (s.rd_cached) return "⚡ Al instante";
+    if (s.hardsub) return `${HARDSUB_LABEL[s.hardsub] || "🔗 Enlace directo"} · abre ya`;
+    if (marcaRd(s)) return s.magnet ? "🧲 Se ve por torrent" : "";
+    if (s.rd_cached) return "⚡ Abre ya";
+    if (rdLinked && s.magnet) return "⏳ Real-Debrid la baja primero";
+    if (s.magnet && config.torrentLocal) return "🧲 Se baja mientras la ves";
+    if (s.url) return "🔗 Enlace directo";
     return "";
+  }
+  /** Gente compartiendo: solo importa si la fuente depende del torrent. */
+  function semillasCuentan(s: Src): boolean {
+    return !!s.seeders && !!s.magnet && !s.local && !s.rd_cached && !s.hardsub && !s.links?.length;
   }
   /** Avisos, por prioridad y como mucho tres. */
   function avisosFila(s: Src): { txt: string; cls: string; title?: string }[] {
@@ -2515,6 +2744,7 @@
     if (destinoTv && s._tv) out.push({ txt: `📺✗ ${s._tv}`, cls: "sp-es-no", title: s._tv });
     if (esProbada(s)) out.push({ txt: "↩ Ya probada", cls: "sp-probada" });
     if (prefScore(s, kind)) out.push({ txt: "★ Preferida", cls: "sp-pref" });
+    if (s._variante) out.push({ txt: "↳ Parecida", cls: "sp-probada" });
     return out.slice(0, 3);
   }
 
@@ -2676,6 +2906,31 @@
         onClose();
         break;
     }
+    // Letras de la lista. Con Ctrl/Alt son de otro (Ctrl+R recarga, etc.).
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    switch (e.key.toLowerCase()) {
+      case "r":
+        e.preventDefault();
+        rebuscar();
+        break;
+      case "o":
+        e.preventDefault();
+        cicloOrden();
+        break;
+      case "l":
+        e.preventDefault();
+        cicloIdioma();
+        break;
+      case "i":
+        e.preventDefault();
+        verInfo = !verInfo;
+        scrollFocused();
+        break;
+      case "v":
+        e.preventDefault();
+        desapilar(view[focusIdx]);
+        break;
+    }
   }
 
   load();
@@ -2694,8 +2949,9 @@
       <span class="sp-sub">
         {#if descargarSolo}Elige qué versión bajar
         {:else if famFilter === "hardsub"}Enlace directo
-        {:else if famFilter === "torrent"}Torrents vía Real-Debrid
+        {:else if famFilter === "torrent"}{rdLinked ? "Torrents vía Real-Debrid" : "Torrents"}
         {:else}Elige una fuente{/if}
+        {#if resumen && !loading}<span class="sp-resumen"> · {resumen}</span>{/if}
       </span>
       {#if cast.tv && !descargarSolo}
         <button
@@ -2993,16 +3249,24 @@
         <p class="sp-baja-hint">{avisoLista}</p>
       {/if}
 
-      {#if showTabs}
+      {#if sources.length > 1}
         <div class="sp-tabs">
-          {#each TABS as t}
-            <button
-              class="sp-tab"
-              class:on={famFilter === t.id}
-              onclick={() => setFam(t.id)}
-            >{t.label} <span class="sp-tab-n">{tabCount(t.id)}</span></button>
-          {/each}
-          <span class="sp-tab-hint">← → cambia</span>
+          {#if showTabs}
+            {#each TABS as t}
+              <button
+                class="sp-tab"
+                class:on={famFilter === t.id}
+                onclick={() => setFam(t.id)}
+              >{t.label} <span class="sp-tab-n">{tabCount(t.id)}</span></button>
+            {/each}
+            <span class="sp-tab-sep"></span>
+          {/if}
+          <button class="sp-tab" class:on={filtroIdioma !== "todos"} onclick={cicloIdioma} title="Filtrar por idioma (tecla L)">
+            🗣 {etiquetaFiltro(filtroIdioma)} <kbd>L</kbd>
+          </button>
+          <button class="sp-tab" class:on={orden !== "rec"} onclick={cicloOrden} title="Cambiar el orden (tecla O)">
+            ↕ {ORDENES.find((o) => o.id === orden)?.label} <kbd>O</kbd>
+          </button>
         </div>
       {/if}
 
@@ -3014,19 +3278,24 @@
       {/if}
 
       <div class="sp-list">
+        {#if !view.length && sources.length}
+          <p class="sp-baja-hint">
+            Ninguna fuente con estos filtros. <b>L</b> cambia el idioma{showTabs ? " y ←→ el tipo" : ""}.
+          </p>
+        {/if}
         {#each view as s, i (s.info_hash || s.url || i)}
           {@const avisos = avisosFila(s)}
           {@const estado = estadoFila(s)}
-          {#if hayGrupos && i === 0 && !marcaRd(s)}
-            <p class="sp-grupo">⚡ Real-Debrid</p>
-          {:else if hayGrupos && marcaRd(s) && !marcaRd(view[i - 1])}
-            <p class="sp-grupo">🧲 Real-Debrid no las abre · se ven por torrent</p>
+          {@const idi = idiomaFila(s)}
+          {#if s._sec && s._sec !== view[i - 1]?._sec}
+            <p class="sp-grupo" class:rec={s._sec === "rec"}>{tituloSeccion(s)}</p>
           {/if}
           <button
             data-nav
             class="sp-row"
             class:focused={focusIdx === i}
             class:probada={esProbada(s)}
+            title={s.title}
             onclick={() => {
               focusIdx = i;
               if (descargarSolo) void encolar(s);
@@ -3038,21 +3307,31 @@
             <div class="sp-mid">
               <!-- Nivel 1, grande: lo que decide (idioma · peso · si abre ya). -->
               <span class="sp-linea1">
-                {#if idiomaFila(s)}<span class="sp-idioma" class:no={s._es === "none"}>{idiomaFila(s)}</span>{/if}
+                <span class="sp-idioma sp-idioma-{idi.cls}">{idi.txt}{#if idi.nota}<small> {idi.nota}</small>{/if}</span>
                 {#if s.size_bytes}<span>{fmtSize(s.size_bytes)}</span>{/if}
                 {#if estado}<span class="sp-estado">{estado}</span>{/if}
               </span>
               <!-- Nivel 2, chico: avisos (máx. 3), técnica y proveedor. -->
               <div class="sp-chips">
                 {#each avisos as a}<span class={a.cls} title={a.title}>{a.txt}</span>{/each}
+                {#if esPack(s, kind)}<span class="sp-chip" title="Trae la temporada entera: el peso es el del pack, no el del capítulo">📦 Pack</span>{/if}
                 {#each tecnicaFila(s) as c}<span class="sp-chip">{c}</span>{/each}
                 <span class="sp-prov" title={s.source}>{nombreProveedor(s.source)}</span>
               </div>
-              <span class="sp-title" class:abierto={focusIdx === i}>{s.title}</span>
+              {#if verInfo}<span class="sp-title" class:abierto={focusIdx === i}>{s.title}</span>{/if}
             </div>
             <span class="sp-meta">
-              {#if s._count && s._count > 1}<span class="sp-dupe">×{s._count}</span>{/if}
-              {#if s.seeders}<span title="Gente compartiéndola">{s.seeders} 🌱</span>{/if}
+              {#if s._count && s._count > 1}
+                <span
+                  class="sp-dupe"
+                  role="button"
+                  tabindex="-1"
+                  title="Ver las versiones parecidas (tecla V)"
+                  onclick={(e) => { e.stopPropagation(); desapilar(s); }}
+                  onkeydown={(e) => { if (e.key === "Enter") { e.stopPropagation(); desapilar(s); } }}
+                >+{s._count - 1} {s._count - 1 === 1 ? "parecida" : "parecidas"}</span>
+              {/if}
+              {#if semillasCuentan(s)}<span title="Gente compartiéndola">{s.seeders} 🌱</span>{/if}
             </span>
           </button>
         {/each}
@@ -3090,7 +3369,7 @@
         </button>
       </footer>
       <p class="sp-atajos">
-        <b>Enter</b> {descargarSolo ? "bajar" : "descubrir"} · <b>↑↓</b> elegir{#if showTabs} · <b>←→</b> tipo de fuente{/if}{#if cast.tv && !descargarSolo} · <b>T</b> TV o aquí{/if} · <b>Esc</b> volver
+        <b>Enter</b> {descargarSolo ? "bajar" : "descubrir"} · <b>↑↓</b> elegir{#if showTabs} · <b>←→</b> tipo{/if} · <b>L</b> idioma · <b>O</b> orden · <b>R</b> rebuscar · <b>I</b> {verInfo ? "ocultar nombre" : "nombre del archivo"}{#if view[focusIdx]?._variantes?.length} · <b>V</b> ver parecidas{/if}{#if cast.tv && !descargarSolo} · <b>T</b> TV o aquí{/if} · <b>Esc</b> volver
       </p>
     {/if}
   </div>
@@ -3113,6 +3392,7 @@
     letter-spacing: 0.04em;
     text-transform: uppercase;
   }
+  .sp-grupo.rec { color: #f3c489; font-weight: 600; }
   .sp-hint-back {
     position: absolute;
     top: 18px;
@@ -3147,6 +3427,7 @@
     text-transform: uppercase;
     letter-spacing: 0.06em;
   }
+  .sp-resumen { text-transform: none; letter-spacing: 0; color: var(--texto-4); }
 
   .sp-center {
     flex: 1;
@@ -3280,7 +3561,10 @@
     font-weight: 600;
   }
   .sp-idioma { color: var(--texto); }
-  .sp-idioma.no { color: #ffb0a0; }
+  .sp-idioma-ok { color: #8fe3a8; }
+  .sp-idioma-no { color: #ffb0a0; }
+  .sp-idioma-nada { color: var(--texto-4); }
+  .sp-idioma small { font-size: 0.78em; color: var(--texto-4); font-weight: 400; }
   .sp-estado { color: var(--amarillo); font-size: 15px; }
   /* El nombre del release: una línea apagada; entero en la fila enfocada. */
   .sp-title {
@@ -3351,10 +3635,15 @@
     font-weight: 700;
     margin-left: 2px;
   }
-  .sp-tab-hint {
-    font-size: 11px;
-    color: #7a7a85;
-    margin-left: auto;
+  .sp-tab-sep { width: 1px; align-self: stretch; background: rgba(255, 255, 255, 0.14); margin: 0 4px; }
+  .sp-tab kbd {
+    font: inherit;
+    font-size: 10.5px;
+    padding: 0 5px;
+    margin-left: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    opacity: 0.75;
   }
   .sp-hardsub {
     font-size: 11px;
@@ -3416,6 +3705,8 @@
     padding: 1px 6px;
     font-weight: 700;
     font-size: 11px;
+    cursor: pointer;
+    white-space: nowrap;
   }
 
   .sp-foot { display: flex; gap: 10px; margin-top: 16px; }

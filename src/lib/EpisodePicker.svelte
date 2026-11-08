@@ -5,7 +5,9 @@
   // Selector de temporada/episodio para la ruta debrid (series + anime).
   // 2 paneles: temporadas (izq) | episodios (der, carga perezosa vía
   // tmdb_season). Teclado propio: ←→ cambia panel, ↑↓ navega, Enter elige,
-  // Esc vuelve. Al elegir episodio → onPick(season, episode).
+  // Esc vuelve. Al elegir episodio → onPick(season, episode). F (o el botón
+  // de la cabecera) abre la lista de fuentes del capítulo enfocado para
+  // elegir a mano, sin que arranque solo.
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
   import { WEB_PLAYER_ENABLED } from "$lib/features";
@@ -72,7 +74,12 @@
     kitsuId?: number | null;
     /** Dónde arrancar: el capítulo que sigue según el historial. */
     inicio?: { season: number; episode: number } | null;
-    onPick: (season: number, episode: number, ep?: { name: string; still_path: string | null }) => void;
+    onPick: (
+      season: number,
+      episode: number,
+      ep?: { name: string; still_path: string | null },
+      elegirFuente?: boolean,
+    ) => void;
     onWeb: () => void;
     onClose: () => void;
   } = $props();
@@ -143,10 +150,10 @@
     scrollFocused();
   }
 
-  function chooseEpisode() {
+  function chooseEpisode(elegirFuente = false) {
     const s = seasons[seasonIdx];
     const e = episodes[epIdx];
-    if (s && e) onPick(s.season_number, e.episode_number, { name: e.name, still_path: e.still_path });
+    if (s && e) onPick(s.season_number, e.episode_number, { name: e.name, still_path: e.still_path }, elegirFuente);
   }
 
   // Marca de visto del capítulo: ✓ si terminó, % si quedó a medias.
@@ -268,6 +275,13 @@
         else if (pane === "seasons") gotoEpisodes();
         else chooseEpisode();
         break;
+      case "f":
+      case "F":
+        // Rebuscar fuentes del capítulo enfocado: la lista, sin autoplay.
+        if (pane !== "episodes" || epError || !episodes[epIdx]) break;
+        e.preventDefault();
+        chooseEpisode(true);
+        break;
       case "d":
       case "D":
         // Bajar sin reproducir: la temporada entera desde el panel izquierdo,
@@ -316,6 +330,14 @@
     <header class="ep-head">
       <button class="ep-back" onclick={onClose}>← Volver</button>
       <h2>{title}</h2>
+      <button
+        class="ep-elegir"
+        onclick={() => chooseEpisode(true)}
+        disabled={!episodes[epIdx] || !!epError}
+        title="Lista de fuentes del capítulo marcado, para elegir tú cuál ver (tecla F)"
+      >
+        🔄 Rebuscar fuentes{episodes[epIdx] ? ` · E${episodes[epIdx].episode_number}` : ""}
+      </button>
       {#if puedeBajar() && clave}
         <button
           class="ep-bajar"
@@ -408,7 +430,7 @@
       </div>
     </div>
     <p class="ep-atajos">
-      <b>Enter</b> {pane === "seasons" ? "ver capítulos" : "descubrir"} · <b>↑↓</b> {pane === "seasons" ? "temporada" : "capítulo"} · <b>←→</b> temporadas / capítulos{#if puedeBajar() && clave} · <b>D</b> bajar {pane === "seasons" ? "temporada" : "capítulo"}{/if} · <b>Esc</b> volver
+      <b>Enter</b> {pane === "seasons" ? "ver capítulos" : "descubrir"}{#if pane === "episodes"} · <b>F</b> rebuscar fuentes{/if} · <b>↑↓</b> {pane === "seasons" ? "temporada" : "capítulo"} · <b>←→</b> temporadas / capítulos{#if puedeBajar() && clave} · <b>D</b> bajar {pane === "seasons" ? "temporada" : "capítulo"}{/if} · <b>Esc</b> volver
     </p>
   </div>
 </div>
@@ -558,6 +580,20 @@
     cursor: pointer;
   }
   .ep-bajar:disabled { opacity: 0.45; cursor: default; }
+  .ep-elegir {
+    margin-left: auto;
+    background: rgba(20, 20, 28, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: var(--texto-suave);
+    border-radius: 7px;
+    padding: 6px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .ep-elegir:disabled { opacity: 0.45; cursor: default; }
+  .ep-elegir + .ep-bajar { margin-left: 0; }
 
   .ep-tick {
     position: absolute;
