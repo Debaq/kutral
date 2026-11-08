@@ -92,7 +92,7 @@ fn default_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 /// Carpeta efectiva: la que eligió el usuario en Configuración, o la de por
 /// defecto si no eligió ninguna. La preferencia vive en el frontend (como el
 /// resto de la config) y llega en cada llamada.
-fn output_dir(app: &tauri::AppHandle, custom: Option<&str>) -> Result<PathBuf, String> {
+pub(crate) fn output_dir(app: &tauri::AppHandle, custom: Option<&str>) -> Result<PathBuf, String> {
     match custom.map(str::trim).filter(|d| !d.is_empty()) {
         Some(d) => Ok(PathBuf::from(d)),
         None => default_dir(app),
@@ -800,6 +800,9 @@ pub async fn torrent_add(
 
 #[tauri::command]
 pub async fn torrent_status(id: usize) -> Result<TorrentStatus, String> {
+    if id >= crate::descarga_http::ID_BASE {
+        return crate::descarga_http::estado(id);
+    }
     let tor = existing()?;
     let handle = tor
         .session
@@ -812,9 +815,15 @@ pub async fn torrent_status(id: usize) -> Result<TorrentStatus, String> {
 /// sesión sin iniciar devuelve vacío: consultar la cola no debe levantarla.
 #[tauri::command]
 pub async fn torrent_list() -> Result<Vec<TorrentStatus>, String> {
+    // Las descargas HTTP (Real-Debrid) van en la misma cola.
+    let http = crate::descarga_http::lista();
     let tor = match TOR.get() {
         Some(t) => t.clone(),
-        None => return Ok(Vec::new()),
+        None => {
+            let mut out = http;
+            out.sort_by(|a, b| b.added_at.cmp(&a.added_at).then(b.id.cmp(&a.id)));
+            return Ok(out);
+        }
     };
     let handles: Vec<(usize, Arc<ManagedTorrent>)> = tor
         .session
@@ -823,12 +832,16 @@ pub async fn torrent_list() -> Result<Vec<TorrentStatus>, String> {
         .iter()
         .map(|(id, h)| status_of(&tor, *id, h))
         .collect();
+    out.extend(http);
     out.sort_by(|a, b| b.added_at.cmp(&a.added_at).then(b.id.cmp(&a.id)));
     Ok(out)
 }
 
 #[tauri::command]
 pub async fn torrent_pause(id: usize) -> Result<(), String> {
+    if id >= crate::descarga_http::ID_BASE {
+        return crate::descarga_http::pausar(id);
+    }
     let tor = existing()?;
     let handle = tor
         .session
@@ -842,6 +855,9 @@ pub async fn torrent_pause(id: usize) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn torrent_resume(id: usize) -> Result<(), String> {
+    if id >= crate::descarga_http::ID_BASE {
+        return crate::descarga_http::reanudar(id);
+    }
     let tor = existing()?;
     let handle = tor
         .session
@@ -856,6 +872,9 @@ pub async fn torrent_resume(id: usize) -> Result<(), String> {
 /// Saca el torrent de la cola. Con `delete_files` borra también lo descargado.
 #[tauri::command]
 pub async fn torrent_remove(id: usize, delete_files: bool) -> Result<(), String> {
+    if id >= crate::descarga_http::ID_BASE {
+        return crate::descarga_http::quitar(id, delete_files);
+    }
     let tor = existing()?;
     tor.session
         .delete(TorrentIdOrHash::Id(id), delete_files)

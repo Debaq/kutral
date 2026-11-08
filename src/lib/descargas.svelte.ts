@@ -236,9 +236,13 @@ export async function adoptarDeSesion(
  * app cerrada queda completo y lo que ya no está en la cola deja de figurar
  * como "bajando" en la ficha y en la lista de capítulos.
  */
-export async function reconciliarDescargas(): Promise<void> {
+export async function reconciliarDescargas(soloHttp = false): Promise<void> {
   if (!descargas.cargado) await cargarDescargas();
-  const pendientes = descargas.filas.filter((f) => f.completa === 0);
+  // Sin la sesión torrent levantada, sus filas no se pueden juzgar: solo las
+  // de descargas HTTP (Real-Debrid), que viven aparte.
+  const pendientes = descargas.filas.filter(
+    (f) => f.completa === 0 && (!soloHttp || f.info_hash.startsWith("http-")),
+  );
   if (!pendientes.length) return;
   let lista: TorrentStatus[];
   try {

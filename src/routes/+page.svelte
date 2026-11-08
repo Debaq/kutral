@@ -12,6 +12,7 @@
   import { setPlaying, player } from "$lib/playerState.svelte";
   import { cast } from "$lib/cast.svelte";
   import { config } from "$lib/config.svelte";
+  import { puedeBajar as puedeBajarAlgo } from "$lib/bajar";
   import SourcePicker from "$lib/SourcePicker.svelte";
   import { tieneDescarga, estadoDescarga, descargaDe } from "$lib/descargas.svelte";
   import { QLABEL, fmtSize } from "$lib/fuentes";
@@ -2826,7 +2827,7 @@
       : null}
     bajandoAhora={bajandoMenu}
     bajando={bajandoSel || enColaSel}
-    puedeBajar={config.torrentLocal && selected.media_type === "movie"}
+    puedeBajar={puedeBajarAlgo() && selected.media_type === "movie"}
     capitulo={etiquetaCapitulo(capituloSigue)}
     onCapitulos={selected.media_type !== "movie" ? menuCapitulos : undefined}
     onContinue={menuContinue}

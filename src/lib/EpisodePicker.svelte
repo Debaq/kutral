@@ -1,6 +1,7 @@
 <script lang="ts">
   import FondoDifuminado from "$lib/ui/FondoDifuminado.svelte";
   import Spinner from "$lib/ui/Spinner.svelte";
+  import { puedeBajar } from "$lib/bajar";
   // Selector de temporada/episodio para la ruta debrid (series + anime).
   // 2 paneles: temporadas (izq) | episodios (der, carga perezosa vía
   // tmdb_season). Teclado propio: ←→ cambia panel, ↑↓ navega, Enter elige,
@@ -271,7 +272,7 @@
       case "D":
         // Bajar sin reproducir: la temporada entera desde el panel izquierdo,
         // el capítulo enfocado desde el derecho.
-        if (!config.torrentLocal || !clave) break;
+        if (!puedeBajar() || !clave) break;
         e.preventDefault();
         if (pane === "seasons") void bajarTemporada();
         else if (episodes[epIdx]) void bajarEpisodio(episodes[epIdx].episode_number);
@@ -315,7 +316,7 @@
     <header class="ep-head">
       <button class="ep-back" onclick={onClose}>← Volver</button>
       <h2>{title}</h2>
-      {#if config.torrentLocal && clave}
+      {#if puedeBajar() && clave}
         <button
           class="ep-bajar"
           onclick={bajarTemporada}
@@ -407,7 +408,7 @@
       </div>
     </div>
     <p class="ep-atajos">
-      <b>Enter</b> {pane === "seasons" ? "ver capítulos" : "descubrir"} · <b>↑↓</b> {pane === "seasons" ? "temporada" : "capítulo"} · <b>←→</b> temporadas / capítulos{#if config.torrentLocal && clave} · <b>D</b> bajar {pane === "seasons" ? "temporada" : "capítulo"}{/if} · <b>Esc</b> volver
+      <b>Enter</b> {pane === "seasons" ? "ver capítulos" : "descubrir"} · <b>↑↓</b> {pane === "seasons" ? "temporada" : "capítulo"} · <b>←→</b> temporadas / capítulos{#if puedeBajar() && clave} · <b>D</b> bajar {pane === "seasons" ? "temporada" : "capítulo"}{/if} · <b>Esc</b> volver
     </p>
   </div>
 </div>

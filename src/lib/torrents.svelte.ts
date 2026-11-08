@@ -113,6 +113,32 @@ export function torrentCheckDir(dir: string): Promise<string> {
  * descargas quedaron. Solo se llama si el usuario tiene activada la descarga
  * local: sin eso la app no abre ningún socket de BitTorrent.
  */
+// ---- Descargas HTTP (Real-Debrid) ---------------------------------------
+// Van en la misma cola que los torrents (torrent_list las incluye). Ver
+// src-tauri/src/descarga_http.rs.
+
+export type Origen =
+	| { tipo: "links"; links: string[] }
+	| {
+			tipo: "magnet";
+			magnet: string;
+			file_idx?: number | null;
+			filename?: string | null;
+			season?: number | null;
+			episode?: number | null;
+	  }
+	| { tipo: "url"; url: string };
+
+/** Pide la URL a Real-Debrid y empieza a bajarla. Falla al tiro si RD no puede. */
+export function httpDescargar(origen: Origen, titulo: string): Promise<TorrentAdded> {
+	return invoke<TorrentAdded>("http_descargar", { origen, titulo, dir: dirElegida() });
+}
+
+/** Retoma las descargas HTTP que quedaron a medias. Devuelve cuántas hay. */
+export function httpRestaurar(): Promise<number> {
+	return invoke<number>("http_restaurar");
+}
+
 export function initTorrentSession(): Promise<number> {
 	return invoke<number>("torrent_init", { dir: dirElegida() });
 }

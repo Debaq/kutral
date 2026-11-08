@@ -300,6 +300,10 @@ export const config = $state({
 	// de reproducción. OPT-IN en los dos casos: sin el debrid de intermediario
 	// tu IP queda expuesta en el swarm.
 	torrentLocal: false,
+	// Bajar con Real-Debrid (HTTP) cuando está vinculado: más rápido que el
+	// torrent y sin exponer tu IP. Si RD no puede (DMCA), cae al torrent local
+	// si está activado. Ver bajar.ts.
+	bajarConRd: true,
 	// MB a bufferear antes de abrir el reproductor con el torrent local.
 	torrentBufferMb: TORRENT_BUFFER_DEFAULT,
 	// Techo de calidad y peso SOLO para la descarga local. Con debrid no aplica:
@@ -377,6 +381,7 @@ export function loadConfig() {
 	const rch = parseInt(localStorage.getItem("rd_cleanup_hours") || "", 10);
 	config.rdCleanupHours = RD_CLEANUP_OPTIONS.some((o) => o.h === rch) ? rch : 0;
 	config.torrentLocal = localStorage.getItem("torrent_local") === "1";
+	config.bajarConRd = localStorage.getItem("bajar_con_rd") !== "0";
 	const tbm = parseInt(localStorage.getItem("torrent_buffer_mb") || "", 10);
 	config.torrentBufferMb = Number.isFinite(tbm)
 		? Math.min(TORRENT_BUFFER_MAX, Math.max(TORRENT_BUFFER_MIN, tbm))
@@ -513,6 +518,7 @@ export function saveConfig() {
 	localStorage.setItem("web_port", String(config.webPort));
 	localStorage.setItem("rd_cleanup_hours", String(config.rdCleanupHours));
 	localStorage.setItem("torrent_local", config.torrentLocal ? "1" : "0");
+	localStorage.setItem("bajar_con_rd", config.bajarConRd ? "1" : "0");
 	localStorage.setItem("torrent_buffer_mb", String(config.torrentBufferMb));
 	localStorage.setItem("torrent_max_quality", config.torrentMaxQuality);
 	localStorage.setItem("torrent_max_gb", String(config.torrentMaxGb));

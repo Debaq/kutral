@@ -18,7 +18,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Lo que se sabe del archivo que se quiere, además del magnet.
-#[derive(Deserialize, Default, Clone, Debug)]
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct Pista {
     #[serde(default)]
     pub file_idx: Option<u32>,

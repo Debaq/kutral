@@ -56,6 +56,24 @@
 </script>
 
 <section class="block">
+  <h2>Bajar con Real-Debrid</h2>
+  <p class="hint">
+    La película se baja desde los servidores de Real-Debrid: mucho más rápido
+    que el torrent y <strong>nadie ve tu IP</strong>. También baja las copias
+    en Mega o Mediafire (anime de JKAnime). Si Real-Debrid no puede con una
+    versión (bloqueo DMCA), se usa la descarga local si la tienes activa.
+  </p>
+  {#if config.rdLinked}
+    <label class="toggle-row">
+      <input data-nav type="checkbox" bind:checked={config.bajarConRd} />
+      <span>Bajar con Real-Debrid cuando se pueda</span>
+    </label>
+  {:else}
+    <p class="hint">Vincula Real-Debrid en <em>Cuenta y servicios</em> para usarlo.</p>
+  {/if}
+</section>
+
+<section class="block">
   <h2>Descarga local</h2>
   <p class="hint">
     Kütral baja el torrent y puedes verlo mientras se descarga, sin

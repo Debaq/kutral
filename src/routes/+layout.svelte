@@ -16,7 +16,7 @@
   import { config, loadConfig, initDetection, initRd, refreshRdLinked, zoomUi } from "$lib/config.svelte";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { onboardingHecho, faltaLoMinimo } from "$lib/onboarding";
-  import { initTorrentSession, startQueuePoll, stopQueuePoll } from "$lib/torrents.svelte";
+  import { initTorrentSession, httpRestaurar, startQueuePoll, stopQueuePoll } from "$lib/torrents.svelte";
   import { setConcurrenciaScreening } from "$lib/screening.svelte";
   import { cargarHistorial } from "$lib/historial.svelte";
   import { iniciarCuenta } from "$lib/cuenta.svelte";
@@ -181,8 +181,8 @@
     // que quedó a medias del arranque anterior. Sin esta opción la app nunca
     // abre un socket de BitTorrent.
     if (config.torrentLocal) {
-      void initTorrentSession()
-        .then((n) => { if (n > 0) startQueuePoll(); })
+      void Promise.all([initTorrentSession(), httpRestaurar().catch(() => 0)])
+        .then(([n, m]) => { if (n + m > 0) startQueuePoll(); })
         // La cola de pendientes se retoma después de levantar la sesión: el
         // motor necesita saber cuántas descargas hay vivas para decidir si
         // puede arrancar la siguiente.
@@ -191,6 +191,15 @@
         .then(() => cargarCola())
         .then(() => { if (cola.filas.length) arrancarMotor(); })
         .catch((e) => console.warn("[torrent init]", e));
+    } else {
+      // Sin torrent local igual puede haber descargas por Real-Debrid (HTTP)
+      // a medias: se retoman, y solo se reconcilian las filas de esas.
+      void httpRestaurar()
+        .then((m) => { if (m > 0) startQueuePoll(); })
+        .then(() => reconciliarDescargas(true))
+        .then(() => cargarCola())
+        .then(() => { if (cola.filas.length) arrancarMotor(); })
+        .catch((e) => console.warn("[http init]", e));
     }
     // Auto-arranque del servidor web si el user lo activó en config.
     // Falla silencioso (ej. puerto ocupado) — no rompe la app.

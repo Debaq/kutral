@@ -43,6 +43,7 @@
     type Src,
   } from "$lib/fuentes";
   import { encolar as encolarPendiente } from "$lib/colaDescargas.svelte";
+  import { bajarFuente, puedeBajar, sePuedeBajar } from "$lib/bajar";
   import {
     iniciarVigilancia,
     detenerVigilancia,
@@ -492,9 +493,9 @@
           onClose();
           return;
         }
-        if (!config.torrentLocal) {
+        if (!puedeBajar()) {
           error =
-            'Para bajar títulos activa "Descarga local" en Configuración.';
+            'Para bajar títulos vincula Real-Debrid o activa "Descarga local" en Configuración.';
           return;
         }
       }
@@ -604,7 +605,7 @@
       if (descargarSolo) {
         // Solo se puede bajar lo que es torrent: un enlace directo de web no
         // tiene magnet que darle al cliente.
-        sources = stack(srcs).filter((x) => x.magnet);
+        sources = stack(srcs).filter(sePuedeBajar);
         if (!sources.length) {
           error = "No hay ningún torrent para bajar de este título.";
         } else if (config.sourceSelect === "auto") {
@@ -2010,8 +2011,10 @@
   // terminó lo da el poll de la cola (torrents.svelte.ts) y a partir de ahí la
   // ficha muestra "ya está en tu equipo".
   async function encolar(s: Src) {
-    if (!s.magnet) {
-      error = "Esa fuente es un enlace directo, no un torrent: no se puede bajar.";
+    if (!sePuedeBajar(s)) {
+      error = s.magnet || s.links?.length
+        ? "Esa versión se baja con Real-Debrid o con la descarga local, y no tienes ninguna activa."
+        : "Esa fuente es streaming directo, no un archivo: no se puede bajar.";
       return;
     }
     encolando = true;
@@ -2020,12 +2023,7 @@
       // Sin buffer de arranque: nadie está esperando para ver. El cliente baja
       // igual de forma secuencial, así que si después la abres a mitad de
       // descarga el inicio ya va a estar.
-      const added = await addTorrent(
-        s.magnet,
-        title,
-        config.torrentBufferMb,
-        pistaDe(s, season ?? null, episode ?? null),
-      );
+      const added = await bajarFuente(s, title, season ?? null, episode ?? null);
       await registrarDescarga({
         clave,
         season,

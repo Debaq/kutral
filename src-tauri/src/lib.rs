@@ -7,6 +7,7 @@ mod cast;
 mod creds;
 mod boveda;
 mod cuenta;
+mod descarga_http;
 mod dlna;
 mod dominios;
 mod kitsu;
@@ -736,6 +737,8 @@ pub fn run() {
             ui_log,
             kodios::kodios_search,
             kodios::fuentes_catalogo,
+            descarga_http::http_descargar,
+            descarga_http::http_restaurar,
             anilist::anilist_discover,
             anilist::anilist_personajes,
             anilist::anilist_detail,

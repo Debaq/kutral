@@ -15,13 +15,13 @@
 // cierra, la cola queda en SQLite y sigue en el próximo arranque.
 
 import { invoke } from "@tauri-apps/api/core";
-import { pistaDe } from "$lib/pack";
 import { getDb } from "$lib/vera/db";
 import { config } from "$lib/config.svelte";
 import { notify } from "$lib/notifStore.svelte";
 import { ordenarFuentes, stack, cabeEnLocal, fmtSize, type Src, type Kind } from "$lib/fuentes";
 import { buscarKodios } from "$lib/buscadores.svelte";
-import { addTorrent, torrents, refreshQueue, startQueuePoll } from "$lib/torrents.svelte";
+import { bajarFuente, puedeBajar, sePuedeBajar } from "$lib/bajar";
+import { torrents, refreshQueue, startQueuePoll } from "$lib/torrents.svelte";
 import { registrarDescarga, estadoDescarga } from "$lib/descargas.svelte";
 
 export type FilaPendiente = {
@@ -217,7 +217,7 @@ export function pararMotor(): void {
 
 async function tick(): Promise<void> {
   if (corriendo) return;
-  if (!config.torrentLocal) return pararMotor();
+  if (!puedeBajar()) return pararMotor();
   const pendientes = cola.filas.filter((f) => f.estado === "espera");
   if (!pendientes.length) {
     // Nada en espera: el motor se duerme hasta que se encole algo.
@@ -256,23 +256,24 @@ async function procesar(f: FilaPendiente): Promise<boolean> {
       kitsuId: f.kitsu_id ?? undefined,
     });
     ordenarFuentes(srcs, f.kind);
-    // Solo torrents (un enlace directo no se puede bajar) y solo lo que cabe
-    // en el techo de calidad/peso que el usuario puso en Configuración.
-    const cands = stack(srcs).filter((s) => s.magnet && cabeEnLocal(s));
+    // Solo lo que se puede bajar (torrent, o copias por Real-Debrid; el
+    // streaming directo no) y lo que cabe en el techo de calidad/peso que el
+    // usuario puso en Configuración.
+    const cands = stack(srcs).filter((s) => sePuedeBajar(s) && cabeEnLocal(s));
     if (!cands.length) {
-      throw new Error("sin torrents dentro de tu tope de calidad y peso");
+      throw new Error("sin versiones para bajar dentro de tu tope de calidad y peso");
     }
     const s = cands[0];
     await verificarEspacio(s.size_bytes);
 
     const nombre = f.etiqueta ? `${f.title} · ${f.etiqueta}` : f.title;
-    // En un pack de temporada, el archivo de ESTE capítulo (si ya se baja
-    // otro del mismo pack, se suma a ese torrent).
-    const added = await addTorrent(
-      s.magnet!,
+    // Por Real-Debrid si se puede; si no, torrent. En un pack de temporada,
+    // el archivo de ESTE capítulo (ver bajar.ts).
+    const added = await bajarFuente(
+      s,
       nombre,
-      config.torrentBufferMb,
-      pistaDe(s, f.season >= 0 ? f.season : null, f.episode >= 0 ? f.episode : null),
+      f.season >= 0 ? f.season : null,
+      f.episode >= 0 ? f.episode : null,
     );
     await registrarDescarga({
       clave: f.clave,
