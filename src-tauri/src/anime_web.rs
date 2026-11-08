@@ -203,6 +203,7 @@ fn b64_decode(s: &str) -> Option<Vec<u8>> {
 ///   - Mediafire, VOE, 1Fichier, Streamtape: tal cual.
 ///   - Mp4upload ("hoster_unsupported"), Streamwish, Vidhide, Filemoon y
 ///     Doodstream: RD no los abre.
+///
 /// El número es la preferencia: primero los que guardan el archivo original.
 fn link_para_rd(server: &str, url: &str) -> Option<(u8, String)> {
     let url = url.trim();
@@ -241,7 +242,9 @@ fn jk_hosters(html: &str) -> Vec<(u64, Option<u64>, Vec<String>)> {
         eprintln!("[jkanime] var servers ilegible");
         return Vec::new();
     };
-    let mut grupos: Vec<(u64, Option<u64>, Vec<(u8, String)>)> = Vec::new();
+    // (lang, tamaño, links con su preferencia)
+    type Grupo = (u64, Option<u64>, Vec<(u8, String)>);
+    let mut grupos: Vec<Grupo> = Vec::new();
     for s in &lista {
         let server = s["server"].as_str().unwrap_or("");
         let Some(url) = s["remote"]
