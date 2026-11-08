@@ -19,6 +19,7 @@ mod net;
 mod omdb;
 mod opensubtitles;
 mod pack;
+mod pelispanda;
 mod pista_tv;
 mod subs_match;
 mod sub_sync;

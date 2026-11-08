@@ -129,6 +129,7 @@
     originalTitle = null,
     backdrop = null,
     kitsuId = null,
+    tmdbId = null,
     rdLinked,
     autoplay = false,
     descargarSolo = false,
@@ -152,6 +153,9 @@
     // ID Kitsu (anime, mapeado vía ani.zip): habilita Torrentio kitsu:{id}:{ep}
     // en kodios. Permite reproducir anime SIN imdb_id.
     kitsuId?: number | null;
+    // TMDb del título (null en anime de AniList): emparejamiento exacto en
+    // los sitios que lo publican (pelispanda).
+    tmdbId?: number | null;
     rdLinked: boolean;
     autoplay?: boolean;
     /**
@@ -551,6 +555,7 @@
           season: season ?? null,
           episode: episode ?? null,
           kitsuId: kitsuId ?? null,
+          tmdbId: tmdbId ?? null,
         });
       } catch (e) {
         // Sin internet no hay scrapers, pero la copia del disco sí se puede

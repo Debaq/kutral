@@ -92,7 +92,9 @@ fn http() -> Result<reqwest::Client, String> {
 /// `kind`: "movie" | "series" | "anime". `title` se usa para Nyaa/AnimeTosho.
 /// `kitsu_id` (anime, vía ani.zip): habilita Torrentio por ID Kitsu, que es
 /// exacto por episodio — los anime suelen no tener IMDb o numerar distinto.
+/// `tmdb_id`: empareja exacto con los sitios que lo publican (pelispanda).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn kodios_search(
     imdb_id: String,
     kind: String,
@@ -101,6 +103,7 @@ pub async fn kodios_search(
     title: Option<String>,
     original_title: Option<String>,
     kitsu_id: Option<u64>,
+    tmdb_id: Option<u64>,
 ) -> Result<Vec<Source>, String> {
     let imdb_ok = imdb_id.starts_with("tt");
     if !imdb_ok && !(kind == "anime" && (kitsu_id.is_some() || title.is_some())) {
@@ -114,10 +117,12 @@ pub async fn kodios_search(
         title.unwrap_or_default(),
         original_title.unwrap_or_default(),
         kitsu_id,
+        tmdb_id,
     )
     .await)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn aggregate(
     imdb: String,
     kind: String,
@@ -126,6 +131,7 @@ async fn aggregate(
     title: String,
     original_title: String,
     kitsu_id: Option<u64>,
+    tmdb_id: Option<u64>,
 ) -> Vec<Source> {
     eprintln!("[kodios] search imdb={imdb} kind={kind} s={season:?} e={episode:?} kitsu={kitsu_id:?}");
     let mut tasks: Vec<tokio::task::JoinHandle<Result<Vec<Source>, String>>> = Vec::new();
@@ -141,6 +147,20 @@ async fn aggregate(
         }));
         let (i, k) = (imdb.clone(), kind.clone());
         tasks.push(tokio::spawn(async move { mediafusion_search(&i, &k, season, episode).await }));
+    }
+
+    // pelispanda: torrents en español con el idioma etiquetado. Por tmdb_id
+    // (exacto) o, sin él, por título único (ver pelispanda::elegir).
+    if kind == "movie" || kind == "series" {
+        let titulos: Vec<String> = [title.clone(), original_title.clone()]
+            .into_iter()
+            .filter(|t| !t.trim().is_empty())
+            .collect();
+        if tmdb_id.is_some() || !titulos.is_empty() {
+            tasks.push(tokio::spawn(async move {
+                crate::pelispanda::pelispanda_search(tmdb_id, &titulos, season, episode).await
+            }));
+        }
     }
 
     match kind.as_str() {
@@ -819,6 +839,7 @@ mod tests {
             Some(1),
             "Frieren: Beyond Journey's End".into(),
             "Sousou no Frieren".into(),
+            None,
             None,
         )
         .await;

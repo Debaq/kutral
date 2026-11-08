@@ -2105,6 +2105,7 @@
       season,
       episode,
       kitsuId: d.kitsu_id ?? null,
+      tmdbId: d.is_anime ? null : d.id,
     });
   }
 
@@ -2881,6 +2882,7 @@
     originalTitle={selected.original_title ?? null}
     backdrop={selected.backdrop_path ? art(selected.backdrop_path, "w1280", 1280) : null}
     kitsuId={selected.kitsu_id ?? null}
+    tmdbId={selected.is_anime ? null : selected.id}
     rdLinked={config.rdLinked}
     autoplay={sourcesAutoplay}
     descargarSolo={sourcesDescargar}

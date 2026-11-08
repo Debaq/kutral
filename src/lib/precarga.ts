@@ -16,6 +16,8 @@ export type PedidoFuentes = {
   season: number | null;
   episode: number | null;
   kitsuId: number | null;
+  // TMDb del título (no en anime de AniList): pelispanda empareja exacto con él.
+  tmdbId?: number | null;
 };
 
 // Más viejo que esto ya no se usa: los seeds y lo que hay cambian.
@@ -37,6 +39,7 @@ function pedir(p: PedidoFuentes): Promise<Src[]> {
     season: p.season ?? undefined,
     episode: p.episode ?? undefined,
     kitsuId: p.kitsuId ?? undefined,
+    tmdbId: p.tmdbId ?? undefined,
   });
 }
 
