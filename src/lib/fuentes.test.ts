@@ -2,11 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 
 // fuentes.ts lee preferencias de config; el módulo real habla con Tauri.
 vi.mock("$lib/config.svelte", () => ({
-  config: { torrentMaxQuality: "1080p", torrentMaxGb: 10 },
+  config: { torrentMaxQuality: "1080p", torrentMaxGb: 10, subMode: "dub", lang: "es-CL" },
   idiomaContenido: () => "es",
 }));
 
-import { fmtSize, infoChips, stack, type Src } from "./fuentes";
+import { fmtSize, infoChips, stack, ordenarFuentes, nombreProveedor, type Src } from "./fuentes";
 
 const src = (over: Partial<Src>): Src => ({ quality: "1080p", title: "", ...over }) as Src;
 
@@ -55,5 +55,28 @@ describe("stack", () => {
       src({ title: "Pelicula 2024 1080p" }),
     ]);
     expect(out).toHaveLength(2);
+  });
+});
+
+describe("nombreProveedor", () => {
+  it("nombres legibles, sin repetir", () => {
+    expect(nombreProveedor("torrentio+pelispanda")).toBe("Torrentio · PelisPanda");
+    expect(nombreProveedor("torrentio-kitsu+torrentio")).toBe("Torrentio");
+    expect(nombreProveedor("jkanime-rd")).toBe("JKAnime vía Real-Debrid");
+    expect(nombreProveedor("otro")).toBe("otro");
+  });
+});
+
+describe("ordenarFuentes", () => {
+  it("doblado: el audio en español gana a 'al instante' en inglés", () => {
+    const ingles = src({ source: "torrentio", title: "Superman.2025.1080p.WEB-DL", rd_cached: true, seeders: 900 });
+    const latino = src({ source: "pelispanda", title: "Superman (2025) [WEB-DL 1080p] Dual [Latino/Inglés]", rd_cached: null });
+    const orden = ordenarFuentes([ingles, latino], "movie");
+    expect(orden[0]).toBe(latino);
+  });
+  it("con el mismo idioma, 'al instante' sigue primero", () => {
+    const a = src({ source: "pelispanda", title: "X [Dual 720p] [Latino/Inglés]", rd_cached: null, quality: "p720" });
+    const b = src({ source: "torrentio", title: "X.720p.Latino", rd_cached: true, quality: "p720" });
+    expect(ordenarFuentes([a, b], "movie")[0]).toBe(b);
   });
 });

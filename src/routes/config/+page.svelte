@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  type Tab = "cuenta" | "reproduccion" | "descargas" | "transmitir" | "sistema";
+  type Tab = "cuenta" | "reproduccion" | "fuentes" | "descargas" | "transmitir" | "sistema";
   // Al volver a /config en la misma sesión se abre la última pestaña usada.
   let ultima: Tab = "cuenta";
 </script>
@@ -19,12 +19,14 @@
   import TabCuenta from "$lib/ajustes/TabCuenta.svelte";
   import TabReproduccion from "$lib/ajustes/TabReproduccion.svelte";
   import TabDescargas from "$lib/ajustes/TabDescargas.svelte";
+  import TabFuentes from "$lib/ajustes/TabFuentes.svelte";
   import TabTransmitir from "$lib/ajustes/TabTransmitir.svelte";
   import TabSistema from "$lib/ajustes/TabSistema.svelte";
 
   const TABS: { id: Tab; icono: string; label: string }[] = [
     { id: "cuenta", icono: "🔑", label: "Cuenta y servicios" },
     { id: "reproduccion", icono: "🎬", label: "Reproducción" },
+    { id: "fuentes", icono: "🔎", label: "Fuentes" },
     { id: "descargas", icono: "⬇", label: "Descargas" },
     { id: "transmitir", icono: "📺", label: "Transmitir y TV" },
     { id: "sistema", icono: "⚙", label: "Sistema" },
@@ -232,6 +234,7 @@
       <div class="cfg-paneles" onchange={guardar}>
         <div class="cfg-panel" hidden={tab !== "cuenta"}><TabCuenta bind:this={tabCuenta} /></div>
         <div class="cfg-panel" hidden={tab !== "reproduccion"}><TabReproduccion /></div>
+        <div class="cfg-panel" hidden={tab !== "fuentes"}><TabFuentes /></div>
         <div class="cfg-panel" hidden={tab !== "descargas"}><TabDescargas /></div>
         <div class="cfg-panel" hidden={tab !== "transmitir"}><TabTransmitir /></div>
         <div class="cfg-panel" hidden={tab !== "sistema"}><TabSistema /></div>

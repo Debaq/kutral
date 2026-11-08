@@ -735,6 +735,7 @@ pub fn run() {
             webserver::web_server_status,
             ui_log,
             kodios::kodios_search,
+            kodios::fuentes_catalogo,
             anilist::anilist_discover,
             anilist::anilist_personajes,
             anilist::anilist_detail,

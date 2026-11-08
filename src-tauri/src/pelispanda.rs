@@ -186,7 +186,7 @@ pub async fn pelispanda_search(
             break;
         }
     }
-    let f = elegida.ok_or("pelispanda: sin coincidencia")?;
+    let f = elegida.ok_or(format!("{}pelispanda sin coincidencia", crate::kodios::VACIO))?;
     eprintln!("[pelispanda] {} ({}) → {}/{}", f.title, f.year, f.tipo, f.slug);
 
     let ruta = match (serie, f.tipo.as_str()) {
@@ -212,7 +212,7 @@ pub async fn pelispanda_search(
         descargas.iter().filter_map(|d| fuente(d, &nombre)).collect()
     };
     if out.is_empty() {
-        return Err(format!("pelispanda {}: sin magnets para lo pedido", f.slug));
+        return Err(format!("{}pelispanda {}: sin magnets para lo pedido", crate::kodios::VACIO, f.slug));
     }
     Ok(out)
 }

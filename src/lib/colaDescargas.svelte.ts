@@ -20,6 +20,7 @@ import { getDb } from "$lib/vera/db";
 import { config } from "$lib/config.svelte";
 import { notify } from "$lib/notifStore.svelte";
 import { ordenarFuentes, stack, cabeEnLocal, fmtSize, type Src, type Kind } from "$lib/fuentes";
+import { buscarKodios } from "$lib/buscadores.svelte";
 import { addTorrent, torrents, refreshQueue, startQueuePoll } from "$lib/torrents.svelte";
 import { registrarDescarga, estadoDescarga } from "$lib/descargas.svelte";
 
@@ -245,7 +246,7 @@ async function tick(): Promise<void> {
 async function procesar(f: FilaPendiente): Promise<boolean> {
   await setEstado(f.id, "buscando", null);
   try {
-    const srcs = await invoke<Src[]>("kodios_search", {
+    const srcs = await buscarKodios({
       imdbId: f.imdb_id,
       kind: f.kind,
       title: f.title,

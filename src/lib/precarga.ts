@@ -5,8 +5,8 @@
 // Se usa UNA vez: lo que el selector toma se saca de acá. Así "Rebuscar
 // fuentes" o volver a Descubrir después de un fallo buscan de nuevo, como
 // siempre.
-import { invoke } from "@tauri-apps/api/core";
 import type { Kind, Src } from "$lib/fuentes";
+import { buscarKodios } from "$lib/buscadores.svelte";
 
 export type PedidoFuentes = {
   imdbId: string;
@@ -31,7 +31,7 @@ function clave(p: PedidoFuentes): string {
 }
 
 function pedir(p: PedidoFuentes): Promise<Src[]> {
-  return invoke<Src[]>("kodios_search", {
+  return buscarKodios({
     imdbId: p.imdbId,
     kind: p.kind,
     title: p.title,

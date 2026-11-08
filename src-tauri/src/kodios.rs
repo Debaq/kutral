@@ -85,6 +85,80 @@ fn http() -> Result<reqwest::Client, String> {
 }
 
 // ========================================================================
+// Catálogo de buscadores y salud
+// ========================================================================
+
+/// Prefijo de los errores que NO son falla del sitio sino "no tiene eso"
+/// (título no encontrado, capítulo sin versiones). La salud de la fuente no
+/// los cuenta: si no, un sitio sano se daría de baja por no tener una peli.
+pub const VACIO: &str = "vacío: ";
+
+/// Un buscador de fuentes, tal como lo ve Configuración → Fuentes.
+#[derive(Debug, Clone, Serialize)]
+pub struct Buscador {
+    pub id: &'static str,
+    pub nombre: &'static str,
+    pub descripcion: &'static str,
+    /// "movie" | "series" | "anime".
+    pub tipos: &'static [&'static str],
+    /// Idioma principal de lo que trae: "es" (español), "en", "multi".
+    pub idioma: &'static str,
+    /// Canal equivalente en Balandro (dominio vigente, estado, nota).
+    pub balandro: Option<&'static str>,
+}
+
+pub const BUSCADORES: &[Buscador] = &[
+    Buscador { id: "torrentio", nombre: "Torrentio", descripcion: "Agregador de torrents de todo el mundo (el de Stremio). La base de casi todo.", tipos: &["movie", "series"], idioma: "multi", balandro: None },
+    Buscador { id: "mediafusion", nombre: "MediaFusion", descripcion: "Otro agregador de torrents; suma versiones que Torrentio no tiene.", tipos: &["movie", "series"], idioma: "multi", balandro: None },
+    Buscador { id: "pelispanda", nombre: "PelisPanda", descripcion: "Torrents en español latino y dual, con el idioma bien etiquetado.", tipos: &["movie", "series"], idioma: "es", balandro: Some("pelispanda") },
+    Buscador { id: "yts", nombre: "YTS", descripcion: "Películas en inglés, livianas y de buena calidad.", tipos: &["movie"], idioma: "en", balandro: Some("yts") },
+    Buscador { id: "eztv", nombre: "EZTV", descripcion: "Capítulos de series en inglés.", tipos: &["series"], idioma: "en", balandro: Some("eztv") },
+    Buscador { id: "torrentio-kitsu", nombre: "Torrentio (anime)", descripcion: "Torrents de anime por capítulo exacto (ID de Kitsu).", tipos: &["anime"], idioma: "multi", balandro: None },
+    Buscador { id: "animetosho", nombre: "AnimeTosho", descripcion: "Releases de anime de los fansubs, casi todo con subtítulos en inglés.", tipos: &["anime"], idioma: "en", balandro: None },
+    Buscador { id: "nyaa", nombre: "Nyaa", descripcion: "El índice de anime más grande; subtítulos en inglés.", tipos: &["anime"], idioma: "en", balandro: None },
+    Buscador { id: "jkanime", nombre: "JKAnime", descripcion: "Anime con subtítulos en español ya dentro del video, y copias en Mega o Mediafire vía Real-Debrid.", tipos: &["anime"], idioma: "es", balandro: Some("jkanime") },
+];
+
+/// Cómo le fue a un buscador en una búsqueda.
+#[derive(Debug, Clone, Serialize)]
+pub struct Salud {
+    pub id: &'static str,
+    /// "ok" (trajo fuentes) | "vacio" (respondió, no tenía eso) | "falla" | "timeout".
+    pub estado: &'static str,
+    pub n: usize,
+    pub error: String,
+    pub ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Busqueda {
+    pub fuentes: Vec<Source>,
+    pub salud: Vec<Salud>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BuscadorInfo {
+    #[serde(flatten)]
+    pub buscador: Buscador,
+    /// Datos del canal en Balandro (activo, nota, host, idiomas) o null.
+    pub balandro_info: serde_json::Value,
+}
+
+/// Catálogo para Configuración → Fuentes, con lo que dice Balandro de cada uno.
+#[tauri::command]
+pub async fn fuentes_catalogo() -> Vec<BuscadorInfo> {
+    let mut out = Vec::with_capacity(BUSCADORES.len());
+    for b in BUSCADORES {
+        let balandro_info = match b.balandro {
+            Some(c) => crate::dominios::canal(c).await,
+            None => serde_json::Value::Null,
+        };
+        out.push(BuscadorInfo { buscador: b.clone(), balandro_info });
+    }
+    out
+}
+
+// ========================================================================
 // Comando Tauri + agregador
 // ========================================================================
 
@@ -93,6 +167,8 @@ fn http() -> Result<reqwest::Client, String> {
 /// `kitsu_id` (anime, vía ani.zip): habilita Torrentio por ID Kitsu, que es
 /// exacto por episodio — los anime suelen no tener IMDb o numerar distinto.
 /// `tmdb_id`: empareja exacto con los sitios que lo publican (pelispanda).
+/// `apagadas`: ids de BUSCADORES que no se consultan (apagados a mano en
+/// Configuración o en pausa por fallar seguido).
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn kodios_search(
@@ -104,7 +180,8 @@ pub async fn kodios_search(
     original_title: Option<String>,
     kitsu_id: Option<u64>,
     tmdb_id: Option<u64>,
-) -> Result<Vec<Source>, String> {
+    apagadas: Option<Vec<String>>,
+) -> Result<Busqueda, String> {
     let imdb_ok = imdb_id.starts_with("tt");
     if !imdb_ok && !(kind == "anime" && (kitsu_id.is_some() || title.is_some())) {
         return Err("imdb_id inválido (esperado ttXXXXXXX)".into());
@@ -118,6 +195,7 @@ pub async fn kodios_search(
         original_title.unwrap_or_default(),
         kitsu_id,
         tmdb_id,
+        apagadas.unwrap_or_default(),
     )
     .await)
 }
@@ -132,59 +210,71 @@ async fn aggregate(
     original_title: String,
     kitsu_id: Option<u64>,
     tmdb_id: Option<u64>,
-) -> Vec<Source> {
-    eprintln!("[kodios] search imdb={imdb} kind={kind} s={season:?} e={episode:?} kitsu={kitsu_id:?}");
-    let mut tasks: Vec<tokio::task::JoinHandle<Result<Vec<Source>, String>>> = Vec::new();
+    apagadas: Vec<String>,
+) -> Busqueda {
+    eprintln!("[kodios] search imdb={imdb} kind={kind} s={season:?} e={episode:?} kitsu={kitsu_id:?} apagadas={apagadas:?}");
+    type Tarea = (&'static str, tokio::task::JoinHandle<Result<Vec<Source>, String>>);
+    let mut tasks: Vec<Tarea> = Vec::new();
+    let on = |id: &str| !apagadas.iter().any(|a| a == id);
+    let inicio = std::time::Instant::now();
     let imdb_ok = imdb.starts_with("tt");
 
     // Torrentio SIN token (método Kodi/kodios): magnets crudos con info_hash
     // → instantAvailability marca cacheadas → resolvemos FRESCO con addMagnet+
     // unrestrict al reproducir (URLs no expiran como las pre-resueltas).
     if imdb_ok {
-        let (i, k) = (imdb.clone(), kind.clone());
-        tasks.push(tokio::spawn(async move {
-            torrentio_search(&i, &k, season, episode, None).await
-        }));
-        let (i, k) = (imdb.clone(), kind.clone());
-        tasks.push(tokio::spawn(async move { mediafusion_search(&i, &k, season, episode).await }));
+        if on("torrentio") {
+            let (i, k) = (imdb.clone(), kind.clone());
+            tasks.push(("torrentio", tokio::spawn(async move {
+                torrentio_search(&i, &k, season, episode, None).await
+            })));
+        }
+        if on("mediafusion") {
+            let (i, k) = (imdb.clone(), kind.clone());
+            tasks.push(("mediafusion", tokio::spawn(async move { mediafusion_search(&i, &k, season, episode).await })));
+        }
     }
 
     // pelispanda: torrents en español con el idioma etiquetado. Por tmdb_id
     // (exacto) o, sin él, por título único (ver pelispanda::elegir).
-    if kind == "movie" || kind == "series" {
+    if (kind == "movie" || kind == "series") && on("pelispanda") {
         let titulos: Vec<String> = [title.clone(), original_title.clone()]
             .into_iter()
             .filter(|t| !t.trim().is_empty())
             .collect();
         if tmdb_id.is_some() || !titulos.is_empty() {
-            tasks.push(tokio::spawn(async move {
+            tasks.push(("pelispanda", tokio::spawn(async move {
                 crate::pelispanda::pelispanda_search(tmdb_id, &titulos, season, episode).await
-            }));
+            })));
         }
     }
 
     match kind.as_str() {
-        "movie" => {
+        "movie" if on("yts") => {
             let i = imdb.clone();
-            tasks.push(tokio::spawn(async move { yts_search(&i).await }));
+            tasks.push(("yts", tokio::spawn(async move { yts_search(&i).await })));
         }
-        "series" => {
+        "series" if on("eztv") => {
             let i = imdb.clone();
-            tasks.push(tokio::spawn(async move { eztv_search(&i, season, episode).await }));
+            tasks.push(("eztv", tokio::spawn(async move { eztv_search(&i, season, episode).await })));
         }
         "anime" => {
             // Torrentio por Kitsu (patrón Otaku): episodio exacto, sin
             // depender de cómo nombró el release el fansub.
-            if let Some(kid) = kitsu_id {
-                tasks.push(tokio::spawn(async move {
+            if let Some(kid) = kitsu_id.filter(|_| on("torrentio-kitsu")) {
+                tasks.push(("torrentio-kitsu", tokio::spawn(async move {
                     torrentio_kitsu_search(kid, episode).await
-                }));
+                })));
             }
             if !title.trim().is_empty() {
-                let t = title.clone();
-                tasks.push(tokio::spawn(async move { animetosho_search(&t, episode).await }));
-                let t = title.clone();
-                tasks.push(tokio::spawn(async move { nyaa_search(&t, episode).await }));
+                if on("animetosho") {
+                    let t = title.clone();
+                    tasks.push(("animetosho", tokio::spawn(async move { animetosho_search(&t, episode).await })));
+                }
+                if on("nyaa") {
+                    let t = title.clone();
+                    tasks.push(("nyaa", tokio::spawn(async move { nyaa_search(&t, episode).await })));
+                }
             }
             // jkanime: HLS con sub español QUEMADO. Va con el romaji PRIMERO
             // porque el sitio no indexa títulos en inglés ("Sousou no Frieren"
@@ -193,34 +283,57 @@ async fn aggregate(
                 .into_iter()
                 .filter(|t| !t.trim().is_empty())
                 .collect();
-            if !titles.is_empty() {
-                tasks.push(tokio::spawn(async move {
+            if !titles.is_empty() && on("jkanime") {
+                tasks.push(("jkanime", tokio::spawn(async move {
                     crate::anime_web::jkanime_search(&titles, episode).await
-                }));
+                })));
             }
         }
         _ => {}
     }
 
     let mut all: Vec<Source> = Vec::new();
-    let deadline = std::time::Duration::from_secs(SOURCE_DEADLINE_S);
-    for h in tasks {
-        match tokio::time::timeout(deadline, h).await {
+    let mut salud: Vec<Salud> = Vec::new();
+    // Plazo GLOBAL desde el arranque: las tareas corren en paralelo, así que
+    // esperar a cada una con su propio plazo sumaría demoras.
+    let tope = inicio + std::time::Duration::from_secs(SOURCE_DEADLINE_S);
+    for (id, h) in tasks {
+        let falta = tope.saturating_duration_since(std::time::Instant::now());
+        let r = tokio::time::timeout(falta, h).await;
+        let ms = inicio.elapsed().as_millis() as u64;
+        let (estado, n, error) = match r {
             Ok(Ok(Ok(mut v))) => {
-                if let Some(s) = v.first() {
-                    eprintln!("[kodios]   {} → {} fuentes", s.source, v.len());
-                }
+                eprintln!("[kodios]   {id} → {} fuentes", v.len());
+                let n = v.len();
                 all.append(&mut v);
+                (if n > 0 { "ok" } else { "vacio" }, n, String::new())
             }
-            Ok(Ok(Err(e))) => eprintln!("[kodios]   fuente falló: {e}"),
-            Ok(Err(e)) => eprintln!("[kodios]   task panic: {e}"),
-            Err(_) => eprintln!("[kodios]   fuente timeout (>{SOURCE_DEADLINE_S}s)"),
-        }
+            Ok(Ok(Err(e))) if e.starts_with(VACIO) => {
+                eprintln!("[kodios]   {id}: {e}");
+                ("vacio", 0, e[VACIO.len()..].to_string())
+            }
+            Ok(Ok(Err(e))) => {
+                eprintln!("[kodios]   {id} falló: {e}");
+                ("falla", 0, e)
+            }
+            Ok(Err(e)) => {
+                eprintln!("[kodios]   {id} task panic: {e}");
+                ("falla", 0, format!("se cayó: {e}"))
+            }
+            Err(_) => {
+                eprintln!("[kodios]   {id} timeout (>{SOURCE_DEADLINE_S}s)");
+                ("timeout", 0, format!("no respondió en {SOURCE_DEADLINE_S} s"))
+            }
+        };
+        salud.push(Salud { id, estado, n, error, ms });
     }
     let merged = merge_and_sort(all);
     eprintln!("[kodios] total tras merge: {} fuentes", merged.len());
-    merged
+    Busqueda { fuentes: merged, salud }
 }
+
+/// Sitios cuyo título trae el idioma puesto a mano (no el nombre del release).
+const ETIQUETAN_IDIOMA: &[&str] = &["pelispanda"];
 
 /// Dedup por info_hash + merge (mejor seeders/size, acumula fuentes),
 /// luego ordena por calidad y seeders.
@@ -246,6 +359,13 @@ fn merge_and_sort(all: Vec<Source>) -> Vec<Source> {
                     if e.file_idx.is_none() && e.filename.is_none() {
                         e.file_idx = s.file_idx;
                         e.filename = s.filename.clone();
+                    }
+                    // El título de un sitio que etiqueta el idioma a mano gana al
+                    // nombre de release: si no, "[Latino/Inglés]" se perdería
+                    // cuando Torrentio llega primero con el mismo hash.
+                    let etiqueta = |src: &str| src.split('+').any(|x| ETIQUETAN_IDIOMA.contains(&x));
+                    if etiqueta(&s.source) && !etiqueta(&e.source) {
+                        e.title = s.title.clone();
                     }
                     // URL pre-resuelta gana (reproducción directa sin addMagnet).
                     if e.url.is_none() && s.url.is_some() {
@@ -825,6 +945,41 @@ fn build_magnet(hash: &str, name: &str, trackers: Option<&[String]>) -> String {
 mod tests {
     use super::*;
 
+    fn src(source: &str, title: &str, hash: &str) -> Source {
+        Source {
+            source: source.into(),
+            title: title.into(),
+            magnet: Some(format!("magnet:?xt=urn:btih:{hash}")),
+            url: None,
+            info_hash: Some(hash.into()),
+            size_bytes: None,
+            seeders: Some(10),
+            quality: Quality::P1080,
+            rd_cached: None,
+            hardsub: None,
+            file_idx: None,
+            filename: None,
+            links: None,
+        }
+    }
+
+    #[test]
+    fn merge_conserva_el_titulo_con_idioma() {
+        let h = "0761280fc0ad8139100a3e44a50af0d4d8bcdaaa";
+        for orden in [false, true] {
+            let mut v = vec![
+                src("torrentio", "Superman.2025.WEB-DL.1080p", h),
+                src("pelispanda", "Superman (2025) [WEB-DL 1080p] Dual [Latino/Inglés]", h),
+            ];
+            if orden {
+                v.reverse();
+            }
+            let m = merge_and_sort(v);
+            assert_eq!(m.len(), 1);
+            assert!(m[0].title.contains("Latino"), "se perdió el idioma: {}", m[0].title);
+        }
+    }
+
     /// Humo del agregador anime contra las fuentes REALES. Ignorado por
     /// defecto (depende de la red). Verifica que jkanime sobreviva al deadline
     /// por fuente y al merge, y que llegue con URL directa + hardsub:
@@ -841,8 +996,10 @@ mod tests {
             "Sousou no Frieren".into(),
             None,
             None,
+            Vec::new(),
         )
-        .await;
+        .await
+        .fuentes;
         println!("total fuentes: {}", out.len());
         let jk: Vec<_> = out.iter().filter(|s| s.source == "jkanime").collect();
         for s in &jk {

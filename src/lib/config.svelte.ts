@@ -278,6 +278,9 @@ export const config = $state({
 	blockedSourceMovie: "",
 	blockedSourceSeries: "",
 	blockedSourceAnime: "",
+	// Buscadores de fuentes apagados a mano (ids de kodios::BUSCADORES, por
+	// coma). Ver buscadores.svelte.ts y Configuración → Fuentes.
+	buscadoresApagados: "",
 	// Estado de la cuenta OpenSubtitles (subs externos, 20/día con cuenta). El
 	// token NO vive aquí: está en el store 0600 del backend. Solo el indicador.
 	osLinked: false,
@@ -363,6 +366,7 @@ export function loadConfig() {
 	config.blockedSourceMovie = localStorage.getItem("blocked_source_movie") || "";
 	config.blockedSourceSeries = localStorage.getItem("blocked_source_series") || "";
 	config.blockedSourceAnime = localStorage.getItem("blocked_source_anime") || "";
+	config.buscadoresApagados = localStorage.getItem("buscadores_apagados") || "";
 	const ss = parseInt(localStorage.getItem("sub_size") || "", 10);
 	config.subSize = Number.isFinite(ss)
 		? Math.min(200, Math.max(50, ss))
@@ -503,6 +507,7 @@ export function saveConfig() {
 	localStorage.setItem("blocked_source_movie", config.blockedSourceMovie.trim());
 	localStorage.setItem("blocked_source_series", config.blockedSourceSeries.trim());
 	localStorage.setItem("blocked_source_anime", config.blockedSourceAnime.trim());
+	localStorage.setItem("buscadores_apagados", config.buscadoresApagados);
 	localStorage.setItem("sub_size", String(config.subSize));
 	localStorage.setItem("web_autostart", config.webAutoStart ? "1" : "0");
 	localStorage.setItem("web_port", String(config.webPort));

@@ -39,6 +39,7 @@
     prefScore,
     infoChips,
     fmtSize,
+    nombreProveedor,
     type Src,
   } from "$lib/fuentes";
   import { encolar as encolarPendiente } from "$lib/colaDescargas.svelte";
@@ -3042,7 +3043,7 @@
               <div class="sp-chips">
                 {#each avisos as a}<span class={a.cls} title={a.title}>{a.txt}</span>{/each}
                 {#each tecnicaFila(s) as c}<span class="sp-chip">{c}</span>{/each}
-                <span class="sp-prov">{s.source}</span>
+                <span class="sp-prov" title={s.source}>{nombreProveedor(s.source)}</span>
               </div>
               <span class="sp-title" class:abierto={focusIdx === i}>{s.title}</span>
             </div>

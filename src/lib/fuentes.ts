@@ -183,6 +183,36 @@ function coincide(s: Src, raw: string): number {
   return needles.some((n) => hay.includes(n)) ? 1 : 0;
 }
 
+/** 1 si, en modo doblado, el nombre promete audio en el idioma elegido. */
+export function idiomaFuerte(s: Src): number {
+  return config.subMode === "dub" && langScore(s) >= 4 ? 1 : 0;
+}
+
+// Nombre legible de cada buscador (ids de kodios::BUSCADORES). Lo que no esté
+// acá se muestra tal cual.
+const PROVEEDOR: Record<string, string> = {
+  torrentio: "Torrentio",
+  mediafusion: "MediaFusion",
+  pelispanda: "PelisPanda",
+  yts: "YTS",
+  eztv: "EZTV",
+  "torrentio-kitsu": "Torrentio",
+  animetosho: "AnimeTosho",
+  nyaa: "Nyaa",
+  jkanime: "JKAnime",
+  "jkanime-rd": "JKAnime vía Real-Debrid",
+};
+
+/** "torrentio+pelispanda" → "Torrentio · PelisPanda" (sin repetir). */
+export function nombreProveedor(source: string): string {
+  const vistos: string[] = [];
+  for (const id of (source || "").split("+")) {
+    const n = PROVEEDOR[id.trim()] ?? id.trim();
+    if (n && !vistos.includes(n)) vistos.push(n);
+  }
+  return vistos.join(" · ");
+}
+
 /**
  * Orden definitivo de la lista (muta y devuelve el mismo array). El criterio
  * es el mismo para reproducir y para bajar: lo que la app te pondría es lo
@@ -200,6 +230,11 @@ export function ordenarFuentes(srcs: Src[], kind: Kind): Src[] {
     // rápido si no entiendes lo que dice.
     const pool = poolScore(b) - poolScore(a);
     if (pool) return pool;
+    // Doblado: el audio en tu idioma (latino, castellano o dual con él) gana a
+    // "al instante". Una versión en inglés que abre ya no sirve si querías
+    // oírla en español; la otra tarda un poco más en abrir y listo.
+    const fuerte = idiomaFuerte(b) - idiomaFuerte(a);
+    if (fuerte) return fuerte;
     const c = (b.rd_cached ? 1 : 0) - (a.rd_cached ? 1 : 0);
     if (c) return c;
     // Preferencia de idioma (doblado/subtitulado) por sobre la calidad: de

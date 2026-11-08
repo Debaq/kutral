@@ -4,6 +4,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { config, refreshRdLinked, refreshOsStatus } from "$lib/config.svelte";
+  import { buscarKodios } from "$lib/buscadores.svelte";
   import { setNowPlaying } from "$lib/playerState.svelte";
   import { limpiarContexto } from "$lib/historial.svelte";
   import {
@@ -388,7 +389,7 @@
       const linked = config.rdLinked;
       log(`RD: ${linked ? "vinculado" : "NO vinculado"}`);
       log("buscando fuentes…");
-      const srcs = await invoke<any[]>("kodios_search", {
+      const srcs: any[] = await buscarKodios({
         imdbId: testImdb.trim(),
         kind: "movie",
       });

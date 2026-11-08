@@ -82,6 +82,11 @@ fn armar(lista: &Value, canal: &str, fijos: &[&str]) -> Vec<String> {
     out
 }
 
+/// Lo que Balandro dice de `canal` (activo, nota, host, idiomas…), o null.
+pub async fn canal(canal: &str) -> Value {
+    lista().await["canales"][canal].clone()
+}
+
 /// Espejos a probar para `canal`, en orden.
 pub async fn espejos(canal: &str, fijos: &[&str]) -> Vec<String> {
     armar(&lista().await, canal, fijos)

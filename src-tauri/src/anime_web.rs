@@ -87,14 +87,19 @@ fn slug_cache() -> &'static Mutex<HashMap<String, String>> {
 /// sitio indexa por ROMAJI, no por título en inglés — "Frieren: Beyond
 /// Journey's End" no devuelve nada, "Sousou no Frieren" sí. Por eso el llamador
 /// debe pasar `original_title` (romaji de AniList) primero.
-async fn jk_find_slug(titles: &[String]) -> Option<(String, String)> {
+///
+/// Err solo si el sitio no respondió a NINGUNA búsqueda (caído o bloqueado):
+/// así la salud de la fuente no confunde "no tiene ese anime" con "está rota".
+async fn jk_find_slug(titles: &[String]) -> Result<Option<(String, String)>, String> {
+    let mut respondio = false;
+    let mut ultimo_error = String::new();
     for t in titles.iter().filter(|t| !t.trim().is_empty()) {
         let key = norm(t);
         if key.is_empty() {
             continue;
         }
         if let Some(slug) = slug_cache().lock().ok().and_then(|c| c.get(&key).cloned()) {
-            return Some((slug, t.clone()));
+            return Ok(Some((slug, t.clone())));
         }
         let path = format!("/buscar/{}/", urlencoding::encode(t.trim()));
         let espejos = crate::dominios::espejos("jkanime", JK_MIRRORS).await;
@@ -103,9 +108,11 @@ async fn jk_find_slug(titles: &[String]) -> Option<(String, String)> {
             Ok(v) => v,
             Err(e) => {
                 eprintln!("[jkanime] búsqueda '{t}' falló: {e}");
+                ultimo_error = e;
                 continue;
             }
         };
+        respondio = true;
         // Resultados: <h5><a  href="https://jkanime.net/{slug}/">{título}</a>
         let mut best: Option<String> = None;
         for (i, _) in html.match_indices("<h5><a") {
@@ -133,10 +140,14 @@ async fn jk_find_slug(titles: &[String]) -> Option<(String, String)> {
             if let Ok(mut c) = slug_cache().lock() {
                 c.insert(key, slug.clone());
             }
-            return Some((slug, t.clone()));
+            return Ok(Some((slug, t.clone())));
         }
     }
-    None
+    if respondio || ultimo_error.is_empty() {
+        Ok(None)
+    } else {
+        Err(ultimo_error)
+    }
 }
 
 /// URLs de los reproductores incrustados de un episodio, en orden de aparición.
@@ -318,7 +329,9 @@ async fn jk_resolve_embed(embed: &str, referer: &str) -> Option<String> {
 /// con las copias en hosters para Real-Debrid. Basta con que haya una.
 pub async fn jkanime_search(titles: &[String], episode: Option<u32>) -> Result<Vec<Source>, String> {
     let ep = episode.unwrap_or(1);
-    let (slug, matched) = jk_find_slug(titles).await.ok_or("jkanime: sin coincidencia de título")?;
+    let (slug, matched) = jk_find_slug(titles)
+        .await?
+        .ok_or(format!("{}jkanime sin coincidencia de título", crate::kodios::VACIO))?;
     eprintln!("[jkanime] '{matched}' → slug={slug} ep={ep}");
     let espejos = crate::dominios::espejos("jkanime", JK_MIRRORS).await;
     let espejos: Vec<&str> = espejos.iter().map(String::as_str).collect();
@@ -339,7 +352,7 @@ pub async fn jkanime_search(titles: &[String], episode: Option<u32>) -> Result<V
     }
     let hosters = jk_hosters(&html);
     if urls.is_empty() && hosters.is_empty() {
-        return Err(format!("jkanime {slug}/{ep}: ni HLS ni hosters que sirvan"));
+        return Err(format!("{}jkanime {slug}/{ep}: ni HLS ni hosters que sirvan", crate::kodios::VACIO));
     }
     let base_src = |title: String| Source {
         source: "jkanime".into(),
