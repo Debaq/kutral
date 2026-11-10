@@ -150,33 +150,63 @@
     }
   }
 
-  async function registerBackShortcuts(includeArrows = false) {
-    // Desregistrar primero: evita "HotKey already registered" si el modo
-    // anterior dejó shortcuts pegados (ej. trailer → playmenu → trailer).
-    await unregisterBackShortcuts();
-    for (const k of BACK_KEYS) {
-      try {
-        await register(k, (ev) => {
-          if (ev.state === "Pressed") void siEnfocada(dispatchBack);
-        });
-      } catch (e) {
-        console.warn(`shortcut ${k} no registrado`, e);
-      }
-    }
-    if (includeArrows) {
-      const map: Record<string, "up" | "down" | "left" | "right"> = {
-        Up: "up", Down: "down", Left: "left", Right: "right",
-      };
-      for (const k of ARROW_KEYS) {
+  // Los atajos son globales del SO (en Windows, RegisterHotKey se traga la
+  // tecla para TODAS las apps). Por eso solo existen mientras Kütral tiene el
+  // foco: `atajosQuiero` es lo que el modo actual pide y `atajosPuestos` lo que
+  // de verdad está registrado en el SO. Al perder el foco se sueltan y al
+  // recuperarlo se vuelven a poner. Las operaciones se encadenan para que un
+  // blur/focus rápido no deje registros a medias.
+  let atajosQuiero: { flechas: boolean } | null = null;
+  let atajosPuestos = false;
+  let atajosCola: Promise<void> = Promise.resolve();
+
+  function sincronizarAtajos(enfocada: boolean) {
+    atajosCola = atajosCola.then(async () => {
+      await soltarAtajosSO();
+      if (!enfocada || !atajosQuiero) return;
+      const { flechas } = atajosQuiero;
+      for (const k of BACK_KEYS) {
         try {
           await register(k, (ev) => {
-            if (ev.state === "Pressed") void siEnfocada(() => spatialNav(map[k]));
+            if (ev.state === "Pressed") void siEnfocada(dispatchBack);
           });
+          atajosPuestos = true;
         } catch (e) {
           console.warn(`shortcut ${k} no registrado`, e);
         }
       }
+      if (flechas) {
+        const map: Record<string, "up" | "down" | "left" | "right"> = {
+          Up: "up", Down: "down", Left: "left", Right: "right",
+        };
+        for (const k of ARROW_KEYS) {
+          try {
+            await register(k, (ev) => {
+              if (ev.state === "Pressed") void siEnfocada(() => spatialNav(map[k]));
+            });
+            atajosPuestos = true;
+          } catch (e) {
+            console.warn(`shortcut ${k} no registrado`, e);
+          }
+        }
+      }
+    });
+    return atajosCola;
+  }
+
+  async function soltarAtajosSO() {
+    if (!atajosPuestos) return;
+    for (const k of [...BACK_KEYS, ...ARROW_KEYS]) {
+      try { await unregister(k); } catch { /* tolerado */ }
     }
+    atajosPuestos = false;
+  }
+
+  async function registerBackShortcuts(includeArrows = false) {
+    atajosQuiero = { flechas: includeArrows };
+    let enfocada = false;
+    try { enfocada = await getCurrentWindow().isFocused(); } catch { /* sin foco */ }
+    await sincronizarAtajos(enfocada);
   }
 
   // Los atajos son globales del SO: sin este filtro, un Backspace tecleado
@@ -191,9 +221,8 @@
   }
 
   async function unregisterBackShortcuts() {
-    for (const k of [...BACK_KEYS, ...ARROW_KEYS]) {
-      try { await unregister(k); } catch { /* tolerado */ }
-    }
+    atajosQuiero = null;
+    await sincronizarAtajos(false);
   }
 
 
@@ -595,6 +624,17 @@
 
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // Atajos globales solo con foco: ver sincronizarAtajos.
+  onMount(() => {
+    let un: (() => void) | undefined;
+    let fuera = false;
+    getCurrentWindow()
+      .onFocusChanged(({ payload }) => void sincronizarAtajos(payload))
+      .then((u) => { if (fuera) u(); else un = u; })
+      .catch(() => {});
+    return () => { fuera = true; un?.(); };
+  });
+
   onMount(async () => {
     // CRÍTICO: leer la TMDb key SYNC al PRINCIPIO, antes de cualquier await.
     // afterNavigate puede correr mientras onMount sigue esperando Database.load,
@@ -722,6 +762,7 @@
   // tiene que limpiarse cuando home desmonta.
   onDestroy(() => {
     desmontado = true;
+    void unregisterBackShortcuts();
     guardarSnapshotCatalogo();
     volcarImgCache();
     if (calentarTimer) {
