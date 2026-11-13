@@ -755,6 +755,8 @@ pub fn run() {
             cast::cast_control,
             cast::cast_soltar,
             cast::cast_recuperar,
+            cast::cast_log,
+            cast::cast_log_ruta,
             lan::cast_red_info,
             lan::firewall_abierto,
             rd::rd_resolve,

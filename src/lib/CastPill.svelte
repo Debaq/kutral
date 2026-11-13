@@ -50,7 +50,7 @@
         onclick={() => hacer(() => control(pausada ? "seguir" : "pausa"))}
         title={pausada ? "Seguir" : "Pausa"}
       >{pausada ? "▶" : "⏸"}</button>
-      <button data-nav class="btn close" disabled={busy} onclick={() => hacer(detener)} title="Detener en la TV">⏹</button>
+      <button data-nav class="btn close" disabled={busy} onclick={() => hacer(() => detener("botón ⏹ de la pastilla"))} title="Detener en la TV">⏹</button>
     </div>
     {#if pct > 0}
       <div class="bar"><div class="fill" style:width={`${pct}%`}></div></div>

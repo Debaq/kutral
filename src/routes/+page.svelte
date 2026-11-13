@@ -10,7 +10,7 @@
   import { afterNavigate, goto } from "$app/navigation";
   import { ayuda } from "$lib/atajos/store.svelte";
   import { setPlaying, player } from "$lib/playerState.svelte";
-  import { cast } from "$lib/cast.svelte";
+  import { cast, registrar as registrarTv } from "$lib/cast.svelte";
   import { config } from "$lib/config.svelte";
   import { puedeBajar as puedeBajarAlgo } from "$lib/bajar";
   import SourcePicker from "$lib/SourcePicker.svelte";
@@ -168,7 +168,9 @@
       for (const k of BACK_KEYS) {
         try {
           await register(k, (ev) => {
-            if (ev.state === "Pressed") void siEnfocada(dispatchBack);
+            if (ev.state !== "Pressed") return;
+            if (cast.estado) registrarTv(`atajo global ${k} (modo ${mode})`);
+            void siEnfocada(dispatchBack);
           });
           atajosPuestos = true;
         } catch (e) {

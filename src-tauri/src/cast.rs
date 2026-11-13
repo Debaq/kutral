@@ -110,7 +110,85 @@ static ARCHIVO_SESION: std::sync::OnceLock<std::path::PathBuf> = std::sync::Once
 pub fn init(app: &tauri::AppHandle) {
     use tauri::Manager;
     if let Ok(d) = app.path().app_config_dir() {
+        let _ = std::fs::create_dir_all(&d);
         let _ = ARCHIVO_SESION.set(d.join("cast_sesion.json"));
+        let _ = ARCHIVO_REGISTRO.set(d.join("cast.log"));
+    }
+}
+
+// ---- Registro de la transmisión -----------------------------------------------
+//
+// En Windows no hay consola: lo que va por eprintln! se pierde. Para saber por
+// qué se corta una transmisión (¿Kütral mandó detener? ¿la TV cerró sola?) se
+// anota en `cast.log`, junto a cast_sesion.json, cada orden a la TV, cada
+// cambio de estado que informa y lo que avise la UI (foco, quién pidió
+// detener). Hora en UTC. Pasado 1 MB se rota a cast.log.1.
+
+static ARCHIVO_REGISTRO: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+const REGISTRO_MAX: u64 = 1 << 20;
+
+/// "2026-11-12 18:04:05" (UTC) sin depender de chrono.
+fn hora_utc() -> String {
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let (dias, seg) = ((t / 86_400) as i64, t % 86_400);
+    // Días desde 1970 → fecha civil (algoritmo de Howard Hinnant).
+    let z = dias + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}", seg / 3600, seg % 3600 / 60, seg % 60)
+}
+
+/// Agrega una línea al registro. Nunca falla hacia afuera.
+pub fn anotar(msg: &str) {
+    eprintln!("[cast] {msg}");
+    let Some(p) = ARCHIVO_REGISTRO.get() else { return };
+    static ESCRIBIENDO: Mutex<()> = Mutex::new(());
+    let _g = ESCRIBIENDO.lock().unwrap_or_else(|e| e.into_inner());
+    if std::fs::metadata(p).map(|m| m.len() > REGISTRO_MAX).unwrap_or(false) {
+        let _ = std::fs::rename(p, p.with_extension("log.1"));
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
+        let _ = writeln!(f, "{} {msg}", hora_utc());
+    }
+}
+
+/// Solo el host de una URL: las de Real-Debrid llevan un token en la ruta.
+fn host(url: &str) -> &str {
+    url.split("://").nth(1).unwrap_or(url).split(['/', '?']).next().unwrap_or("")
+}
+
+/// La UI anota lo suyo (foco de la ventana, quién pidió detener).
+#[tauri::command]
+pub fn cast_log(msg: String) {
+    anotar(&format!("[ui] {msg}"));
+}
+
+/// Ruta del registro, para mostrarla en Configuración.
+#[tauri::command]
+pub fn cast_log_ruta() -> Option<String> {
+    ARCHIVO_REGISTRO.get().map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Último estado anotado: solo se registran los cambios, no cada muestreo.
+fn anotar_estado(st: &CastStatus) {
+    static ULTIMO: Mutex<String> = Mutex::new(String::new());
+    let clave = format!("{} {} {}", st.estado, st.motivo, st.aviso);
+    let mut u = ULTIMO.lock().unwrap_or_else(|e| e.into_inner());
+    if *u != clave {
+        anotar(&format!(
+            "estado TV: {} motivo={:?} aviso={:?} pos={:.0}/{:.0}",
+            st.estado, st.motivo, st.aviso, st.pos, st.duracion
+        ));
+        *u = clave;
     }
 }
 
@@ -180,7 +258,7 @@ pub async fn cast_recuperar() -> bool {
     };
     match viva {
         Some(true) => {
-            eprintln!("[cast] recuperada \"{}\" en {}", g.titulo, g.tv.nombre);
+            anotar(&format!("recuperada \"{}\" en {}", g.titulo, g.tv.nombre));
             *sesion().lock().unwrap_or_else(|e| e.into_inner()) = Some(Sesion {
                 tv: g.tv,
                 titulo: g.titulo,
@@ -671,6 +749,15 @@ pub async fn cast_play(
     audio: Option<u32>,
     archivo: Option<String>,
 ) -> Result<bool, String> {
+    anotar(&format!(
+        "play \"{titulo}\" en {} ({} {}) desde {:.0} audio={} host={}",
+        tv.nombre,
+        tv.tipo,
+        tv.ip,
+        desde.unwrap_or(0.0),
+        audio.unwrap_or(1),
+        host(&url)
+    ));
     let pista = subs_para(subs.as_deref(), subs_desfase.unwrap_or(0.0), &tv).await;
     let con_subs = pista.is_some();
     let desde = desde.unwrap_or(0.0).max(0.0);
@@ -697,16 +784,24 @@ pub async fn cast_play(
         url.clone()
     };
 
-    if tv.es_dlna() {
-        crate::dlna::reproducir(&tv, &uri, ct, &titulo, srt.as_deref(), desde).await?;
+    let r = if tv.es_dlna() {
+        crate::dlna::reproducir(&tv, &uri, ct, &titulo, srt.as_deref(), desde).await
     } else {
         let idioma = subs_idioma.unwrap_or_else(|| "es".into());
         let vtt = pista.map(|(v, _)| v);
         let (tv2, titulo2, uri2) = (tv.clone(), titulo.clone(), uri.clone());
         bloqueante(move || cargar_cast(&tv2, &uri2, &titulo2, subtitulo, imagen, desde, vtt, &idioma))
-            .await?;
+            .await
+    };
+    if let Err(e) = &r {
+        anotar(&format!("play falló: {e}"));
     }
-    eprintln!("[cast] transmitiendo \"{}\" en {} ({})", titulo, tv.nombre, tv.tipo);
+    r?;
+    anotar(&format!(
+        "transmitiendo ({}; ct={ct}; subs={con_subs}; pasarela={})",
+        tv.tipo,
+        uri != url
+    ));
     fijar_sesion(Some(Sesion {
         tv,
         titulo,
@@ -807,8 +902,8 @@ pub async fn cast_status() -> Result<CastStatus, String> {
         titulo: s.titulo.clone(),
         ..Default::default()
     };
-    let (con_subs, inicio) = (s.con_subs, s.inicio);
-    let mut st = if s.tv.es_dlna() {
+    let (con_subs, inicio, es_dlna) = (s.con_subs, s.inicio, s.tv.es_dlna());
+    let mut st = if es_dlna {
         estado_dlna(&s, base).await
     } else {
         estado_cast(s, base).await
@@ -822,6 +917,7 @@ pub async fn cast_status() -> Result<CastStatus, String> {
     {
         st.aviso = "SUBS_SIN_ACCESO".into();
     }
+    anotar_estado(&st);
     Ok(st)
 }
 
@@ -829,6 +925,16 @@ async fn estado_cast(s: Sesion, base: CastStatus) -> CastStatus {
     let r = bloqueante(move || {
         let mut c = Conexion::abrir(&s.tv)?;
         let receptor = c.estado_receptor()?;
+        // Qué app tiene la TV adelante: si la de video se cerró, ¿qué quedó?
+        let apps: Vec<String> = receptor["applications"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .map(|x| format!("{}({})", x["displayName"].as_str().unwrap_or("?"), x["appId"].as_str().unwrap_or("?")))
+                    .collect()
+            })
+            .unwrap_or_default();
+        anotar_apps(&apps);
         let vol = &receptor["volume"];
         let vol = (vol["level"].as_f64().unwrap_or(0.0), vol["muted"].as_bool().unwrap_or(false));
         let Some((transporte, _)) = app_video(&receptor) else {
@@ -837,6 +943,9 @@ async fn estado_cast(s: Sesion, base: CastStatus) -> CastStatus {
         Ok((medio(&mut c, &transporte)?, vol, true))
     })
     .await;
+    if let Err(e) = &r {
+        anotar(&format!("estado TV sin respuesta: {e}"));
+    }
     let st = match r {
         Err(_) => CastStatus {
             estado: "SIN_CONEXION".into(),
@@ -873,6 +982,17 @@ async fn estado_cast(s: Sesion, base: CastStatus) -> CastStatus {
         }
     };
     st
+}
+
+/// Apps abiertas en la TV, solo cuando cambian.
+fn anotar_apps(apps: &[String]) {
+    static ULTIMO: Mutex<String> = Mutex::new(String::new());
+    let clave = apps.join(", ");
+    let mut u = ULTIMO.lock().unwrap_or_else(|e| e.into_inner());
+    if *u != clave {
+        anotar(&format!("apps en la TV: [{clave}]"));
+        *u = clave;
+    }
 }
 
 /// DLNA no tiene "motivo" de parada: se deduce. Si nunca llegó a PLAYING y
@@ -937,6 +1057,7 @@ pub async fn cast_control(accion: String, valor: Option<f64>) -> Result<(), Stri
         return Err("No hay nada transmitiéndose".into());
     };
     let detener = accion == "detener";
+    anotar(&format!("control: {accion} {valor:?}"));
     let r = if s.tv.es_dlna() {
         let tv = &s.tv;
         match accion.as_str() {
@@ -954,6 +1075,9 @@ pub async fn cast_control(accion: String, valor: Option<f64>) -> Result<(), Stri
     if detener {
         // Aunque la TV no conteste, del lado de Kütral la transmisión terminó.
         fijar_sesion(None);
+    }
+    if let Err(e) = &r {
+        anotar(&format!("control falló: {e}"));
     }
     r
 }
@@ -1004,6 +1128,7 @@ fn control_cast(tv: &CastTv, accion: &str, valor: Option<f64>) -> Result<(), Str
 /// Olvida la sesión sin tocar la TV (terminó sola o alguien cambió de app).
 #[tauri::command]
 pub fn cast_soltar() {
+    anotar("soltar (Kütral deja de seguir; la TV no se toca)");
     fijar_sesion(None);
 }
 

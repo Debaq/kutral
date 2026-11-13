@@ -14,15 +14,31 @@
   } from "$lib/cast.svelte";
   import { config, IPTV_DEFAULT_LISTS } from "$lib/config.svelte";
   import { guardar, numero } from "./guardar.svelte";
+  import { invoke } from "@tauri-apps/api/core";
+  import { revealItemInDir } from "@tauri-apps/plugin-opener";
 
   // Puerto y firewall, para avisar si la TV no va a poder entrar a este equipo.
   let redTv = $state<RedInfo | null>(null);
   // IP escrita a mano para una TV que la búsqueda no encuentra.
   let tvIp = $state("");
 
+  // Registro de transmisiones (cast.log): para mandarlo cuando algo falla.
+  let rutaRegistro = $state<string | null>(null);
+
   onMount(() => {
     void redInfo().then((r) => (redTv = r));
+    void invoke<string | null>("cast_log_ruta").then((r) => (rutaRegistro = r)).catch(() => {});
   });
+
+  async function abrirRegistro() {
+    if (!rutaRegistro) return;
+    try {
+      await revealItemInDir(rutaRegistro);
+    } catch {
+      // Todavía no existe (nunca se transmitió): se abre la carpeta.
+      await revealItemInDir(rutaRegistro.replace(/[\\/][^\\/]+$/, "")).catch(() => {});
+    }
+  }
 
   let nuevaListaNombre = $state("");
   let nuevaListaUrl = $state("");
@@ -146,6 +162,14 @@
         : ""}:
       <code>{redTv.comando}</code>
     </p>
+  {/if}
+  {#if rutaRegistro}
+    <h3 class="subhead">Registro</h3>
+    <p class="hint">
+      Si la transmisión se corta sola, este archivo cuenta qué pasó.
+      <code>{rutaRegistro}</code>
+    </p>
+    <button data-nav class="btn-sec" onclick={() => void abrirRegistro()}>Mostrar el archivo</button>
   {/if}
 </section>
 

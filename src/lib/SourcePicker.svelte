@@ -86,6 +86,8 @@
     control as castControl,
     darGracia,
     detener as castDetener,
+    registrar as registrarTv,
+    vigilarVentana,
     saltar as castSaltar,
     nombreAudio,
     nombreVideo,
@@ -1062,6 +1064,7 @@
     };
     const desfase = subs ? (como?.desfase ?? 0) : 0;
     try {
+      vigilarVentana();
       const audioOk = await invoke<boolean>("cast_play", { ...envio, desde, subs, subsDesfase: desfase });
       if (!audioOk) {
         notify(
@@ -1080,6 +1083,7 @@
       throw new Error(`TV_RED: ${m}`);
     }
     const res = await vigilarArranque(desde);
+    registrarTv(`arranque en la TV: ${res}`);
     dbg(`TV arranque: ${res} (${r ? `${r.video} + ${r.audio}` : "sin probe"})`);
     if (res === "ok") {
       castSrc = s;
@@ -1119,7 +1123,7 @@
     }
     if (res === "tiempo") {
       // Tardó demasiado: puede ser la red, no el formato. No se aprende nada.
-      await castDetener().catch(() => {});
+      await castDetener("la TV no arrancó a tiempo").catch(() => {});
       throw new Error("TV_FALLA: la TV no arrancó a tiempo");
     }
     await invoke("cast_soltar").catch(() => {});
@@ -1249,7 +1253,7 @@
     let ultimoLog = 0;
     while (Date.now() - t0 < (cargando ? ESPERA_CARGANDO : ESPERA_MUDA)) {
       if (castCancel) {
-        await castDetener().catch(() => {});
+        await castDetener("Esc/Backspace mientras la TV cargaba (castCancel)").catch(() => {});
         return "cortado";
       }
       await sleep(1000);
@@ -1257,7 +1261,9 @@
       if (!st) continue;
       if (Date.now() - ultimoLog > 5000) {
         ultimoLog = Date.now();
-        dbg(`TV arrancando: ${st.estado} pos=${Math.round(st.pos)} (desde ${desde}) ${Math.round((Date.now() - t0) / 1000)}s`);
+        const m = `TV arrancando: ${st.estado} pos=${Math.round(st.pos)} (desde ${desde}) ${Math.round((Date.now() - t0) / 1000)}s`;
+        dbg(m);
+        registrarTv(m);
       }
       if (st.estado === "LOADING" || st.estado === "BUFFERING") {
         cargando = true;
@@ -1486,7 +1492,7 @@
     casting = false;
     tvTermino = null;
     castSrc = null;
-    if (seguiaEnTv) await castDetener().catch(() => {});
+    if (seguiaEnTv) await castDetener("Seguir aquí").catch(() => {});
     destinoTv = false;
     const idx = src ? view.indexOf(src) : -1;
     desdeForzado = pos;
@@ -1551,7 +1557,7 @@
           break;
         case "detener":
           casting = false;
-          await castDetener().catch(() => {});
+          await castDetener("botón Detener de los controles").catch(() => {});
           onClose();
           break;
         case "volver":
@@ -1595,7 +1601,7 @@
       );
     }
     casting = false;
-    await castDetener().catch(() => {});
+    await castDetener("No se oye / No se ve").catch(() => {});
     if (castSrc) {
       castSrc._tv = motivo;
       descartar(castSrc);

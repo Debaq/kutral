@@ -13,6 +13,7 @@
 // Todo en localStorage, como el resto de la configuración de Kütral.
 
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { guardarProgreso, type MediaMeta } from "$lib/historial.svelte";
 
 export type CastTv = {
@@ -382,6 +383,35 @@ type Seguimiento = {
 
 let seg: Seguimiento | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
+
+/** Línea en cast.log (ver cast.rs: en Windows no hay consola). */
+export function registrar(msg: string) {
+  void invoke("cast_log", { msg }).catch(() => {});
+}
+
+// Mientras se sigue una transmisión se anota cuándo Kütral pierde o recupera
+// el foco y si el webview queda oculto (Alt+Tab, minimizar, otra ventana
+// encima): sirve para cruzarlo con el momento en que la TV se corta.
+let soltarVigiaVentana: (() => void) | null = null;
+
+/** Desde que se manda a la TV hasta que termina el seguimiento. */
+export function vigilarVentana() {
+  if (soltarVigiaVentana) return;
+  const vis = () => registrar(`webview ${document.hidden ? "oculto" : "visible"}`);
+  document.addEventListener("visibilitychange", vis);
+  let unFoco: (() => void) | undefined;
+  let fuera = false;
+  getCurrentWindow()
+    .onFocusChanged(({ payload }) => registrar(`ventana ${payload ? "con foco" : "sin foco"}`))
+    .then((u) => (fuera ? u() : (unFoco = u)))
+    .catch(() => {});
+  soltarVigiaVentana = () => {
+    fuera = true;
+    document.removeEventListener("visibilitychange", vis);
+    unFoco?.();
+    soltarVigiaVentana = null;
+  };
+}
 // Recarga en curso (cambio de subtítulos): la TV pasa por IDLE/LOADING al
 // cambiar de medio y eso no es que haya terminado.
 let graciaHasta = 0;
@@ -402,6 +432,8 @@ const GUARDAR_CADA_MS = 15_000;
  */
 export function seguir(s: { tvId: string; rasgos: Rasgos | null; ctx: MediaMeta | null; desde: number }) {
   seg = { ...s, aprendio: false, ultimoGuardado: Date.now(), sinConexion: 0 };
+  registrar(`seguir desde ${Math.round(s.desde)}s`);
+  vigilarVentana();
   escribir(K_SEGUIDO, { tvId: s.tvId, ctx: s.ctx });
   if (timer) clearInterval(timer);
   timer = setInterval(() => void muestrear(), 2000);
@@ -416,7 +448,7 @@ async function muestrear() {
     return;
   }
   if (!st.activa) {
-    terminar(false);
+    terminar(false, "Kütral ya no tiene sesión");
     return;
   }
   if (Date.now() < graciaHasta) {
@@ -431,7 +463,7 @@ async function muestrear() {
 
   if (st.estado === "SIN_CONEXION") {
     // La TV se apagó o salió de la red. Unos cuantos intentos antes de soltar.
-    if (++seg.sinConexion >= 8) terminar(true);
+    if (++seg.sinConexion >= 8) terminar(true, "TV sin respuesta 8 veces seguidas");
     return;
   }
   seg.sinConexion = 0;
@@ -440,7 +472,7 @@ async function muestrear() {
     // Terminó, alguien cambió de app en la TV, la detuvo con su control, o
     // se cortó a mitad (IDLE + ERROR ya pasado el arranque).
     await guardar(st, st.motivo === "FINISHED");
-    terminar(true);
+    terminar(true, `TV en ${st.estado}${st.motivo ? ` (${st.motivo})` : ""}`);
     return;
   }
 
@@ -467,7 +499,9 @@ async function guardar(st: CastStatus, termino: boolean) {
   }).catch(() => {});
 }
 
-function terminar(soltar: boolean) {
+function terminar(soltar: boolean, motivo: string) {
+  registrar(`fin del seguimiento: ${motivo}`);
+  soltarVigiaVentana?.();
   if (timer) clearInterval(timer);
   timer = null;
   seg = null;
@@ -526,13 +560,15 @@ export async function control(accion: string, valor?: number) {
   }
 }
 
-export async function detener() {
+/** Para la TV. `origen`: quién lo pidió, para el registro. */
+export async function detener(origen = "sin origen") {
+  registrar(`detener pedido por: ${origen}`);
   const st = cast.estado;
   if (st) await guardar(st, false);
   try {
     await invoke("cast_control", { accion: "detener", valor: null });
   } finally {
-    terminar(false);
+    terminar(false, `detenido (${origen})`);
   }
 }
 
