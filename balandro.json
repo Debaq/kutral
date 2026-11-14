@@ -66,7 +66,7 @@
    "muertos": [],
    "nombre": "AnimeAv1",
    "nota": "Web dedicada exclusivamente al anime.",
-   "sha": "5867d668c59df6b3"
+   "sha": "9c2cd2ffd6a427ab"
   },
   "animeclub": {
    "activo": true,
@@ -83,7 +83,7 @@
    "muertos": [],
    "nombre": "AnimeClub",
    "nota": "Web dedicada exclusivamente al anime.",
-   "sha": "428fa496c70a2e84"
+   "sha": "4b3f8e2ee69af217"
   },
   "animeflv": {
    "activo": false,
@@ -117,7 +117,7 @@
    "muertos": [],
    "nombre": "AnimeFlvOne",
    "nota": "Web dedicada exclusivamente al anime.",
-   "sha": "692f2f43d0110947"
+   "sha": "4ada4ccc25fee230"
   },
   "animejara": {
    "activo": true,
@@ -151,7 +151,7 @@
    "muertos": [],
    "nombre": "AnimeJl",
    "nota": "Web dedicada exclusivamente al anime. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "d54e7ea7b90782ad"
+   "sha": "3beff8c3e57009e5"
   },
   "animeonline": {
    "activo": true,
@@ -197,7 +197,7 @@
    ],
    "nombre": "AnimeYt",
    "nota": "Web dedicada exclusivamente al anime",
-   "sha": "543de3b965d84370"
+   "sha": "d8a02e2251adce95"
   },
   "areadocumental": {
    "activo": true,
@@ -560,7 +560,7 @@
    "sha": "f91858b3c08e09a0"
   },
   "cinehindi": {
-   "activo": true,
+   "activo": false,
    "categorias": [
     "movie"
    ],
@@ -570,7 +570,7 @@
    ],
    "muertos": [],
    "nombre": "CineHindi",
-   "nota": "Películas por géneros.",
+   "nota": "Web ANULADA. Películas por géneros.",
    "sha": "ba1470ad183030d6"
   },
   "cinelibreonline": {
@@ -966,7 +966,7 @@
     "tvshow",
     "torrent"
    ],
-   "host": "https://dontorrent.tips/",
+   "host": "https://dontorrent.shopping/",
    "idiomas": [
     "cast"
    ],
@@ -1164,11 +1164,12 @@
     "https://dontorrent.moi/",
     "https://dontorrent.meme/",
     "https://dontorrent.channel/",
-    "https://dontorrent.diy/"
+    "https://dontorrent.diy/",
+    "https://dontorrent.tips/"
    ],
    "nombre": "DonTorrents",
    "nota": "Canal con enlaces Torrent exclusivamente. Películas por géneros y años. También Series y Documentales. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "0a5758569f760d86"
+   "sha": "10bb060570c39259"
   },
   "doramaexpress": {
    "activo": true,
@@ -1202,7 +1203,7 @@
    "muertos": [],
    "nombre": "DoramasFlix",
    "nota": "Web dedicada exclusivamente al dorama",
-   "sha": "66b43c30d62f0e8f"
+   "sha": "264aff1d2b5b6ed6"
   },
   "doramasflixin": {
    "activo": true,
@@ -1219,7 +1220,7 @@
    "muertos": [],
    "nombre": "DoramasFlixIn",
    "nota": "Web dedicada exclusivamente al dorama",
-   "sha": "724da83e1aa0491d"
+   "sha": "107dcf6ed503002d"
   },
   "doramasflixio": {
    "activo": true,
@@ -1236,7 +1237,7 @@
    "muertos": [],
    "nombre": "DoramasFlixIo",
    "nota": "Web dedicada exclusivamente al dorama",
-   "sha": "732389b7e5c8b81a"
+   "sha": "ac7df4af4d2c7609"
   },
   "doramasorg": {
    "activo": true,
@@ -1420,7 +1421,7 @@
    "muertos": [],
    "nombre": "EstrenosAnime",
    "nota": "Web dedicada exclusivamente al anime",
-   "sha": "097501f6895f6059"
+   "sha": "83d979bc857e738b"
   },
   "estrenoscinesaa": {
    "activo": true,
@@ -1452,7 +1453,7 @@
    "muertos": [],
    "nombre": "FlizzMovies",
    "nota": "Películas por géneros.",
-   "sha": "ae07e12e732ab1bb"
+   "sha": "0de08247d7fc80dc"
   },
   "gatotv": {
    "activo": true,
@@ -1498,7 +1499,7 @@
    "muertos": [],
    "nombre": "GenteClic",
    "nota": "Cine clásico y moderno. Películas por géneros",
-   "sha": "3efe1d9bb1a1d833"
+   "sha": "d91f65e2b480dc50"
   },
   "gnulatv": {
    "activo": true,
@@ -1677,7 +1678,7 @@
    "muertos": [],
    "nombre": "HenaOjara",
    "nota": "Web dedicada exclusivamente al anime. No recibe Actualizaciones a partir del 15/12/25",
-   "sha": "c54f69e36b89a616"
+   "sha": "22d9bc92172fae2f"
   },
   "henaojaran": {
    "activo": true,
@@ -1694,7 +1695,7 @@
    "muertos": [],
    "nombre": "HenaOjaraN",
    "nota": "Web dedicada exclusivamente al anime.",
-   "sha": "e13bc4f7b9d6d14c"
+   "sha": "f93a2acf54f18a61"
   },
   "homecine": {
    "activo": true,
@@ -1731,7 +1732,7 @@
    "muertos": [],
    "nombre": "IkuComics",
    "nota": "Web dedicada exclusivamente al anime. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "e4933ccf9272b05c"
+   "sha": "177685c6bf7fc6e5"
   },
   "jkanime": {
    "activo": true,
@@ -1748,7 +1749,7 @@
    "muertos": [],
    "nombre": "JkAnime",
    "nota": "Web dedicada exclusivamente al anime. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "387ef0cf325f8a9d"
+   "sha": "767032b13a99e3b5"
   },
   "lacartoons": {
    "activo": true,
@@ -1795,7 +1796,7 @@
    "muertos": [],
    "nombre": "LatAnime",
    "nota": "Web dedicada exclusivamente al anime. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "c5d30cee6aaad59b"
+   "sha": "7da398a36728442d"
   },
   "legalmentegratis": {
    "activo": true,
@@ -1817,7 +1818,7 @@
    "categorias": [
     "tvshow"
    ],
-   "host": "https://ww2.ojearnovelas.com/",
+   "host": "https://ojeonovelas.com/",
    "idiomas": [
     "cast",
     "lat",
@@ -1826,7 +1827,7 @@
    "muertos": [],
    "nombre": "MbsTeleNovelas",
    "nota": "Web dedicada exclusivamente en Novelas.",
-   "sha": "f506bc79f44f9671"
+   "sha": "ecaeb03e9ecf6296"
   },
   "megadedeoficial": {
    "activo": true,
@@ -1977,7 +1978,7 @@
    "muertos": [],
    "nombre": "MonosChinos2",
    "nota": "Web dedicada exclusivamente al anime.",
-   "sha": "c53636dc033bea8a"
+   "sha": "00241e69631971af"
   },
   "moviesdvdr": {
    "activo": false,
@@ -2120,7 +2121,7 @@
    "muertos": [],
    "nombre": "PanDramaIo",
    "nota": "Web dedicada exclusivamente al dorama",
-   "sha": "d2905390f4e2298a"
+   "sha": "61438d9c67648011"
   },
   "pasateatorrent": {
    "activo": true,
@@ -2639,7 +2640,7 @@
    "muertos": [],
    "nombre": "SeriesBiblicas",
    "nota": "Películas y Series. Con temas Bíblicos.",
-   "sha": "68ae06e92aefce63"
+   "sha": "cc22220bb29cd371"
   },
   "seriesflix": {
    "activo": false,
@@ -3018,7 +3019,7 @@
    "muertos": [],
    "nombre": "TioDonghua",
    "nota": "Web dedicada exclusivamente al anime. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "0db7e7a666de504f"
+   "sha": "1791bd5dd3be7097"
   },
   "todocineclasico": {
    "activo": true,
@@ -3186,7 +3187,7 @@
    "muertos": [],
    "nombre": "Vision",
    "nota": "Películas por géneros.",
-   "sha": "0d8fc19a018f465a"
+   "sha": "72d99ce1cd7ae46f"
   },
   "vivatorrents": {
    "activo": true,
@@ -3254,6 +3255,20 @@
    "nota": "Canal con enlaces Torrent exclusivamente. Películas por géneros y años. Series por Géneros y años.",
    "sha": "1c48765bd0c0c640"
   },
+  "zonahindi": {
+   "activo": true,
+   "categorias": [
+    "movie"
+   ],
+   "host": "https://zonahindi.blogspot.com/",
+   "idiomas": [
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "ZonaHindi",
+   "nota": "Películas Bollywood en Versión Original.",
+   "sha": "461730b74fe7665c"
+  },
   "zonaleros": {
    "activo": true,
    "categorias": [
@@ -3284,10 +3299,10 @@
    "muertos": [],
    "nombre": "ZoowoManiacos",
    "nota": "Películas clásicas y cine independiente, por diversos criteríos.",
-   "sha": "e358484d94218df6"
+   "sha": "840a0f9a40da7658"
   }
  },
- "generado": "2026-11-08T02:55:57+00:00",
- "origen": "repobal/base v4.0.34 + repobal/fix (32 archivos)",
+ "generado": "2026-11-14T14:13:51+00:00",
+ "origen": "repobal/base v4.0.34 + repobal/fix (68 archivos)",
  "version": "4.0.34"
 }
