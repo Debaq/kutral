@@ -813,7 +813,7 @@
    ],
    "nombre": "Cuevana3Pro",
    "nota": "Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "3fa875361015a0e7"
+   "sha": "539d52e4630a4d44"
   },
   "cuevanamx": {
    "activo": true,
@@ -1405,7 +1405,7 @@
    ],
    "nombre": "EntrePeliculasySeries",
    "nota": "Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "a9cabd931e52bdee"
+   "sha": "cf081f64062296d1"
   },
   "estrenosanime": {
    "activo": true,
@@ -1695,7 +1695,7 @@
    "muertos": [],
    "nombre": "HenaOjaraN",
    "nota": "Web dedicada exclusivamente al anime.",
-   "sha": "f93a2acf54f18a61"
+   "sha": "ba6c352d80239216"
   },
   "homecine": {
    "activo": true,
@@ -1780,7 +1780,7 @@
    "muertos": [],
    "nombre": "LaMovie",
    "nota": "Canal con enlaces Streaming y Torrent. Películas por géneros. Series por Géneros.",
-   "sha": "5b7961d9bd859643"
+   "sha": "50d87ea546b97804"
   },
   "latanime": {
    "activo": true,
@@ -1844,7 +1844,7 @@
    "muertos": [],
    "nombre": "MegaDedeOficial",
    "nota": "Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "06cf212b59985d37"
+   "sha": "ba7cd878a96ea578"
   },
   "mejortorrentapp": {
    "activo": true,
@@ -2223,7 +2223,7 @@
    "muertos": [],
    "nombre": "PelisGratisHd",
    "nota": "Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "2cb7855631d7b348"
+   "sha": "a0d6c36ee6c545f0"
   },
   "pelismaraton": {
    "activo": false,
@@ -2398,7 +2398,7 @@
    ],
    "nombre": "PelisPlusHdNz",
    "nota": "Películas por géneros y años. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "7d6a941dc363d419"
+   "sha": "78dcaadb4354ebee"
   },
   "pelisretro": {
    "activo": false,
@@ -2551,7 +2551,7 @@
    "muertos": [],
    "nombre": "RePelis28",
    "nota": "Películas por géneros. Series por Géneros.",
-   "sha": "141c74fe30be738c"
+   "sha": "c895a91b681f5552"
   },
   "repelishd": {
    "activo": true,
@@ -2642,6 +2642,21 @@
    "nota": "Películas y Series. Con temas Bíblicos.",
    "sha": "cc22220bb29cd371"
   },
+  "seriesdonghua": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://seriesdonghua.com/",
+   "idiomas": [
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "SeriesDonghua",
+   "nota": "Web dedicada exclusivamente al anime.",
+   "sha": "aa361d24f48b92e8"
+  },
   "seriesflix": {
    "activo": false,
    "categorias": [
@@ -2709,7 +2724,7 @@
    ],
    "nombre": "SeriesKao",
    "nota": "Películas por géneros, año. Series por Géneros.",
-   "sha": "f64c56c4741310c0"
+   "sha": "bee89b9fb4faf213"
   },
   "serieslan": {
    "activo": false,
@@ -2842,7 +2857,7 @@
    "muertos": [],
    "nombre": "SeriesRetro",
    "nota": "Canal con enlaces Streaming y Torrent. Películas por géneros y años. Series clásicas, por Géneros, años en idioma orignal de emisión. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "328ce68581c131be"
+   "sha": "ccc6d1945de4cb31"
   },
   "seriesturcas": {
    "activo": true,
@@ -2941,7 +2956,7 @@
    "muertos": [],
    "nombre": "SoloLatino",
    "nota": "Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "fafa3d7f3371b95a"
+   "sha": "06087f18b388962b"
   },
   "srnovelas": {
    "activo": true,
@@ -3302,7 +3317,7 @@
    "sha": "840a0f9a40da7658"
   }
  },
- "generado": "2026-11-14T14:13:51+00:00",
- "origen": "repobal/base v4.0.34 + repobal/fix (68 archivos)",
+ "generado": "2026-11-17T16:55:15+00:00",
+ "origen": "repobal/base v4.0.34 + repobal/fix (85 archivos)",
  "version": "4.0.34"
 }
