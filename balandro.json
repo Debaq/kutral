@@ -83,7 +83,7 @@
    "muertos": [],
    "nombre": "AnimeClub",
    "nota": "Web dedicada exclusivamente al anime.",
-   "sha": "4b3f8e2ee69af217"
+   "sha": "75d780fae0b53b40"
   },
   "animeflv": {
    "activo": false,
@@ -117,7 +117,7 @@
    "muertos": [],
    "nombre": "AnimeFlvOne",
    "nota": "Web dedicada exclusivamente al anime.",
-   "sha": "4ada4ccc25fee230"
+   "sha": "2d9b20bd2ff90e20"
   },
   "animejara": {
    "activo": true,
@@ -158,7 +158,7 @@
    "categorias": [
     "tvshow"
    ],
-   "host": "https://ww3.animeonline.ninja/",
+   "host": "https://ww4.animeonline.ninja/",
    "idiomas": [
     "cast",
     "lat",
@@ -172,7 +172,7 @@
    ],
    "nombre": "AnimeOnline",
    "nota": "Web dedicada exclusivamente al anime. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "ce86eb9b6d7ea8e1"
+   "sha": "ac2ca815f2989c46"
   },
   "animeyt": {
    "activo": true,
@@ -684,7 +684,7 @@
    "muertos": [],
    "nombre": "CinePlus",
    "nota": "Películas por géneros.",
-   "sha": "674830e88a3dc438"
+   "sha": "0edef2fde492dfa7"
   },
   "cineteca": {
    "activo": true,
@@ -813,7 +813,7 @@
    ],
    "nombre": "Cuevana3Pro",
    "nota": "Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "539d52e4630a4d44"
+   "sha": "39c80a20c9e797b3"
   },
   "cuevanamx": {
    "activo": true,
@@ -1405,7 +1405,7 @@
    ],
    "nombre": "EntrePeliculasySeries",
    "nota": "Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "cf081f64062296d1"
+   "sha": "659d398a82e930eb"
   },
   "estrenosanime": {
    "activo": true,
@@ -1844,7 +1844,7 @@
    "muertos": [],
    "nombre": "MegaDedeOficial",
    "nota": "Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "ba7cd878a96ea578"
+   "sha": "921e8ee36922374b"
   },
   "mejortorrentapp": {
    "activo": true,
@@ -2188,6 +2188,23 @@
    "nota": "Películas por géneros. También Series.",
    "sha": "67145f5bdf22bd04"
   },
+  "pelisflix": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://pelisflix1.center/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "PelisFlix",
+   "nota": "Películas por géneros. Series por Géneros.",
+   "sha": "a8cfa44d300f85ab"
+  },
   "pelisforte": {
    "activo": true,
    "categorias": [
@@ -2223,7 +2240,7 @@
    "muertos": [],
    "nombre": "PelisGratisHd",
    "nota": "Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "a0d6c36ee6c545f0"
+   "sha": "f9cd019860e86b69"
   },
   "pelismaraton": {
    "activo": false,
@@ -2398,7 +2415,7 @@
    ],
    "nombre": "PelisPlusHdNz",
    "nota": "Películas por géneros y años. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "78dcaadb4354ebee"
+   "sha": "0be1bfd419be236b"
   },
   "pelisretro": {
    "activo": false,
@@ -2551,7 +2568,7 @@
    "muertos": [],
    "nombre": "RePelis28",
    "nota": "Películas por géneros. Series por Géneros.",
-   "sha": "c895a91b681f5552"
+   "sha": "dc36fb9dc11ed196"
   },
   "repelishd": {
    "activo": true,
@@ -2724,7 +2741,7 @@
    ],
    "nombre": "SeriesKao",
    "nota": "Películas por géneros, año. Series por Géneros.",
-   "sha": "bee89b9fb4faf213"
+   "sha": "2d78ecff00d907fd"
   },
   "serieslan": {
    "activo": false,
@@ -2947,7 +2964,7 @@
     "movie",
     "tvshow"
    ],
-   "host": "https://sololatino.net/",
+   "host": "",
    "idiomas": [
     "cast",
     "lat",
@@ -2956,7 +2973,7 @@
    "muertos": [],
    "nombre": "SoloLatino",
    "nota": "Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "06087f18b388962b"
+   "sha": "0635c11c7857d26c"
   },
   "srnovelas": {
    "activo": true,
@@ -3317,7 +3334,7 @@
    "sha": "840a0f9a40da7658"
   }
  },
- "generado": "2026-11-17T16:55:15+00:00",
- "origen": "repobal/base v4.0.34 + repobal/fix (85 archivos)",
+ "generado": "2026-11-20T16:12:36+00:00",
+ "origen": "repobal/base v4.0.34 + repobal/fix (90 archivos)",
  "version": "4.0.34"
 }
