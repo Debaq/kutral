@@ -634,7 +634,7 @@
    "muertos": [],
    "nombre": "CineMitas",
    "nota": "Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "82c890663a6a8b17"
+   "sha": "006b156dc0eea0e2"
   },
   "cinemundo": {
    "activo": true,
@@ -813,7 +813,7 @@
    ],
    "nombre": "Cuevana3Pro",
    "nota": "Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "39c80a20c9e797b3"
+   "sha": "bfe766080bff518f"
   },
   "cuevanamx": {
    "activo": true,
@@ -1169,7 +1169,7 @@
    ],
    "nombre": "DonTorrents",
    "nota": "Canal con enlaces Torrent exclusivamente. Películas por géneros y años. También Series y Documentales. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "10bb060570c39259"
+   "sha": "1f1424f11b194fbd"
   },
   "doramaexpress": {
    "activo": true,
@@ -1239,6 +1239,22 @@
    "nota": "Web dedicada exclusivamente al dorama",
    "sha": "ac7df4af4d2c7609"
   },
+  "doramasmp4cyou": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://doramasmp4.cyou/",
+   "idiomas": [
+    "vose",
+    "Vo"
+   ],
+   "muertos": [],
+   "nombre": "DoramasMp4Cyou",
+   "nota": "Canal dedicada exclusivamente al dorama",
+   "sha": "8313554c71fb2b57"
+  },
   "doramasorg": {
    "activo": true,
    "categorias": [
@@ -1270,7 +1286,7 @@
    "muertos": [],
    "nombre": "DoramasYt",
    "nota": "Web dedicada exclusivamente al dorama. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "644b6f71ffad0da4"
+   "sha": "ade73cf5b8ed4b52"
   },
   "doramedplaylat": {
    "activo": true,
@@ -1453,7 +1469,7 @@
    "muertos": [],
    "nombre": "FlizzMovies",
    "nota": "Películas por géneros.",
-   "sha": "0de08247d7fc80dc"
+   "sha": "8d684fa025640a84"
   },
   "gatotv": {
    "activo": true,
@@ -1751,6 +1767,23 @@
    "nota": "Web dedicada exclusivamente al anime. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
    "sha": "767032b13a99e3b5"
   },
+  "kindor": {
+   "activo": true,
+   "categorias": [
+    "movie",
+    "tvshow"
+   ],
+   "host": "https://kindor.pro/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose"
+   ],
+   "muertos": [],
+   "nombre": "Kindor",
+   "nota": "Películas por géneros. Series por Géneros",
+   "sha": "a386761f8cd86850"
+  },
   "lacartoons": {
    "activo": true,
    "categorias": [
@@ -1827,7 +1860,7 @@
    "muertos": [],
    "nombre": "MbsTeleNovelas",
    "nota": "Web dedicada exclusivamente en Novelas.",
-   "sha": "ecaeb03e9ecf6296"
+   "sha": "68f15ad4b026b02f"
   },
   "megadedeoficial": {
    "activo": true,
@@ -1961,10 +1994,10 @@
    "muertos": [],
    "nombre": "MonosChinos",
    "nota": "Web dedicada exclusivamente al anime.",
-   "sha": "ac3e64ec4c695dfb"
+   "sha": "f3dd32353e07e003"
   },
   "monoschinos2": {
-   "activo": true,
+   "activo": false,
    "categorias": [
     "tvshow"
    ],
@@ -1977,8 +2010,25 @@
    ],
    "muertos": [],
    "nombre": "MonosChinos2",
-   "nota": "Web dedicada exclusivamente al anime.",
+   "nota": "Web CERRADA. Web dedicada exclusivamente al anime.",
    "sha": "00241e69631971af"
+  },
+  "monoschinosst": {
+   "activo": true,
+   "categorias": [
+    "tvshow"
+   ],
+   "host": "https://monoschinos.st/",
+   "idiomas": [
+    "cast",
+    "lat",
+    "vose",
+    "vo"
+   ],
+   "muertos": [],
+   "nombre": "MonosChinosSt",
+   "nota": "Web dedicada exclusivamente al anime.",
+   "sha": "c3532bf35bad46f8"
   },
   "moviesdvdr": {
    "activo": false,
@@ -2171,7 +2221,7 @@
    "muertos": [],
    "nombre": "PeliculasPro",
    "nota": "Películas por géneros. También Series. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "4b4a95b98f4e0062"
+   "sha": "a45c303c30f62b3b"
   },
   "pelis182": {
    "activo": true,
@@ -2194,7 +2244,7 @@
     "movie",
     "tvshow"
    ],
-   "host": "https://pelisflix1.center/",
+   "host": "https://pelisflix1.team/",
    "idiomas": [
     "cast",
     "lat",
@@ -2203,7 +2253,7 @@
    "muertos": [],
    "nombre": "PelisFlix",
    "nota": "Películas por géneros. Series por Géneros.",
-   "sha": "a8cfa44d300f85ab"
+   "sha": "fcb7e6b2720da1e3"
   },
   "pelisforte": {
    "activo": true,
@@ -2568,7 +2618,7 @@
    "muertos": [],
    "nombre": "RePelis28",
    "nota": "Películas por géneros. Series por Géneros.",
-   "sha": "dc36fb9dc11ed196"
+   "sha": "8922b19fd906086c"
   },
   "repelishd": {
    "activo": true,
@@ -2623,7 +2673,7 @@
    "muertos": [],
    "nombre": "RetroFlix",
    "nota": "Películas clásicas por géneros, Documentales clásicos. Episodios de Cartoons y Episodios de Series clásicas. En idioma orignal de emisión.",
-   "sha": "134945c780b75840"
+   "sha": "75f12e4e4560aba3"
   },
   "retrotv": {
    "activo": true,
@@ -2964,7 +3014,7 @@
     "movie",
     "tvshow"
    ],
-   "host": "",
+   "host": "https://sololatino.net/",
    "idiomas": [
     "cast",
     "lat",
@@ -2973,7 +3023,7 @@
    "muertos": [],
    "nombre": "SoloLatino",
    "nota": "Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "0635c11c7857d26c"
+   "sha": "ebb9426d590c6a39"
   },
   "srnovelas": {
    "activo": true,
@@ -3203,7 +3253,7 @@
    "muertos": [],
    "nombre": "VerPelis",
    "nota": "Películas por géneros. Series por Géneros.",
-   "sha": "bd85ab49004d2931"
+   "sha": "707d18eebd487e06"
   },
   "vision": {
    "activo": true,
@@ -3299,7 +3349,7 @@
    "muertos": [],
    "nombre": "ZonaHindi",
    "nota": "Películas Bollywood en Versión Original.",
-   "sha": "461730b74fe7665c"
+   "sha": "a4c0b34d3aa997ab"
   },
   "zonaleros": {
    "activo": true,
@@ -3334,7 +3384,7 @@
    "sha": "840a0f9a40da7658"
   }
  },
- "generado": "2026-11-20T16:12:36+00:00",
- "origen": "repobal/base v4.0.34 + repobal/fix (90 archivos)",
+ "generado": "2026-11-24T18:55:48+00:00",
+ "origen": "repobal/base v4.0.34 + repobal/fix (104 archivos)",
  "version": "4.0.34"
 }
