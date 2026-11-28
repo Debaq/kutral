@@ -966,7 +966,7 @@
     "tvshow",
     "torrent"
    ],
-   "host": "https://dontorrent.shopping/",
+   "host": "https://dontorrent.bargains/",
    "idiomas": [
     "cast"
    ],
@@ -1165,11 +1165,12 @@
     "https://dontorrent.meme/",
     "https://dontorrent.channel/",
     "https://dontorrent.diy/",
-    "https://dontorrent.tips/"
+    "https://dontorrent.tips/",
+    "https://dontorrent.shopping/"
    ],
    "nombre": "DonTorrents",
    "nota": "Canal con enlaces Torrent exclusivamente. Películas por géneros y años. También Series y Documentales. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "1f1424f11b194fbd"
+   "sha": "e44a2127ed2b7cdf"
   },
   "doramaexpress": {
    "activo": true,
@@ -1680,7 +1681,7 @@
    "sha": "ec8f00311846a844"
   },
   "henaojara": {
-   "activo": true,
+   "activo": false,
    "categorias": [
     "tvshow"
    ],
@@ -1693,7 +1694,7 @@
    ],
    "muertos": [],
    "nombre": "HenaOjara",
-   "nota": "Web dedicada exclusivamente al anime. No recibe Actualizaciones a partir del 15/12/25",
+   "nota": "Web CERRADA. Web dedicada exclusivamente al anime.",
    "sha": "22d9bc92172fae2f"
   },
   "henaojaran": {
@@ -1860,7 +1861,7 @@
    "muertos": [],
    "nombre": "MbsTeleNovelas",
    "nota": "Web dedicada exclusivamente en Novelas.",
-   "sha": "68f15ad4b026b02f"
+   "sha": "c6bc44a52de9fa06"
   },
   "megadedeoficial": {
    "activo": true,
@@ -2244,7 +2245,7 @@
     "movie",
     "tvshow"
    ],
-   "host": "https://pelisflix1.team/",
+   "host": "https://pelisflix1.forum/",
    "idiomas": [
     "cast",
     "lat",
@@ -2253,7 +2254,7 @@
    "muertos": [],
    "nombre": "PelisFlix",
    "nota": "Películas por géneros. Series por Géneros.",
-   "sha": "fcb7e6b2720da1e3"
+   "sha": "4a20fd7725aef9a4"
   },
   "pelisforte": {
    "activo": true,
@@ -2551,7 +2552,7 @@
    "sha": ""
   },
   "plushd": {
-   "activo": true,
+   "activo": false,
    "categorias": [
     "movie",
     "tvshow"
@@ -2564,7 +2565,7 @@
    ],
    "muertos": [],
    "nombre": "PlusHd",
-   "nota": "Películas por géneros y años. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "nota": "Web CERRADA. Películas por géneros y años. Series por Géneros.",
    "sha": "173cd3cbd66b0f23"
   },
   "poseidonhd2": {
@@ -2623,9 +2624,10 @@
   "repelishd": {
    "activo": true,
    "categorias": [
-    "movie"
+    "movie",
+    "tvshow"
    ],
-   "host": "https://repelishd.blog/",
+   "host": "https://repelishd.surf/",
    "idiomas": [
     "cast",
     "lat",
@@ -2639,11 +2641,12 @@
     "https://repelishd.fit/",
     "https://repelishd.bid/",
     "https://repelishd.courses/",
-    "https://repelishd.pics/"
+    "https://repelishd.pics/",
+    "https://repelishd.blog/"
    ],
    "nombre": "RePelisHd",
-   "nota": "Películas por géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "d3198868907efb55"
+   "nota": "Películas por géneros. Series por Géneros. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
+   "sha": "92a67f32b9e4feb1"
   },
   "retrocinema": {
    "activo": true,
@@ -3101,10 +3104,10 @@
    "muertos": [],
    "nombre": "TioDonghua",
    "nota": "Web dedicada exclusivamente al anime. Puede requerir el uso de proxies en función del país/operadora desde el que se accede.",
-   "sha": "1791bd5dd3be7097"
+   "sha": "f4466434d9951bda"
   },
   "todocineclasico": {
-   "activo": true,
+   "activo": false,
    "categorias": [
     "movie"
    ],
@@ -3117,7 +3120,7 @@
    ],
    "muertos": [],
    "nombre": "TodoCineClasico",
-   "nota": "Películas clásicas por géneros.",
+   "nota": "Web ANULADA. Películas clásicas por géneros.",
    "sha": "bc0499e9e3f4f2a2"
   },
   "topdocumentaryfilms": {
@@ -3348,8 +3351,8 @@
    ],
    "muertos": [],
    "nombre": "ZonaHindi",
-   "nota": "Películas Bollywood en Versión Original.",
-   "sha": "a4c0b34d3aa997ab"
+   "nota": "Películas Bollywood en Versión Original y/ó Subtitulada.",
+   "sha": "d9e14a66ac88e183"
   },
   "zonaleros": {
    "activo": true,
@@ -3384,7 +3387,7 @@
    "sha": "840a0f9a40da7658"
   }
  },
- "generado": "2026-11-24T18:55:48+00:00",
- "origen": "repobal/base v4.0.34 + repobal/fix (104 archivos)",
+ "generado": "2026-11-28T16:13:48+00:00",
+ "origen": "repobal/base v4.0.34 + repobal/fix (111 archivos)",
  "version": "4.0.34"
 }
